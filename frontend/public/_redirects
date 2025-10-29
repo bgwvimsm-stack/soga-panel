@@ -1,0 +1,5 @@
+# Cloudflare Pages SPA 路由配置
+# 所有非文件请求都重定向到 index.html，让 Vue Router 处理路由
+/* /index.html 200
+
+/*  Cross-Origin-Opener-Policy: same-origin-allow-popups

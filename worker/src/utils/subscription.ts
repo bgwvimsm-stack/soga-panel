@@ -1,0 +1,637 @@
+// src/utils/subscription.js - 订阅配置生成工具
+
+/**
+ * 生成 V2Ray 订阅配置
+ * @param {Array} nodes - 节点列表
+ * @param {Object} user - 用户信息
+ * @returns {string} - Base64 编码的 V2Ray 链接
+ */
+export function generateV2rayConfig(nodes, user) {
+  const links = [];
+
+  for (const node of nodes) {
+    const nodeConfig = JSON.parse(node.node_config || "{}");
+    const config = nodeConfig.config || nodeConfig; // 兼容两种格式
+
+    switch (node.type) {
+      case "v2ray":
+        links.push(generateVmessLink(node, config, user));
+        break;
+      case "vless":
+        links.push(generateVlessLink(node, config, user));
+        break;
+      case "trojan":
+        links.push(generateTrojanLink(node, config, user));
+        break;
+      case "ss":
+        links.push(generateShadowsocksLink(node, config, user));
+        break;
+      case "hysteria":
+        links.push(generateHysteriaLink(node, config, user));
+        break;
+    }
+  }
+
+  return btoa(links.join("\n"));
+}
+
+/**
+ * 生成 VMess 链接
+ */
+function generateVmessLink(node, config, user) {
+  const vmessConfig = {
+    v: "2",
+    ps: node.name,
+    add: node.server,
+    port: node.server_port,
+    id: user.uuid,
+    aid: config.aid || 0,
+    net: config.stream_type || "tcp",
+    type: "none",
+    host: config.server || "",
+    path: config.path || "",
+    tls: config.tls_type === "tls" ? "tls" : "",
+    sni: config.sni || "",
+    alpn: config.alpn || "",
+  };
+
+  return `vmess://${btoa(JSON.stringify(vmessConfig))}`;
+}
+
+/**
+ * 生成 VLESS 链接
+ */
+function generateVlessLink(node, config, user) {
+  const params = new URLSearchParams();
+
+  params.set("encryption", "none");
+  params.set("type", config.stream_type || "tcp");
+
+  if (config.tls_type === "tls") {
+    params.set("security", "tls");
+    if (config.sni) params.set("sni", config.sni);
+    if (config.alpn) params.set("alpn", config.alpn);
+  } else if (config.tls_type === "reality") {
+    params.set("security", "reality");
+    params.set("pbk", config.public_key || "");
+    params.set("fp", config.fingerprint || "chrome");
+    if (config.server_names) params.set("sni", config.server_names[0]);
+    if (config.short_ids) params.set("sid", config.short_ids[0]);
+  }
+
+  if (config.flow) params.set("flow", config.flow);
+  if (config.path) params.set("path", config.path);
+  if (config.server) params.set("host", config.server);
+  if (config.service_name) params.set("serviceName", config.service_name);
+
+  return `vless://${user.uuid}@${node.server}:${
+    node.server_port
+  }?${params.toString()}#${encodeURIComponent(node.name)}`;
+}
+
+/**
+ * 生成 Trojan 链接
+ */
+function generateTrojanLink(node, config, user) {
+  const params = new URLSearchParams();
+
+  if (config.sni) params.set("sni", config.sni);
+  if (config.alpn) params.set("alpn", config.alpn);
+  if (config.path) params.set("path", config.path);
+  if (config.server) params.set("host", config.server);
+
+  const queryString = params.toString();
+  const url = `trojan://${user.passwd}@${node.server}:${node.server_port}`;
+
+  return queryString
+    ? `${url}?${queryString}#${encodeURIComponent(node.name)}`
+    : `${url}#${encodeURIComponent(node.name)}`;
+}
+
+/**
+ * 生成 Shadowsocks 链接
+ */
+function generateShadowsocksLink(node, config, user) {
+  const method = config.cipher || 'aes-128-gcm';
+  const userInfo = `${method}:${user.passwd}`;
+  const encoded = btoa(userInfo);
+
+  let link = `ss://${encoded}@${node.server}:${node.server_port}`;
+
+  // 添加混淆参数
+  if (config.obfs && config.obfs !== "plain") {
+    const params = new URLSearchParams();
+    params.set("plugin", "obfs-local");
+    let pluginOpts = `obfs=${config.obfs}`;
+    if (config.server) pluginOpts += `;obfs-host=${config.server}`;
+    if (config.path) pluginOpts += `;obfs-uri=${config.path}`;
+    params.set("plugin-opts", pluginOpts);
+    link += `?${params.toString()}`;
+  }
+
+  return `${link}#${encodeURIComponent(node.name)}`;
+}
+
+/**
+ * 生成 Hysteria 链接
+ */
+function generateHysteriaLink(node, config, user) {
+  const params = new URLSearchParams();
+
+  params.set("protocol", "udp");
+  params.set("auth", user.passwd);
+  params.set("peer", node.server);
+  params.set("insecure", "1");
+  params.set("upmbps", config.up_mbps || "100");
+  params.set("downmbps", config.down_mbps || "100");
+
+  if (config.obfs && config.obfs !== "plain") {
+    params.set("obfs", config.obfs);
+    if (config.obfs_password) params.set("obfsParam", config.obfs_password);
+  }
+
+  return `hysteria://${node.server}:${
+    node.server_port
+  }?${params.toString()}#${encodeURIComponent(node.name)}`;
+}
+
+/**
+ * 生成 Clash 配置
+ * @param {Array} nodes - 节点列表
+ * @param {Object} user - 用户信息
+ * @returns {string} - YAML 格式的 Clash 配置
+ */
+export function generateClashConfig(nodes, user) {
+  const proxies = [];
+  const proxyNames = [];
+
+  for (const node of nodes) {
+    const nodeConfig = JSON.parse(node.node_config || "{}");
+    const config = nodeConfig.config || nodeConfig; // 兼容两种格式
+    let proxy = null;
+
+    switch (node.type) {
+      case "v2ray":
+        proxy = {
+          name: node.name,
+          type: "vmess",
+          server: node.server,
+          port: node.server_port,
+          uuid: user.uuid,
+          alterId: config.aid || 0,
+          cipher: "auto",
+          tls: config.tls_type === "tls",
+          "skip-cert-verify": true,
+          network: config.stream_type || "tcp",
+        };
+
+        // 添加 TLS 相关配置
+        if (config.tls_type === "tls") {
+          if (node.tls_host || config.sni) {
+            proxy.servername = node.tls_host || config.sni;
+          }
+          if (config.alpn) {
+            proxy.alpn = config.alpn.split(',');
+          }
+        }
+
+        // WebSocket 配置
+        if (config.stream_type === "ws") {
+          proxy["ws-opts"] = {
+            path: config.path || "/",
+            headers: { Host: node.tls_host || config.server || node.server },
+          };
+        } 
+        // gRPC 配置
+        else if (config.stream_type === "grpc") {
+          proxy["grpc-opts"] = {
+            "grpc-service-name": config.service_name || "grpc",
+          };
+        }
+        // HTTP 配置
+        else if (config.stream_type === "http") {
+          proxy["http-opts"] = {
+            method: "GET",
+            path: [config.path || "/"],
+          };
+          if (config.server) {
+            proxy["http-opts"].headers = {
+              Connection: ["keep-alive"],
+              Host: [node.tls_host || config.server]
+            };
+          }
+        }
+        break;
+
+      case "vless":
+        proxy = {
+          name: node.name,
+          type: "vless",
+          server: node.server,
+          port: node.server_port,
+          uuid: user.uuid,
+          tls: config.tls_type === "tls" || config.tls_type === "reality",
+          "skip-cert-verify": true,
+          network: config.stream_type || "tcp",
+        };
+
+        // TLS 配置
+        if (config.tls_type === "tls") {
+          if (node.tls_host || config.sni) {
+            proxy.servername = node.tls_host || config.sni;
+          }
+          if (config.alpn) {
+            proxy.alpn = config.alpn.split(',');
+          }
+        }
+
+        // Reality 配置
+        if (config.tls_type === "reality") {
+          proxy["reality-opts"] = {
+            "public-key": config.public_key || "",
+            "short-id": config.short_ids ? config.short_ids[0] : "",
+          };
+          proxy["client-fingerprint"] = config.fingerprint || "chrome";
+          if (config.server_names && config.server_names.length > 0) {
+            proxy.servername = config.server_names[0];
+          }
+        }
+
+        if (config.flow) {
+          proxy.flow = config.flow;
+        }
+
+        // WebSocket 配置
+        if (config.stream_type === "ws") {
+          proxy["ws-opts"] = {
+            path: config.path || "/",
+            headers: { Host: node.tls_host || config.server || node.server },
+          };
+        }
+        // gRPC 配置
+        else if (config.stream_type === "grpc") {
+          proxy["grpc-opts"] = {
+            "grpc-service-name": config.service_name || "grpc",
+          };
+        }
+        break;
+
+      case "trojan":
+        proxy = {
+          name: node.name,
+          type: "trojan",
+          server: node.server,
+          port: node.server_port,
+          password: user.passwd,
+          "skip-cert-verify": true,
+          sni: node.tls_host || config.sni || node.server,
+        };
+
+        // 添加 WebSocket 支持
+        if (config.stream_type === "ws") {
+          proxy.network = "ws";
+          proxy["ws-opts"] = {
+            path: config.path || "/",
+            headers: {
+              Host: node.tls_host || config.sni || node.server
+            }
+          };
+        }
+
+        // 添加 gRPC 支持
+        if (config.stream_type === "grpc") {
+          proxy.network = "grpc";
+          proxy["grpc-opts"] = {
+            "grpc-service-name": config.service_name || "grpc"
+          };
+        }
+        break;
+
+      case "ss":
+        proxy = {
+          name: node.name,
+          type: "ss",
+          server: node.server,
+          port: node.server_port,
+          cipher: config.cipher || "aes-128-gcm",
+          password: user.passwd,
+          udp: true,
+        };
+
+        // 混淆插件配置
+        if (config.obfs && config.obfs !== "plain") {
+          proxy.plugin = "obfs";
+          proxy["plugin-opts"] = {
+            mode: config.obfs === "simple_obfs_http" ? "http" : "tls",
+            host: node.tls_host || config.server || "bing.com",
+          };
+        }
+        break;
+
+      case "hysteria":
+        proxy = {
+          name: node.name,
+          type: "hysteria2",
+          server: node.server,
+          port: node.server_port,
+          password: user.passwd,
+          "skip-cert-verify": true,
+        };
+
+        // 添加 SNI 配置
+        if (node.tls_host || config.sni) {
+          proxy.sni = node.tls_host || config.sni;
+        }
+
+        // 添加混淆配置
+        if (config.obfs && config.obfs !== "plain") {
+          proxy.obfs = config.obfs;
+          if (config.obfs_password) {
+            proxy["obfs-password"] = config.obfs_password;
+          }
+        }
+
+        // 添加带宽配置
+        if (config.up_mbps) {
+          proxy.up = `${config.up_mbps} Mbps`;
+        }
+        if (config.down_mbps) {
+          proxy.down = `${config.down_mbps} Mbps`;
+        }
+
+        // 添加 ALPN 配置
+        if (config.alpn) {
+          proxy.alpn = config.alpn.split(',');
+        }
+        break;
+    }
+
+    if (proxy) {
+      proxies.push(proxy);
+      proxyNames.push(node.name);
+    }
+  }
+
+  const clashConfig = {
+    "mixed-port": 7890,
+    "allow-lan": true,
+    mode: "rule",
+    "log-level": "info",
+    dns: {
+      enable: true,
+      ipv6: false,
+      "enhanced-mode": "fake-ip",
+      "fake-ip-range": "198.18.0.1/16",
+      nameserver: ["114.114.114.114", "223.5.5.5"],
+    },
+    proxies: proxies,
+    "proxy-groups": [
+      {
+        name: "🚀 节点选择",
+        type: "select",
+        proxies: ["♻️ 自动选择", "🎯 全球直连", ...proxyNames],
+      },
+      {
+        name: "♻️ 自动选择",
+        type: "url-test",
+        proxies: proxyNames,
+        url: "http://www.gstatic.com/generate_204",
+        interval: 300,
+      },
+      {
+        name: "🎯 全球直连",
+        type: "select",
+        proxies: ["DIRECT"],
+      },
+    ],
+    rules: [
+      "DOMAIN-SUFFIX,cn,🎯 全球直连",
+      "GEOIP,CN,🎯 全球直连",
+      "MATCH,🚀 节点选择",
+    ],
+  };
+
+  return yaml.dump(clashConfig);
+}
+
+/**
+ * 生成 Quantumult 配置
+ * @param {Array} nodes - 节点列表
+ * @param {Object} user - 用户信息
+ * @returns {string} - Quantumult 格式配置
+ */
+export function generateQuantumultConfig(nodes, user) {
+  const servers = [];
+
+  for (const node of nodes) {
+    const nodeConfig = JSON.parse(node.node_config || "{}");
+    const config = nodeConfig.config || nodeConfig; // 兼容两种格式
+    let server = "";
+
+    switch (node.type) {
+      case "v2ray":
+        server = `vmess=${node.server}:${
+          node.server_port
+        }, method=aes-128-gcm, password=${user.uuid}`;
+        if (config.stream_type === "ws") {
+          server += `, obfs=ws, obfs-uri=${config.path || "/"}`;
+          if (config.server) server += `, obfs-host=${config.server}`;
+        }
+        if (config.tls_type === "tls") {
+          server += ", over-tls=true, tls-verification=false";
+        }
+        server += `, tag=${node.name}`;
+        break;
+
+      case "trojan":
+        server = `trojan=${node.server}:${node.server_port}, password=${
+          user.passwd
+        }, over-tls=true, tls-verification=false`;
+        if (config.sni) server += `, tls-host=${config.sni}`;
+        server += `, tag=${node.name}`;
+        break;
+
+      case "ss":
+        server = `shadowsocks=${node.server}:${node.server_port}, method=${
+          config.cipher || "aes-128-gcm"
+        }, password=${user.passwd}`;
+        if (config.obfs && config.obfs !== "plain") {
+          server += `, obfs=${
+            config.obfs === "simple_obfs_http" ? "http" : "tls"
+          }`;
+          if (config.server) server += `, obfs-host=${config.server}`;
+          if (config.path) server += `, obfs-uri=${config.path}`;
+        }
+        server += `, tag=${node.name}`;
+        break;
+    }
+
+    if (server) {
+      servers.push(server);
+    }
+  }
+
+  return servers.join("\n");
+}
+
+/**
+ * 生成 Shadowrocket 配置
+ * @param {Array} nodes - 节点列表
+ * @param {Object} user - 用户信息
+ * @returns {string} - Shadowrocket 格式配置
+ */
+export function generateShadowrocketConfig(nodes, user) {
+  const links = [];
+
+  for (const node of nodes) {
+    const nodeConfig = JSON.parse(node.node_config || "{}");
+    const config = nodeConfig.config || nodeConfig;
+
+    switch (node.type) {
+      case "v2ray":
+        links.push(generateVmessLink(node, config, user));
+        break;
+      case "vless":
+        links.push(generateVlessLink(node, config, user));
+        break;
+      case "trojan":
+        links.push(generateTrojanLink(node, config, user));
+        break;
+      case "ss":
+        links.push(generateShadowsocksLink(node, config, user));
+        break;
+      case "hysteria":
+        links.push(generateHysteriaLink(node, config, user));
+        break;
+    }
+  }
+
+  return links.join("\n");
+}
+
+/**
+ * 生成 Surge 配置
+ * @param {Array} nodes - 节点列表
+ * @param {Object} user - 用户信息
+ * @returns {string} - Surge 格式配置
+ */
+export function generateSurgeConfig(nodes, user) {
+  const proxies = [];
+  const proxyNames = [];
+
+  for (const node of nodes) {
+    const nodeConfig = JSON.parse(node.node_config || "{}");
+    const config = nodeConfig.config || nodeConfig;
+    let proxy = "";
+
+    switch (node.type) {
+      case "v2ray":
+        proxy = `${node.name} = vmess, ${node.server}, ${node.server_port}, username=${user.uuid}`;
+        if (config.tls_type === "tls") {
+          proxy += ", tls=true, skip-cert-verify=true";
+          if (config.sni) proxy += `, sni=${config.sni}`;
+        }
+        if (config.stream_type === "ws") {
+          proxy += `, ws=true, ws-path=${config.path || "/"}`;
+          if (config.server) proxy += `, ws-headers=Host:${config.server}`;
+        }
+        break;
+
+      case "trojan":
+        proxy = `${node.name} = trojan, ${node.server}, ${node.server_port}, password=${user.passwd}`;
+        proxy += ", tls=true, skip-cert-verify=true";
+        if (config.sni) proxy += `, sni=${config.sni}`;
+        break;
+
+      case "ss":
+        proxy = `${node.name} = ss, ${node.server}, ${node.server_port}, encrypt-method=${config.cipher || "aes-128-gcm"}, password=${user.passwd}`;
+        if (config.obfs && config.obfs !== "plain") {
+          const obfsMode = config.obfs === "simple_obfs_http" ? "http" : "tls";
+          proxy += `, obfs=${obfsMode}`;
+          if (config.server) proxy += `, obfs-host=${config.server}`;
+        }
+        break;
+
+      case "hysteria":
+        proxy = `${node.name} = hysteria2, ${node.server}, ${node.server_port}, password=${user.passwd}`;
+        proxy += ", skip-cert-verify=true";
+        if (config.sni) proxy += `, sni=${config.sni}`;
+        break;
+    }
+
+    if (proxy) {
+      proxies.push(proxy);
+      proxyNames.push(node.name);
+    }
+  }
+
+  const surgeConfig = `#!MANAGED-CONFIG
+
+[General]
+loglevel = notify
+skip-proxy = 127.0.0.1, 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 100.64.0.0/10, localhost, *.local
+dns-server = 114.114.114.114, 223.5.5.5
+
+[Proxy]
+${proxies.join("\n")}
+
+[Proxy Group]
+🚀 节点选择 = select, ${proxyNames.join(", ")}
+♻️ 自动选择 = url-test, ${proxyNames.join(", ")}, url = http://www.gstatic.com/generate_204, interval = 300
+
+[Rule]
+DOMAIN-SUFFIX,cn,DIRECT
+GEOIP,CN,DIRECT
+FINAL,🚀 节点选择`;
+
+  return surgeConfig;
+}
+
+// 简单的 YAML 转换函数（用于 Clash 配置）
+const yaml = {
+  dump: function (obj) {
+    return this._stringify(obj, 0);
+  },
+
+  _stringify: function (obj, indent) {
+    const spaces = "  ".repeat(indent);
+    let result = "";
+
+    if (Array.isArray(obj)) {
+      obj.forEach((item) => {
+        if (typeof item === "object") {
+          result += `${spaces}- ${this._stringifyInline(item)}\n`;
+        } else {
+          result += `${spaces}- ${item}\n`;
+        }
+      });
+    } else if (typeof obj === "object") {
+      Object.entries(obj).forEach(([key, value]) => {
+        if (Array.isArray(value)) {
+          result += `${spaces}${key}:\n`;
+          result += this._stringify(value, indent + 1);
+        } else if (typeof value === "object") {
+          result += `${spaces}${key}:\n`;
+          result += this._stringify(value, indent + 1);
+        } else {
+          result += `${spaces}${key}: ${value}\n`;
+        }
+      });
+    }
+
+    return result;
+  },
+
+  _stringifyInline: function (obj) {
+    if (typeof obj !== "object") return obj;
+
+    const pairs = Object.entries(obj).map(([key, value]) => {
+      if (typeof value === "object") {
+        return `${key}: ${JSON.stringify(value)}`;
+      }
+      return `${key}: ${value}`;
+    });
+
+    return `{ ${pairs.join(", ")} }`;
+  },
+};

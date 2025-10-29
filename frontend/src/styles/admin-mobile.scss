@@ -1,0 +1,405 @@
+// 管理员页面移动端通用样式
+
+// 移动端通用布局
+@media (max-width: 768px) {
+  // 页面容器
+  .admin-page {
+    padding: 0 10px;
+
+    .page-header {
+      margin-bottom: 20px;
+      text-align: center;
+
+      h2, h1 {
+        font-size: 20px;
+        margin: 0 0 5px 0;
+        color: #303133;
+      }
+
+      p {
+        font-size: 13px;
+        color: #909399;
+        margin: 0;
+      }
+
+      .breadcrumb {
+        margin-bottom: 12px;
+
+        :deep(.el-breadcrumb__inner) {
+          font-size: 12px;
+        }
+      }
+    }
+
+    // 统计卡片区域 - 单列排列
+    .stats-overview,
+    .system-overview {
+      margin-bottom: 20px;
+
+      :deep(.el-row) {
+        margin: 0 -5px;
+      }
+
+      :deep(.el-col) {
+        padding: 0 5px;
+        margin-bottom: 15px;
+
+        // 所有统计卡片移动端单列显示
+        &[class*="xs-24"], &:not([class*="xs-"]) {
+          width: 100% !important;
+          flex: 0 0 100%;
+          max-width: 100%;
+        }
+      }
+
+      .stat-card,
+      .overview-card {
+        :deep(.el-card__body) {
+          padding: 15px;
+        }
+
+        .stat-item {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+
+          .stat-content {
+            flex: 1;
+            margin-right: 10px;
+
+            .stat-value {
+              font-size: 24px;
+              font-weight: bold;
+              color: #303133;
+              margin-bottom: 3px;
+            }
+
+            .stat-label {
+              font-size: 12px;
+              color: #909399;
+              margin-bottom: 5px;
+            }
+
+            .stat-change {
+              font-size: 10px;
+              color: #909399;
+
+              .el-icon {
+                font-size: 12px;
+              }
+            }
+          }
+
+          .stat-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: white;
+            flex-shrink: 0;
+          }
+        }
+      }
+    }
+
+    // 主要内容区域
+    .main-content {
+      margin: 0 10px;
+
+      :deep(.el-card) {
+        margin-bottom: 20px;
+
+        .el-card__body {
+          padding: 15px;
+        }
+      }
+    }
+
+    // 卡片头部
+    .card-header {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 15px;
+
+      h3 {
+        font-size: 16px;
+        margin: 0;
+        color: #303133;
+      }
+
+      .header-actions {
+        align-self: stretch;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+
+        .el-button {
+          width: 100%;
+          height: 44px;
+          font-size: 14px;
+        }
+      }
+    }
+
+    // 操作按钮区域
+    .action-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 20px;
+      padding: 0 10px;
+
+      .el-button {
+        width: 100%;
+        height: 44px;
+        font-size: 14px;
+        justify-content: center;
+
+        .el-icon {
+          margin-right: 6px;
+          font-size: 16px;
+        }
+      }
+
+      // 当action-buttons在卡片内部时，移除内边距
+      .el-card & {
+        padding: 0;
+        margin-bottom: 0;
+      }
+    }
+
+    // 搜索筛选区域
+    .search-filters {
+      padding: 15px;
+      background: white;
+      border-radius: 8px;
+      margin-bottom: 15px;
+
+      .filter-row {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+
+        .el-input,
+        .el-select {
+          width: 100% !important;
+
+          :deep(.el-input__inner) {
+            font-size: 14px;
+            height: 40px;
+          }
+        }
+
+        .date-picker {
+          :deep(.el-date-editor) {
+            width: 100% !important;
+          }
+        }
+      }
+
+      .filter-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 15px;
+
+        .el-button {
+          width: 100%;
+          height: 40px;
+        }
+      }
+    }
+
+    // 表格区域
+    .table-container {
+      margin: 0 10px;
+
+      :deep(.el-table) {
+        font-size: 13px;
+
+        .el-table__header {
+          font-size: 12px;
+        }
+      }
+
+      // 表格操作列
+      .table-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 80px;
+
+        .el-button {
+          padding: 4px 8px;
+          font-size: 11px;
+          height: auto;
+          min-height: 28px;
+
+          .el-icon {
+            font-size: 12px;
+            margin-right: 2px;
+          }
+        }
+
+        .el-button + .el-button {
+          margin-left: 0;
+        }
+      }
+    }
+
+    // 分页区域
+    .pagination-container {
+      margin: 20px 10px;
+      display: flex;
+      justify-content: center;
+
+      :deep(.el-pagination) {
+        .el-pagination__sizes {
+          display: none;
+        }
+
+        .el-pagination__jump {
+          display: none;
+        }
+
+        .el-pager {
+          .number {
+            min-width: 32px;
+            height: 32px;
+            line-height: 32px;
+          }
+        }
+      }
+    }
+  }
+}
+
+// 超小屏幕优化
+@media (max-width: 480px) {
+  .admin-page {
+    padding: 0 8px;
+
+    .page-header {
+      margin-bottom: 15px;
+
+      h2, h1 {
+        font-size: 18px;
+      }
+
+      p {
+        font-size: 12px;
+      }
+    }
+
+    .stats-overview,
+    .system-overview {
+      :deep(.el-col) {
+        margin-bottom: 12px;
+      }
+
+      .stat-card,
+      .overview-card {
+        :deep(.el-card__body) {
+          padding: 12px;
+        }
+
+        .stat-item {
+          .stat-content {
+            margin-right: 8px;
+
+            .stat-value {
+              font-size: 20px;
+            }
+
+            .stat-label {
+              font-size: 11px;
+            }
+
+            .stat-change {
+              font-size: 9px;
+            }
+          }
+
+          .stat-icon {
+            width: 40px;
+            height: 40px;
+            font-size: 18px;
+          }
+        }
+      }
+    }
+
+    .main-content {
+      margin: 0 8px;
+    }
+
+    .action-buttons {
+      padding: 0 8px;
+
+      .el-button {
+        height: 40px;
+        font-size: 13px;
+      }
+
+      // 当action-buttons在卡片内部时，移除内边距
+      .el-card & {
+        padding: 0;
+      }
+    }
+
+    .search-filters {
+      padding: 12px;
+    }
+
+    .table-container {
+      margin: 0 8px;
+    }
+
+    .pagination-container {
+      margin: 15px 8px;
+    }
+  }
+}
+
+// 响应式表格列显示控制
+@media (max-width: 768px) {
+  .responsive-table {
+    .hide-on-mobile {
+      display: none !important;
+    }
+  }
+}
+
+// 对话框移动端优化
+@media (max-width: 768px) {
+  :deep(.el-dialog) {
+    width: 95% !important;
+    margin: 5vh auto !important;
+
+    .el-dialog__header {
+      padding: 15px 20px 10px;
+
+      .el-dialog__title {
+        font-size: 16px;
+      }
+    }
+
+    .el-dialog__body {
+      padding: 10px 20px 15px;
+    }
+
+    .el-dialog__footer {
+      padding: 10px 20px 15px;
+
+      .el-button {
+        width: 100%;
+        margin: 0 0 8px 0 !important;
+      }
+    }
+  }
+}

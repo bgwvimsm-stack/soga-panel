@@ -1,0 +1,111 @@
+name = "soga-panel-backend"
+main = "index.ts"
+compatibility_date = "2025-08-07"
+compatibility_flags = ["nodejs_compat"]
+# routes = [
+#   { pattern = "example.com", custom_domain = true }
+# ]
+
+# 设置定时任务 - 使用多个独立的cron任务
+[triggers]
+crons = [
+  "*/1 * * * *",      # 每分钟执行：用户过期检查
+  "0 16 * * *",       # 北京时间 0:00 (UTC 16:00)：每日流量重置和节点状态清理
+  "0 17 * * *"        # 北京时间 1:00 (UTC 17:00)：清理7天前的订阅记录
+]
+
+# 环境变量
+[vars]
+# Soga 后端 API 密钥（必须与 Soga 配置中的 webapi_key 一致）
+WEBAPI_KEY = "114514"
+# JWT 签名密钥（用于生成登录 Token）
+JWT_SECRET = "ABCDEFG123456"
+# 前后端通信密钥
+FRONTEND_API_SECRET = "123456"
+
+# ------------------------------------------------------------------------
+# 站点名称（用于邮件、页面抬头）
+SITE_NAME = "SogaPanel"
+# 站点URL
+SITE_URL = "https://soga-panel.workers.dev"
+
+# ------------------------------------------------------------------------
+
+# 谷歌、GitHub一键登录
+GOOGLE_CLIENT_ID = "114514.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = "ABCDEFG123456"
+GITHUB_CLIENT_ID = "ABCDEFG123456"
+GITHUB_CLIENT_SECRET = "ABCDEFG123456"
+
+# ------------------------------------------------------------------------
+# 支付系统配置
+# 支付提供方（当前支持 epay）
+PAYMENT_PROVIDER = "epay"
+
+# 易支付配置
+# 易支付商户 PID
+EPAY_PID="114514"
+# 易支付商户密钥
+EPAY_KEY="C4D038B4BED09FDB1471EF51EC3A32CD"
+# 易支付 API 地址
+EPAY_API_URL="http://localhost:3001"
+# 支付回调通知地址
+EPAY_NOTIFY_URL="http://localhost:18787/api/payment/notify"
+# 支付完成跳转地址，可不填，不填就按照前端地址跳转
+# EPAY_RETURN_URL="http://localhost:8848/#/user/wallet"
+# 支付方式配置（用逗号分隔，支持：alipay,wxpay）
+EPAY_PAYMENT_METHODS="alipay,wxpay"
+
+# ------------------------------------------------------------------------
+# 邮件发送配置
+# 邮件发送提供者：resend / sendgrid / smtp
+MAIL_PROVIDER = "none"
+# 设置发件邮箱地址
+MAIL_FROM = "no-reply@example.com"
+
+# Resend API Key
+RESEND_API_KEY = "re_xxx"
+
+# SendGrid API Key
+SENDGRID_API_KEY = "SG.xxx"
+
+# SMTP 配置 (当 MAIL_PROVIDER="smtp" 时生效)
+# SMTP 主机地址
+SMTP_HOST = "smtp.gmail.com"
+# SMTP 端口
+SMTP_PORT = "465"
+# SMTP 用户名
+SMTP_USER = ""
+# SMTP 密码
+SMTP_PASS = ""
+# SMTP 是否使用 TLS/SSL
+SMTP_SECURE = "true"
+SMTP_STARTTLS = "false"
+SMTP_AUTH_TYPE = "login"
+
+# 邮箱验证码策略默认值
+# 验证码有效期（分钟）
+MAIL_VERIFICATION_EXPIRE_MINUTES = "10"
+# 验证码发送冷却时间（秒）
+MAIL_VERIFICATION_COOLDOWN_SECONDS = "60"
+# 单邮箱每日验证码发送上限
+MAIL_VERIFICATION_DAILY_LIMIT = "5"
+# 单 IP 每小时验证码发送上限
+MAIL_VERIFICATION_IP_HOURLY_LIMIT = "10"
+# 验证码错误尝试上限
+MAIL_VERIFICATION_ATTEMPT_LIMIT = "5"
+
+# ------------------------------------------------------------------------
+
+# 系统版本号
+APP_VERSION = "1.0.0"
+# 构建时间（部署时自动设置）
+BUILD_TIME = "2025/05/21 05:20"
+
+# D1 数据库绑定
+[[d1_databases]]
+binding = "DB"
+database_name = "soga-panel-d1"
+# 需要先创建数据库，然后填入数据库ID
+# wrangler d1 create soga-panel
+database_id = "YOUR_D1_DATABASE_ID"

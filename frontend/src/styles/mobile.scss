@@ -1,0 +1,385 @@
+// 全局手机端响应式样式
+
+// 基础响应式断点
+$mobile-breakpoint: 768px;
+$small-mobile-breakpoint: 480px;
+
+// 修复移动端触摸和显示问题
+* {
+  @media (max-width: $mobile-breakpoint) {
+    // 改善触摸体验
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    // 修复iOS Safari滚动问题
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+// 修复移动端视口问题
+html, body {
+  @media (max-width: $mobile-breakpoint) {
+    width: 100%;
+    overflow-x: hidden;
+    // 修复iOS Safari底部导航栏高度问题
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+  }
+}
+
+#app {
+  @media (max-width: $mobile-breakpoint) {
+    min-height: 100vh;
+    min-height: -webkit-fill-available;
+  }
+}
+
+// 全局响应式样式
+@media (max-width: $mobile-breakpoint) {
+  // 全局字体大小调整
+  html {
+    font-size: 14px;
+  }
+  
+  // 全局间距调整
+  .el-card {
+    margin-bottom: 15px !important;
+    
+    .el-card__body {
+      padding: 15px !important;
+    }
+  }
+  
+  // 表格响应式
+  .el-table {
+    font-size: 12px !important;
+    
+    // 允许水平滚动
+    .el-table__body-wrapper {
+      overflow-x: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+    }
+    
+    .el-table__header {
+      th {
+        padding: 8px 4px !important;
+        font-size: 12px !important;
+        white-space: nowrap !important;
+      }
+    }
+    
+    .el-table__body {
+      td {
+        padding: 8px 4px !important;
+        white-space: nowrap !important;
+        
+        .el-button {
+          padding: 4px 8px !important;
+          font-size: 11px !important;
+          margin: 1px !important;
+          min-width: auto !important;
+          
+          // 小按钮优化
+          &.el-button--small {
+            padding: 2px 6px !important;
+            font-size: 10px !important;
+          }
+        }
+        
+        // 文本溢出处理
+        .cell {
+          max-width: 120px !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          white-space: nowrap !important;
+        }
+      }
+    }
+    
+    // 添加底部边距避免粘底
+    margin-bottom: 20px !important;
+  }
+  
+  // 表格容器的水平滚动指示
+  .table-container {
+    position: relative;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    
+    &::-webkit-scrollbar {
+      height: 4px;
+    }
+    
+    &::-webkit-scrollbar-thumb {
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 2px;
+    }
+  }
+  
+  // 表单响应式
+  .el-form {
+    .el-form-item {
+      margin-bottom: 15px !important;
+      
+      .el-form-item__label {
+        font-size: 13px !important;
+      }
+      
+      .el-input,
+      .el-select,
+      .el-textarea {
+        font-size: 14px !important;
+      }
+    }
+  }
+  
+  // 对话框响应式
+  .el-dialog {
+    width: 95% !important;
+    margin-top: 5vh !important;
+    
+    .el-dialog__header {
+      padding: 15px !important;
+      
+      .el-dialog__title {
+        font-size: 16px !important;
+      }
+    }
+    
+    .el-dialog__body {
+      padding: 15px !important;
+    }
+  }
+  
+  // 按钮组响应式
+  .el-button-group {
+    .el-button {
+      padding: 8px 16px !important;
+      font-size: 12px !important;
+      min-height: 36px !important;
+      min-width: 60px !important;
+    }
+  }
+  
+  // 改善按钮点击体验
+  .el-button {
+    min-height: 36px !important;
+    padding: 8px 16px !important;
+    
+    &.el-button--small {
+      min-height: 32px !important;
+      padding: 6px 12px !important;
+    }
+    
+    &.el-button--mini {
+      min-height: 28px !important;
+      padding: 4px 8px !important;
+    }
+  }
+  
+  // 统计卡片响应式
+  .stat-card {
+    .el-card__body {
+      padding: 12px !important;
+    }
+    
+    .stat-number {
+      font-size: 20px !important;
+    }
+    
+    .stat-label {
+      font-size: 12px !important;
+    }
+  }
+  
+  // 图标优化
+  .el-icon {
+    vertical-align: middle;
+    flex-shrink: 0;
+  }
+  
+  // 改善间距
+  .el-row {
+    margin-left: -8px !important;
+    margin-right: -8px !important;
+    
+    .el-col {
+      padding-left: 8px !important;
+      padding-right: 8px !important;
+    }
+  }
+}
+
+@media (max-width: $small-mobile-breakpoint) {
+  // 超小屏幕样式
+  html {
+    font-size: 12px;
+  }
+  
+  .el-card {
+    margin-bottom: 10px !important;
+    
+    .el-card__body {
+      padding: 10px !important;
+    }
+  }
+  
+  .el-dialog {
+    width: 98% !important;
+    margin: 2vh auto !important;
+    
+    .el-dialog__header {
+      padding: 10px !important;
+      
+      .el-dialog__title {
+        font-size: 14px !important;
+      }
+    }
+    
+    .el-dialog__body {
+      padding: 10px !important;
+    }
+  }
+  
+  .el-table {
+    font-size: 11px !important;
+    
+    .el-table__header {
+      th {
+        padding: 6px 2px !important;
+        font-size: 11px !important;
+      }
+    }
+    
+    .el-table__body {
+      td {
+        padding: 6px 2px !important;
+        
+        .el-button {
+          padding: 2px 6px !important;
+          font-size: 10px !important;
+          margin: 1px !important;
+        }
+      }
+    }
+  }
+  
+  .stat-card {
+    .stat-number {
+      font-size: 18px !important;
+    }
+    
+    .stat-label {
+      font-size: 10px !important;
+    }
+  }
+}
+
+// 隐藏部分列的工具类
+@media (max-width: $small-mobile-breakpoint) {
+  .mobile-hide {
+    display: none !important;
+  }
+  
+  .mobile-hide-sm {
+    display: none !important;
+  }
+}
+
+@media (max-width: $mobile-breakpoint) {
+  .mobile-hide-md {
+    display: none !important;
+  }
+}
+
+// 手机端专用布局类
+.mobile-full-width {
+  @media (max-width: $mobile-breakpoint) {
+    width: 100% !important;
+  }
+}
+
+.mobile-text-center {
+  @media (max-width: $mobile-breakpoint) {
+    text-align: center !important;
+  }
+}
+
+.mobile-flex-column {
+  @media (max-width: $mobile-breakpoint) {
+    flex-direction: column !important;
+    
+    .el-button {
+      margin-bottom: 10px !important;
+      width: 100% !important;
+    }
+  }
+}
+
+// 移动端专用间距类
+.mobile-mt-0 {
+  @media (max-width: $mobile-breakpoint) {
+    margin-top: 0 !important;
+  }
+}
+
+.mobile-mb-0 {
+  @media (max-width: $mobile-breakpoint) {
+    margin-bottom: 0 !important;
+  }
+}
+
+.mobile-p-2 {
+  @media (max-width: $mobile-breakpoint) {
+    padding: 8px !important;
+  }
+}
+
+// 移动端专用按钮样式
+.mobile-button-group {
+  @media (max-width: $mobile-breakpoint) {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    
+    .el-button {
+      width: 100%;
+      margin: 0 !important;
+      justify-content: center;
+    }
+  }
+}
+
+// 移动端卡片优化
+.mobile-card {
+  @media (max-width: $mobile-breakpoint) {
+    .el-card__body {
+      padding: 12px !important;
+    }
+    
+    .el-card__header {
+      padding: 12px !important;
+      
+      .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        
+        h4 {
+          margin: 0 !important;
+          font-size: 14px !important;
+        }
+      }
+    }
+  }
+}
+
+// 移动端状态标签优化
+.mobile-status-tags {
+  @media (max-width: $mobile-breakpoint) {
+    .el-tag {
+      font-size: 10px !important;
+      padding: 2px 6px !important;
+      margin: 1px !important;
+    }
+  }
+}

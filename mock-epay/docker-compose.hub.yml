@@ -1,0 +1,45 @@
+# Docker Compose 配置文件 - 使用 Docker Hub 多架构镜像
+# 适用于从 Docker Hub 拉取已构建的多架构镜像
+
+version: '3.8'
+
+services:
+  mock-epay:
+    # 使用 Docker Hub 镜像而不是本地构建
+    # 请将 "your-username" 替换为实际的 Docker Hub 用户名
+    image: your-username/mock-epay-server:latest
+
+    container_name: mock-epay-server
+    ports:
+      - "3001:3001"
+
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      # 商户配置 - 可以通过环境变量覆盖
+      - MERCHANT_PID=114514
+      - MERCHANT_KEY=C4D038B4BED09FDB1471EF51EC3A32CD
+      - MERCHANT_NAME=测试商户
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })\""]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+    networks:
+      - epay-network
+
+networks:
+  epay-network:
+    driver: bridge
+
+# 使用说明：
+# 1. 将 "your-username" 替换为你的 Docker Hub 用户名
+# 2. 运行: docker-compose -f docker-compose.hub.yml up -d
+# 3. 查看状态: docker-compose -f docker-compose.hub.yml ps
+# 4. 查看日志: docker-compose -f docker-compose.hub.yml logs -f mock-epay
+# 5. 停止服务: docker-compose -f docker-compose.hub.yml down

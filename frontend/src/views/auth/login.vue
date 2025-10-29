@@ -1,0 +1,750 @@
+<template>
+  <div class="login-page">
+    <div class="login-panel">
+      <div class="brand">
+        <div class="brand-logo">S</div>
+        <div class="brand-title">{{ appTitle }}</div>
+      </div>
+
+      <el-form
+        ref="loginFormRef"
+        :model="loginForm"
+        :rules="loginRules"
+        class="login-form"
+        @keyup.enter="handleLogin"
+      >
+        <el-form-item prop="email">
+          <el-input
+            v-model="loginForm.email"
+            placeholder="请输入邮箱地址"
+            size="large"
+            clearable
+            :prefix-icon="User"
+          />
+        </el-form-item>
+        <el-form-item prop="password">
+          <el-input
+            v-model="loginForm.password"
+            type="password"
+            placeholder="请输入密码"
+            size="large"
+            show-password
+            clearable
+            :prefix-icon="Lock"
+          />
+        </el-form-item>
+      </el-form>
+
+      <div class="form-options">
+        <el-checkbox v-model="rememberLogin">7天内免登录</el-checkbox>
+        <el-button
+          v-if="forgotPasswordVisible"
+          type="primary"
+          link
+          @click="goToForgotPassword"
+        >
+          忘记密码？
+        </el-button>
+      </div>
+
+      <el-button
+        type="primary"
+        size="large"
+        class="submit-btn"
+        :loading="loading"
+        @click="handleLogin"
+      >
+        登录
+      </el-button>
+
+      <div class="third-party">
+        <div class="third-title">
+          <span>第三方登录</span>
+        </div>
+        <div class="third-icons">
+          <div class="third-icon google" @click="handleGoogleClick">
+            <span class="icon-wrapper">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 48 48"
+                aria-label="Google logo"
+                width="24"
+                height="24"
+              >
+                <path
+                  fill="#FFC107"
+                  d="M43.611 20.083h-1.964v-.1H24v8h11.303C33.95 31.91 29.463 35 24 35c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.058 0 5.84 1.154 7.961 3.039l5.657-5.657C34.756 5.053 29.658 3 24 3 12.955 3 4 11.955 4 23s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.651-.389-3.917z"
+                />
+                <path
+                  fill="#FF3D00"
+                  d="M6.306 14.691l6.571 4.817C14.127 16.156 18.684 13 24 13c3.058 0 5.84 1.154 7.961 3.039l5.657-5.657C34.756 5.053 29.658 3 24 3 16.318 3 9.679 7.337 6.306 14.691z"
+                />
+                <path
+                  fill="#4CAF50"
+                  d="M24 43c5.353 0 10.191-2.048 13.86-5.383l-6.39-5.405C29.462 33.91 25.79 35 24 35c-5.435 0-9.908-3.605-11.544-8.502l-6.55 5.046C8.253 38.556 15.601 43 24 43z"
+                />
+                <path
+                  fill="#1976D2"
+                  d="M43.611 20.083h-1.964v-.1H24v8h11.303c-1.026 2.963-3.186 5.246-6.133 6.612l6.39 5.405C38.834 37.152 44 32.5 44 23c0-1.341-.138-2.651-.389-3.917z"
+                />
+              </svg>
+            </span>
+            <GoogleLogin
+              v-if="googleLoginEnabled"
+              class="google-trigger"
+              :callback="handleGoogleCredential"
+              :buttonConfig="googleButtonConfig"
+            />
+            <div v-if="googleLoginEnabled && googleLoading" class="oauth-loading">
+              <el-icon><Loading /></el-icon>
+            </div>
+          </div>
+          <div class="third-icon github" @click="handleGithubClick">
+            <span class="icon-wrapper">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 512 512"
+                aria-label="GitHub logo"
+              >
+                <path
+                  fill="currentColor"
+                  d="M256 32C132.3 32 32 134.9 32 261.7c0 101.5 64.2 187.5 153.2 217.9a17.56 17.56 0 0 0 3.8.4c8.3 0 11.5-6.1 11.5-11.4c0-5.5-.2-19.9-.3-39.1a102.4 102.4 0 0 1-22.6 2.7c-43.1 0-52.9-33.5-52.9-33.5c-10.2-26.5-24.9-33.6-24.9-33.6c-19.5-13.7-.1-14.1 1.4-14.1h.1c22.5 2 34.3 23.8 34.3 23.8c11.2 19.6 26.2 25.1 39.6 25.1a63 63 0 0 0 25.6-6c2-14.8 7.8-24.9 14.2-30.7c-49.7-5.8-102-25.5-102-113.5c0-25.1 8.7-45.6 23-61.6c-2.3-5.8-10-29.2 2.2-60.8a18.64 18.64 0 0 1 5-.5c8.1 0 26.4 3.1 56.6 24.1a208.21 208.21 0 0 1 112.2 0c30.2-21 48.5-24.1 56.6-24.1a18.64 18.64 0 0 1 5 .5c12.2 31.6 4.5 55 2.2 60.8c14.3 16.1 23 36.6 23 61.6c0 88.2-52.4 107.6-102.3 113.3c8 7.1 15.2 21.1 15.2 42.5c0 30.7-.3 55.5-.3 63c0 5.4 3.1 11.5 11.4 11.5a19.35 19.35 0 0 0 4-.4C415.9 449.2 480 363.1 480 261.7C480 134.9 379.7 32 256 32"
+                />
+              </svg>
+            </span>
+            <div v-if="githubLoading" class="oauth-loading">
+              <el-icon><Loading /></el-icon>
+            </div>
+          </div>
+          <div class="third-icon placeholder" v-for="n in 1" :key="`placeholder-${n}`">
+            <span class="placeholder-dot"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="register-tip">
+        <span>还没有账号？</span>
+        <el-button type="primary" link @click="goToRegister">
+          立即注册
+        </el-button>
+      </div>
+    </div>
+  </div>
+
+  <el-dialog
+    v-model="showPasswordDialog"
+    :title="welcomeTitle"
+    width="420px"
+    :close-on-click-modal="false"
+    :close-on-press-escape="false"
+    @close="handlePasswordDialogClose"
+  >
+    <p class="password-dialog-text">
+      以下为通过 {{ lastOAuthProviderLabel }} 首次登录自动生成的密码，请妥善保管并尽快前往个人中心修改：
+    </p>
+    <el-input v-model="generatedPassword" readonly class="password-display">
+      <template #suffix>
+        <el-button text @click="copyGeneratedPassword">
+          <el-icon><DocumentCopy /></el-icon>
+        </el-button>
+      </template>
+    </el-input>
+    <p class="password-dialog-tip">
+      {{ passwordEmailSent ? "密码也已发送至您的邮箱，请注意查收。" : "当前未发送邮件，请务必自行保存该密码。" }}
+    </p>
+    <template #footer>
+      <el-button type="primary" @click="handlePasswordDialogClose">
+        知道了
+      </el-button>
+    </template>
+  </el-dialog>
+</template>
+
+<script setup lang="ts">
+import { ref, reactive, computed, onMounted } from "vue";
+import { useRouter, useRoute } from "vue-router";
+import {
+  ElMessage,
+  type FormInstance,
+  type FormRules
+} from "element-plus";
+import {
+  User,
+  Lock,
+  Loading,
+  DocumentCopy
+} from "@element-plus/icons-vue";
+import { GoogleLogin } from "vue3-google-login";
+import {
+  login,
+  loginWithGoogle,
+  loginWithGithub,
+  getRegisterConfig
+} from "@/api/auth";
+import { setToken } from "@/utils/auth-soga";
+import { useUserStore } from "@/store/user";
+import { useSiteStore } from "@/store/site";
+import type { LoginRequest, LoginResponse } from "@/api/types";
+
+const router = useRouter();
+const route = useRoute();
+const userStore = useUserStore();
+const loginFormRef = ref<FormInstance>();
+
+const siteStore = useSiteStore();
+const appTitle = computed(() => siteStore.siteName || "Soga Panel");
+const loading = ref(false);
+const rememberLogin = ref(false);
+const forgotPasswordVisible = ref(false);
+
+const loginForm = reactive<LoginRequest>({
+  email: "",
+  password: ""
+});
+
+const loginRules: FormRules = {
+  email: [
+    { required: true, message: "请输入邮箱地址", trigger: "blur" },
+    { type: "email", message: "请输入正确的邮箱格式", trigger: "blur" }
+  ],
+  password: [
+    { required: true, message: "请输入密码", trigger: "blur" },
+    { min: 6, message: "密码长度不能少于6位", trigger: "blur" }
+  ]
+};
+
+const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").toString();
+const githubClientId = (import.meta.env.VITE_GITHUB_CLIENT_ID || "").toString();
+const googleLoginEnabled = computed(() => Boolean(googleClientId.trim()));
+const googleLoading = ref(false);
+const githubLoginEnabled = computed(() => Boolean(githubClientId.trim()));
+const githubLoading = ref(false);
+const showPasswordDialog = ref(false);
+const generatedPassword = ref("");
+const passwordEmailSent = ref(false);
+const redirectAfterDialog = ref(false);
+const lastOAuthProvider = ref("Google");
+const welcomeTitle = computed(
+  () => `欢迎使用 ${lastOAuthProvider.value || "第三方"} 登录`
+);
+const lastOAuthProviderLabel = computed(
+  () => lastOAuthProvider.value || "第三方"
+);
+
+const formatProviderLabel = (label: string) => {
+  const lower = label.toLowerCase();
+  if (lower === "google") return "Google";
+  if (lower === "github") return "GitHub";
+  return label || "第三方";
+};
+
+const googleButtonConfig = {
+  type: "icon",
+  theme: "outline",
+  size: "large",
+  shape: "circle"
+} as const;
+
+const handleGoogleClick = () => {
+  if (!googleLoginEnabled.value) {
+    ElMessage.warning("暂未配置 Google 登录，请联系管理员");
+  }
+};
+
+const githubStateStorageKey = "github_oauth_state";
+const githubRememberStorageKey = "github_oauth_remember";
+
+const createOAuthState = (length = 16) => {
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    const array = new Uint8Array(length);
+    crypto.getRandomValues(array);
+    return Array.from(array, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  return Math.random().toString(36).slice(2, 2 + length);
+};
+
+const handleGithubClick = () => {
+  if (!githubLoginEnabled.value) {
+    ElMessage.warning("暂未配置 GitHub 登录，请联系管理员");
+    return;
+  }
+
+  const state = createOAuthState(12);
+  sessionStorage.setItem(githubStateStorageKey, state);
+  sessionStorage.setItem(
+    githubRememberStorageKey,
+    rememberLogin.value ? "1" : "0"
+  );
+  const redirectUri = `${window.location.origin}/auth/login?provider=github`;
+  const params = new URLSearchParams({
+    client_id: githubClientId,
+    scope: "read:user user:email",
+    state,
+    allow_signup: "true",
+    redirect_uri: redirectUri,
+  });
+  window.location.href = `https://github.com/login/oauth/authorize?${params.toString()}`;
+};
+
+type OAuthLoginPayload = LoginResponse & {
+  isNewUser?: boolean;
+  tempPassword?: string | null;
+  passwordEmailSent?: boolean;
+};
+
+const handleOAuthLoginSuccess = (
+  providerLabel: string,
+  payload: OAuthLoginPayload
+) => {
+  lastOAuthProvider.value = formatProviderLabel(providerLabel);
+  rememberLogin.value = Boolean(payload.remember ?? rememberLogin.value);
+  setToken(payload.token);
+  userStore.setUser(payload.user);
+
+  if (payload.user.status === 0) {
+    ElMessage.warning("您的账号已被禁用，只能访问仪表盘、公告详情和个人资料页面");
+  } else {
+    ElMessage.success("登录成功");
+  }
+
+  passwordEmailSent.value = Boolean(payload.passwordEmailSent);
+  generatedPassword.value = payload.tempPassword || "";
+  redirectAfterDialog.value = false;
+
+  if (payload.isNewUser && payload.tempPassword) {
+    showPasswordDialog.value = true;
+    redirectAfterDialog.value = true;
+  } else {
+    router.push("/dashboard");
+  }
+};
+
+const handleLogin = async () => {
+  if (!loginFormRef.value) return;
+
+  const valid = await loginFormRef.value.validate().catch(() => false);
+  if (!valid) return;
+
+  loading.value = true;
+
+  try {
+    const { data } = await login({
+      email: loginForm.email,
+      password: loginForm.password,
+      remember: rememberLogin.value,
+    });
+    setToken(data.token);
+    userStore.setUser(data.user);
+
+    if (data.user.status === 0) {
+      ElMessage.warning("您的账号已被禁用，只能访问仪表盘、公告详情和个人资料页面");
+    } else {
+      ElMessage.success("登录成功");
+    }
+
+    router.push("/dashboard");
+  } catch (error) {
+    console.error("登录失败:", error);
+    ElMessage.error((error as any)?.message || "登录失败，请稍后重试");
+  } finally {
+    loading.value = false;
+  }
+};
+
+const goToRegister = () => {
+  router.push("/register");
+};
+
+const goToForgotPassword = () => {
+  router.push("/auth/forgot-password");
+};
+
+interface GoogleCredentialResponse {
+  credential?: string;
+}
+
+const handleGoogleCredential = async (
+  googleResponse: GoogleCredentialResponse
+) => {
+ if (!googleLoginEnabled.value) {
+    ElMessage.warning("暂未配置 Google 登录，请联系管理员");
+    return;
+  }
+
+  const credential = googleResponse?.credential;
+  if (!credential) {
+    ElMessage.error("未获取到 Google 登录凭证，请重试");
+    return;
+  }
+
+  if (googleLoading.value) return;
+  googleLoading.value = true;
+
+  try {
+    const { data } = await loginWithGoogle({
+      idToken: credential,
+      remember: rememberLogin.value,
+    });
+    handleOAuthLoginSuccess("Google", data as OAuthLoginPayload);
+  } catch (error) {
+    console.error("Google 登录失败:", error);
+    ElMessage.error((error as any)?.message || "Google 登录失败，请稍后重试");
+  } finally {
+    googleLoading.value = false;
+  }
+};
+
+const handlePasswordDialogClose = () => {
+  showPasswordDialog.value = false;
+  if (redirectAfterDialog.value) {
+    redirectAfterDialog.value = false;
+    router.push("/dashboard");
+  }
+};
+
+const processGithubCallback = async () => {
+  const provider = typeof route.query.provider === "string" ? route.query.provider : "";
+  const code = typeof route.query.code === "string" ? route.query.code : "";
+  const returnedState = typeof route.query.state === "string" ? route.query.state : "";
+  const error = typeof route.query.error === "string" ? route.query.error : "";
+
+  const expectedState = sessionStorage.getItem(githubStateStorageKey);
+  const rememberFlag =
+    sessionStorage.getItem(githubRememberStorageKey) === "1";
+  rememberLogin.value = rememberFlag;
+
+  if (provider !== "github" && !expectedState) return;
+
+  if (!githubLoginEnabled.value) {
+    ElMessage.warning("暂未配置 GitHub 登录，请联系管理员");
+    sessionStorage.removeItem(githubStateStorageKey);
+    sessionStorage.removeItem(githubRememberStorageKey);
+    return;
+  }
+
+  const cleanQuery = { ...route.query } as Record<string, any>;
+  delete cleanQuery.provider;
+  delete cleanQuery.code;
+  delete cleanQuery.state;
+  delete cleanQuery.error;
+  router.replace({ path: route.path, query: cleanQuery }).catch(() => undefined);
+
+  if (error) {
+    ElMessage.error("GitHub 授权被取消或失败");
+    sessionStorage.removeItem(githubStateStorageKey);
+    sessionStorage.removeItem(githubRememberStorageKey);
+    return;
+  }
+
+  if (!code) {
+    sessionStorage.removeItem(githubStateStorageKey);
+    sessionStorage.removeItem(githubRememberStorageKey);
+    return;
+  }
+
+  sessionStorage.removeItem(githubStateStorageKey);
+  sessionStorage.removeItem(githubRememberStorageKey);
+
+  if (expectedState && returnedState && expectedState !== returnedState) {
+    ElMessage.error("GitHub 登录状态校验失败，请重试");
+    return;
+  }
+
+  githubLoading.value = true;
+  try {
+    const redirectUri = `${window.location.origin}/auth/login`;
+    const { data } = await loginWithGithub({
+      code,
+      redirectUri,
+      state: returnedState,
+      remember: rememberFlag,
+    });
+    handleOAuthLoginSuccess(
+      (data as any)?.provider || "GitHub",
+      data as OAuthLoginPayload
+    );
+  } catch (error) {
+    console.error("GitHub 登录失败:", error);
+    ElMessage.error((error as any)?.message || "GitHub 登录失败，请稍后重试");
+  } finally {
+    githubLoading.value = false;
+  }
+};
+
+const loadAuthConfig = async () => {
+  try {
+    const { data } = await getRegisterConfig();
+    forgotPasswordVisible.value = Boolean(data?.passwordResetEnabled);
+  } catch (error) {
+    console.error("获取认证配置失败:", error);
+    forgotPasswordVisible.value = false;
+  }
+};
+
+onMounted(() => {
+  loadAuthConfig();
+  processGithubCallback();
+});
+
+const copyGeneratedPassword = async () => {
+  if (!generatedPassword.value) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(generatedPassword.value);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = generatedPassword.value;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    ElMessage.success("密码已复制到剪贴板");
+  } catch (error) {
+    console.error("复制密码失败:", error);
+    ElMessage.warning("复制失败，请手动复制密码");
+  }
+};
+</script>
+
+<style scoped lang="scss">
+.login-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: #f7f9fc;
+  padding: 40px 16px;
+}
+
+.login-panel {
+  width: 380px;
+  background: #ffffff;
+  border-radius: 18px;
+  box-shadow: 0 20px 60px rgba(79, 70, 229, 0.08);
+  padding: 36px 40px 32px;
+  position: relative;
+}
+
+.brand {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.brand-logo {
+  width: 64px;
+  height: 64px;
+  line-height: 64px;
+  margin: 0 auto 12px;
+  border-radius: 20px;
+  font-size: 28px;
+  font-weight: 700;
+  color: #ffffff;
+  background: linear-gradient(135deg, #5a6cea 0%, #8f44fd 100%);
+  box-shadow: 0 12px 25px rgba(122, 111, 250, 0.22);
+}
+
+.brand-title {
+  font-size: 26px;
+  font-weight: 600;
+  color: #374151;
+  letter-spacing: 1px;
+}
+
+.login-form {
+  :deep(.el-input__wrapper) {
+    border-radius: 10px;
+    box-shadow: none;
+    border: 1px solid #e5e7eb;
+    padding: 0 14px;
+    transition: border-color 0.2s ease;
+  }
+
+  :deep(.el-input__wrapper.is-focus) {
+    border-color: #5a6cea;
+    box-shadow: 0 0 0 3px rgba(90, 108, 234, 0.15);
+  }
+
+  :deep(.el-input__inner) {
+    font-size: 15px;
+  }
+}
+
+.form-options {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 4px 0 16px;
+
+  :deep(.el-checkbox) {
+    --el-checkbox-font-weight: 500;
+  }
+}
+
+.submit-btn {
+  width: 100%;
+  height: 44px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #5a6cea 0%, #7c3aed 100%);
+  border: none;
+}
+
+.register-action {
+  display: flex;
+  justify-content: center;
+  margin: 18px 0 12px;
+
+  :deep(.el-button) {
+    width: 60%;
+    border-radius: 10px;
+    font-size: 14px;
+    color: #4b5563;
+  }
+}
+
+.third-party {
+  margin-top: 12px;
+}
+
+.third-title {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
+  position: relative;
+  margin-bottom: 18px;
+}
+
+.third-title span {
+  display: inline-block;
+  padding: 0 20px;
+  position: relative;
+}
+
+.third-title span::before,
+.third-title span::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 60px;
+  height: 1px;
+  background: rgba(156, 163, 175, 0.45);
+}
+
+.third-title span::before {
+  right: 100%;
+  margin-right: 18px;
+}
+
+.third-title span::after {
+  left: 100%;
+  margin-left: 18px;
+}
+
+.third-icons {
+  display: flex;
+  justify-content: center;
+  gap: 22px;
+}
+
+.third-icon {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+}
+
+.third-icon.google:hover {
+  border-color: #cbd5f5;
+  box-shadow: 0 6px 18px rgba(148, 163, 184, 0.18);
+}
+
+.third-icon.github {
+  color: #1f2937;
+}
+
+.third-icon.github:hover {
+  border-color: #d1d5db;
+  box-shadow: 0 6px 18px rgba(99, 102, 241, 0.12);
+}
+
+.icon-wrapper {
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
+
+.placeholder-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #cbd5f5;
+  box-shadow: 10px 0 0 #cbd5f5, -10px 0 0 #cbd5f5;
+}
+
+.placeholder {
+  border-style: dashed;
+  color: #cbd5f5;
+}
+
+.google-trigger {
+  position: absolute !important;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.register-tip {
+  margin-top: 22px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.password-dialog-text {
+  margin-bottom: 12px;
+  color: #4b5563;
+  line-height: 1.6;
+}
+
+.password-display {
+  margin-bottom: 10px;
+
+  :deep(.el-input__wrapper) {
+    background: #f9fafb;
+    border-radius: 10px;
+    border: 1px dashed #d1d5db;
+  }
+}
+
+.password-dialog-tip {
+  margin-top: 6px;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.oauth-loading {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  .el-icon {
+    color: #4f46e5;
+  }
+}
+</style>

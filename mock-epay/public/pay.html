@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模拟易支付 - 收银台</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .payment-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .payment-header {
+            background: #4CAF50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .payment-header h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+
+        .payment-header .subtitle {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .payment-body {
+            padding: 30px;
+        }
+
+        .order-info {
+            margin-bottom: 30px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .info-label {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .info-value {
+            font-weight: 500;
+            color: #333;
+        }
+
+        .amount {
+            color: #f44336;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .qr-section {
+            text-align: center;
+            margin: 30px 0;
+        }
+
+        .qr-code {
+            width: 200px;
+            height: 200px;
+            margin: 0 auto;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f9f9f9;
+            font-size: 14px;
+            color: #999;
+        }
+
+        .qr-tip {
+            margin-top: 15px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .payment-method {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+
+        .method-icon {
+            width: 24px;
+            height: 24px;
+            margin-right: 8px;
+            background: #1976d2;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 12px;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 30px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #45a049;
+        }
+
+        .btn-secondary {
+            background: #ff9800;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #e68900;
+        }
+
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .status-paid {
+            background: #4CAF50;
+            color: white;
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .footer {
+            background: #f8f9fa;
+            padding: 15px;
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="payment-container">
+        <div class="payment-header">
+            <h1>💰 模拟易支付</h1>
+            <div class="subtitle">Mock EasyPay - 测试支付平台</div>
+        </div>
+
+        <div class="payment-body">
+            <div id="loading" style="text-align: center; padding: 40px;">
+                <div class="loading"></div>
+                正在加载订单信息...
+            </div>
+
+            <div id="payment-content" style="display: none;">
+                <div class="order-info">
+                    <div class="info-row">
+                        <span class="info-label">商品名称:</span>
+                        <span class="info-value" id="order-name">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">商户订单号:</span>
+                        <span class="info-value" id="out-trade-no">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">支付金额:</span>
+                        <span class="info-value amount" id="order-amount">￥0.00</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">支付方式:</span>
+                        <span class="info-value" id="payment-type">-</span>
+                    </div>
+                </div>
+
+                <div class="payment-method">
+                    <div class="method-icon" id="method-icon">支</div>
+                    <span id="method-name">支付宝扫码支付</span>
+                </div>
+
+                <div id="status-paid" class="status-paid" style="display: none;">
+                    ✅ 支付成功！订单已完成
+                </div>
+
+                <div class="qr-section">
+                    <div class="qr-code" id="qr-code">
+                        📱 模拟二维码<br>
+                        <small style="margin-top: 8px; display: block;">请点击下方按钮模拟支付</small>
+                    </div>
+                    <div class="qr-tip">
+                        ⚠️ 这是模拟支付系统，仅用于测试
+                    </div>
+                </div>
+
+                <div class="action-buttons">
+                    <button class="btn btn-primary" id="btn-pay" onclick="simulatePayment()">
+                        💰 模拟支付完成
+                    </button>
+                    <button class="btn btn-secondary" onclick="returnToMerchant()">
+                        🔙 返回商户
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            Mock EasyPay v1.0 | 模拟支付平台 | 仅供测试使用
+        </div>
+    </div>
+
+    <script>
+        let orderData = null;
+        const urlParams = new URLSearchParams(window.location.search);
+        const tradeNo = urlParams.get('trade_no');
+
+        // 加载订单信息
+        async function loadOrder() {
+            if (!tradeNo) {
+                alert('订单号不存在');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/order/${tradeNo}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    orderData = result.data;
+                    displayOrder();
+                } else {
+                    alert('加载订单失败: ' + (result.error || '未知错误'));
+                }
+            } catch (error) {
+                console.error('加载订单失败:', error);
+                alert('加载订单失败: ' + error.message);
+            }
+        }
+
+        // 显示订单信息
+        function displayOrder() {
+            if (!orderData) return;
+
+            document.getElementById('order-name').textContent = orderData.name || '未知商品';
+            document.getElementById('out-trade-no').textContent = orderData.out_trade_no || '-';
+            document.getElementById('order-amount').textContent = `￥${orderData.money.toFixed(2)}`;
+
+            // 设置支付方式
+            const paymentTypes = {
+                'alipay': { name: '支付宝扫码支付', icon: '支', color: '#1976d2' },
+                'wxpay': { name: '微信扫码支付', icon: '微', color: '#4CAF50' },
+                'qqpay': { name: 'QQ钱包扫码支付', icon: 'Q', color: '#ff9800' }
+            };
+
+            const typeInfo = paymentTypes[orderData.type] || paymentTypes['alipay'];
+            document.getElementById('payment-type').textContent = typeInfo.name;
+            document.getElementById('method-name').textContent = typeInfo.name;
+
+            const methodIcon = document.getElementById('method-icon');
+            methodIcon.textContent = typeInfo.icon;
+            methodIcon.style.background = typeInfo.color;
+
+            // 检查支付状态
+            if (orderData.status === 1) {
+                document.getElementById('status-paid').style.display = 'block';
+                document.getElementById('btn-pay').disabled = true;
+                document.getElementById('btn-pay').textContent = '✅ 已支付';
+            }
+
+            // 显示内容，隐藏加载
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('payment-content').style.display = 'block';
+        }
+
+        // 模拟支付
+        async function simulatePayment() {
+            if (!orderData || orderData.status === 1) return;
+
+            const btn = document.getElementById('btn-pay');
+            const originalText = btn.textContent;
+
+            btn.disabled = true;
+            btn.innerHTML = '<div class="loading"></div>处理中...';
+
+            try {
+                const response = await fetch(`/api/pay/${tradeNo}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // 支付成功
+                    orderData.status = 1;
+                    document.getElementById('status-paid').style.display = 'block';
+                    btn.textContent = '✅ 支付成功';
+
+                    // 3秒后自动跳转
+                    setTimeout(() => {
+                        if (result.return_url) {
+                            alert('支付成功！即将返回商户页面');
+                            window.location.href = result.return_url;
+                        }
+                    }, 2000);
+                } else {
+                    alert('支付失败: ' + result.message);
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            } catch (error) {
+                console.error('支付失败:', error);
+                alert('支付失败: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        // 返回商户
+        function returnToMerchant() {
+            if (orderData && orderData.return_url) {
+                window.location.href = orderData.return_url;
+            } else {
+                alert('无返回地址');
+            }
+        }
+
+        // 页面加载时获取订单信息
+        window.onload = function() {
+            loadOrder();
+        };
+    </script>
+</body>
+</html>

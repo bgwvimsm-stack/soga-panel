@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  mock-epay:
+    build: .
+    container_name: mock-epay-server
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      # 商户配置 - 可以通过环境变量覆盖
+      - MERCHANT_PID=114514
+      - MERCHANT_KEY=C4D038B4BED09FDB1471EF51EC3A32CD
+      - MERCHANT_NAME=测试商户
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })\""]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - epay-network
+
+networks:
+  epay-network:
+    driver: bridge
