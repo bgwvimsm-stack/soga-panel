@@ -26,6 +26,7 @@ soga-panel/
 
 ```bash
 # 安装依赖（Node.js 22+、pnpm）
+npm install -g wrangler
 pnpm install --filter ./worker
 pnpm install --filter ./frontend
 
