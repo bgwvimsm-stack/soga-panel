@@ -7,11 +7,10 @@ compatibility_date = "2025-08-07"
 [vars]
 NODE_ENV = "production"
 
-# Functions 环境变量（隐藏在服务端）
+# 后端地址 当使用BACKEND绑定时保持注释，当不同账号部署取消注释并填写正确的后端地址
 # BACKEND_URL = "https://soga-panel.workers.workers.dev"
+# 前后端通信密钥,启用后端地址的时候必须填写正确的密钥
 # API_SECRET = "123456"
-# 订阅域名配置 - 配置的域名只能访问 /api/subscription/ 路径，其他访问返回404
-SUBSCRIPTION_DOMAIN = "soga-sub.example.com"
 
 # 服务绑定配置 - 绑定到后端 Worker 服务
 [[services]]
