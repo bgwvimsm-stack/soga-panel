@@ -1,0 +1,64 @@
+name: Backend Import DB
+
+on:
+  workflow_dispatch:
+
+env:
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  DB_IMPORT_MODE: ${{ secrets.DB_IMPORT_MODE }}
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: worker/pnpm-lock.yaml
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: worker
+
+      - name: Inject wrangler.toml from secret
+        run: |
+          cat <<EOF > wrangler.toml
+          ${{ secrets.BACKEND_TOML }}
+          EOF
+        working-directory: worker
+
+      - name: Read database name
+        id: dbname
+        run: |
+          DB_NAME=$(grep -E '^database_name *= ' wrangler.toml | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$DB_NAME" ]; then
+            echo "数据库名称未在 wrangler.toml 中找到" >&2
+            exit 1
+          fi
+          echo "db_name=$DB_NAME" >> "$GITHUB_OUTPUT"
+        working-directory: worker
+
+      - name: Import schema
+        run: pnpm exec wrangler d1 execute ${{ steps.dbname.outputs.db_name }} --file=./db/db.sql --remote
+        working-directory: worker
+
+      - name: Import required data
+        run: pnpm exec wrangler d1 execute ${{ steps.dbname.outputs.db_name }} --file=./db/insert_required_data.sql --remote
+        working-directory: worker
+
+      - name: Import package data
+        if: env.DB_IMPORT_MODE == '1'
+        run: pnpm exec wrangler d1 execute ${{ steps.dbname.outputs.db_name }} --file=./db/insert_package_data.sql --remote
+        working-directory: worker
