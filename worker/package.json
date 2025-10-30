@@ -26,10 +26,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240512.0",
-    "node-fetch": "^3.3.2",
     "c8": "^8.0.1",
+    "node-fetch": "^3.3.2",
     "typescript": "^5.4.5",
-    "wrangler": "^3.0.0"
+    "wrangler": "^4.45.2"
   },
   "engines": {
     "node": ">=16.0.0"
