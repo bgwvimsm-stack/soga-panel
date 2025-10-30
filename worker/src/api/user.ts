@@ -74,7 +74,16 @@ export class UserAPI {
       const trafficResetDay = Number.parseInt(toString(trafficResetConfig?.value, "0"), 10) || 0;
 
       // 获取订阅链接URL配置
-      const subscriptionUrl = await this.configManager.getSystemConfig('subscription_url', toString(this.env.SITE_URL) || '');
+      let subscriptionUrl = await this.configManager.getSystemConfig("subscription_url");
+      if (!subscriptionUrl) {
+        subscriptionUrl = await this.configManager.getSystemConfig(
+          "site_url",
+          toString(this.env.SITE_URL) || ""
+        );
+      }
+      if (!subscriptionUrl) {
+        subscriptionUrl = toString(this.env.SITE_URL) || "";
+      }
 
       // 计算流量信息
       const transferEnable = toNumber(user.transfer_enable);
