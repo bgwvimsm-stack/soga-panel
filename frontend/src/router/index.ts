@@ -14,40 +14,8 @@ const router = createRouter({
   }
 });
 
-// 检查是否为订阅域名
-const isSubscriptionDomain = () => {
-  const userStore = useUserStore();
-  const currentHost = window.location.hostname;
-  const subscriptionUrl = userStore.user?.subscription_url;
-
-  if (!subscriptionUrl || subscriptionUrl.trim() === '') {
-    return false;
-  }
-
-  try {
-    const subscriptionHost = new URL(subscriptionUrl).hostname;
-    return currentHost === subscriptionHost;
-  } catch (error) {
-    console.warn('Invalid subscription URL:', subscriptionUrl);
-    return false;
-  }
-};
-
 // 路由守卫
 router.beforeEach((to, from, next) => {
-  // 检查订阅域名访问权限（最优先检查）
-  if (isSubscriptionDomain()) {
-    // 订阅域名只允许访问错误页面，其他页面一律404
-    const allowedPaths = ['/error/404', '/404'];
-    const isAllowedPath = allowedPaths.some(path => to.path === path || to.path.startsWith(path));
-
-    if (!isAllowedPath) {
-      // 重定向到404页面
-      next('/error/404');
-      return;
-    }
-  }
-
   // 设置页面标题
   if (to.meta?.title) {
     const siteStore = useSiteStore();
