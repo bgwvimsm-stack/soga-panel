@@ -5,6 +5,8 @@ import type { Logger } from "../utils/logger";
 import { DatabaseService } from "./database";
 import { ExpiryCheckerService } from "./expiry-checker";
 import { TrafficResetService } from "./traffic-reset";
+import type { SystemConfigManager } from "../utils/systemConfig";
+import { createSystemConfigManager } from "../utils/systemConfig";
 import { getLogger } from "../utils/logger";
 import { getChanges, toRunResult } from "../utils/d1";
 
@@ -45,6 +47,7 @@ export class SchedulerService {
   private readonly logger: Logger;
   private readonly expiryChecker: ExpiryCheckerService;
   private readonly trafficReset: TrafficResetService;
+  private readonly configManager: SystemConfigManager;
 
   constructor(env: Env) {
     this.db = new DatabaseService(env.DB);
@@ -52,6 +55,7 @@ export class SchedulerService {
     this.logger = getLogger(env);
     this.expiryChecker = new ExpiryCheckerService(env);
     this.trafficReset = new TrafficResetService(env);
+    this.configManager = createSystemConfigManager(env);
   }
 
   /**
