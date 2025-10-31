@@ -45,10 +45,6 @@ jobs:
           EOF
         working-directory: frontend
 
-      - name: Build frontend
-        run: pnpm run build
-        working-directory: frontend
-
       - name: Deploy frontend
         run: pnpm run deploy
         working-directory: frontend
