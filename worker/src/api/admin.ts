@@ -3444,7 +3444,7 @@ export class AdminAPI {
       if (result.success) {
         return successResponse({
           message: result.message,
-          count: 0 // 从result.message中提取数量信息
+          count: typeof result.count === 'number' ? result.count : 0
         });
       } else {
         return errorResponse(result.message, 500);

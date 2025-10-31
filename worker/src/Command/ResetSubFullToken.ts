@@ -1,6 +1,6 @@
 // worker/src/Command/ResetSubFullToken.js - 重置所有用户订阅令牌
 
-import { generateRandomString, generateUUID } from '../utils/crypto';
+import { generateRandomString } from '../utils/crypto';
 
 /**
  * 重置所有用户订阅令牌
@@ -22,41 +22,38 @@ export async function resetAllSubscriptionTokens(db) {
         
         for (const user of users.results) {
             try {
-                // 生成新的UUID、passwd和订阅令牌
-                const newUUID = generateUUID(); // 生成真正的UUID
-                const newPassword = generateRandomString(16);
+                // 生成新的订阅令牌
                 const newToken = generateRandomString(32);
                 
-                // 更新用户UUID、passwd和订阅令牌
+                // 仅更新订阅令牌
                 await db.prepare(`
                     UPDATE users 
-                    SET uuid = ?,
-                        passwd = ?,
-                        token = ?, 
+                    SET token = ?, 
                         updated_at = datetime('now', '+8 hours')
                     WHERE id = ?
-                `).bind(newUUID, newPassword, newToken, user.id).run();
+                `).bind(newToken, user.id).run();
                 
                 updatedCount++;
-                console.log(`用户 ${user.id} 的UUID、密码和订阅令牌已重置`);
+                console.log(`用户 ${user.id} 的订阅链接已重置`);
                 
             } catch (error) {
-                console.error(`重置用户 ${user.id} 订阅信息时出错:`, error);
+                console.error(`重置用户 ${user.id} 订阅链接时出错:`, error);
             }
         }
         
-        console.log(`订阅令牌重置完成，共重置 ${updatedCount} 个用户`);
+        console.log(`订阅链接重置完成，共重置 ${updatedCount} 个用户`);
         
         return { 
             success: true, 
-            message: `订阅令牌重置完成，共重置 ${updatedCount} 个用户` 
+            message: `订阅链接重置完成，共重置 ${updatedCount} 个用户`,
+            count: updatedCount
         };
         
     } catch (error) {
-        console.error('重置订阅令牌失败:', error);
+        console.error('重置订阅链接失败:', error);
         return { 
             success: false, 
-            message: `重置订阅令牌失败: ${error.message}` 
+            message: `重置订阅链接失败: ${error.message}` 
         };
     }
 }
