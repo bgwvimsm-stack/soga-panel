@@ -19,7 +19,7 @@
             </div>
           </el-card>
         </el-col>
-        
+
         <el-col :xs="24" :sm="12" :md="6" :lg="6" :xl="6">
           <el-card class="stat-card">
             <div class="stat-content">
@@ -31,7 +31,7 @@
             </div>
           </el-card>
         </el-col>
-        
+
         <el-col :xs="24" :sm="12" :md="6" :lg="6" :xl="6">
           <el-card class="stat-card">
             <div class="stat-content">
@@ -43,7 +43,7 @@
             </div>
           </el-card>
         </el-col>
-        
+
         <el-col :xs="24" :sm="12" :md="6" :lg="6" :xl="6">
           <el-card class="stat-card">
             <div class="stat-content">
@@ -67,10 +67,10 @@
             <h3>管理员操作</h3>
             <span class="admin-tip">请谨慎使用以下功能，操作不可逆</span>
           </div>
-          
+
           <div class="action-buttons">
-            <el-button 
-              type="warning" 
+            <el-button
+              type="warning"
               :loading="executingDailyTask"
               @click="handleExecuteDailyTask"
               :disabled="anyOperationRunning"
@@ -78,9 +78,9 @@
               <el-icon><Refresh /></el-icon>
               手动执行每日定时任务
             </el-button>
-            
-            <el-button 
-              type="danger" 
+
+            <el-button
+              type="danger"
               :loading="resettingPasswords"
               @click="handleResetAllPasswords"
               :disabled="anyOperationRunning"
@@ -88,19 +88,19 @@
               <el-icon><Key /></el-icon>
               重置所有用户UUID和密码
             </el-button>
-            
-            <el-button 
-              type="danger" 
+
+            <el-button
+              type="danger"
               :loading="resettingSubscriptions"
               @click="handleResetAllSubscriptions"
               :disabled="anyOperationRunning"
             >
               <el-icon><Link /></el-icon>
-              重置所有用户订阅信息
+              重置所有用户订阅链接
             </el-button>
-            
-            <el-button 
-              type="primary" 
+
+            <el-button
+              type="primary"
               :loading="clearingAuditCache"
               @click="handleClearAuditRulesCache"
               :disabled="anyOperationRunning"
@@ -108,7 +108,7 @@
               <el-icon><Refresh /></el-icon>
               清除审计规则缓存
             </el-button>
-            
+
             <el-button
               type="primary"
               :loading="clearingWhitelistCache"
@@ -129,9 +129,9 @@
               删除待支付记录
             </el-button>
           </div>
-          
+
           <div class="operation-status" v-if="operationResult">
-            <el-alert 
+            <el-alert
               :title="operationResult.title"
               :type="operationResult.type"
               :description="operationResult.description"
@@ -154,7 +154,7 @@
               <el-icon><InfoFilled /></el-icon>
             </div>
           </template>
-          
+
           <el-row :gutter="20">
             <el-col :xs="24" :sm="12" :md="6" :lg="6" :xl="6">
               <div class="version-item">
@@ -165,7 +165,7 @@
                 </div>
               </div>
             </el-col>
-            
+
             <el-col :xs="24" :sm="12" :md="6" :lg="6" :xl="6">
               <div class="version-item">
                 <el-icon class="version-icon"><Setting /></el-icon>
@@ -175,7 +175,7 @@
                 </div>
               </div>
             </el-col>
-            
+
             <el-col :xs="24" :sm="12" :md="6" :lg="6" :xl="6">
               <div class="version-item">
                 <el-icon class="version-icon"><Calendar /></el-icon>
@@ -212,10 +212,10 @@
               </el-button>
             </router-link>
           </div>
-          
+
           <div class="users-list" v-loading="loadingRecentUsers">
-            <div 
-              v-for="user in recentUsers" 
+            <div
+              v-for="user in recentUsers"
               :key="user.id"
               class="user-item"
             >
@@ -266,9 +266,9 @@ import {
   Delete
 } from "@element-plus/icons-vue";
 import { useUserStore } from "@/store/user";
-import { 
-  getSystemStats, 
-  getNodes, 
+import {
+  getSystemStats,
+  getNodes,
   getUsers,
   triggerTrafficReset,
   resetAllUserPasswords,
@@ -336,7 +336,7 @@ const formatTime = (timestamp: number): string => {
   const minutes = Math.floor(diff / 60000);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
-  
+
   if (days > 0) return `${days}天前`;
   if (hours > 0) return `${hours}小时前`;
   return `${minutes}分钟前`;
@@ -392,7 +392,7 @@ const loadSystemStats = async () => {
     systemStats.onlineNodes = data.nodes?.online || 0;
     systemStats.totalTraffic = data.traffic?.total || 0;
     systemStats.todayTraffic = data.traffic?.today || 0;
-    
+
     // 获取后端版本信息（从健康检查接口获取更完整的信息）
     try {
       const healthResponse = await fetch('/api/health');
@@ -409,7 +409,7 @@ const loadSystemStats = async () => {
       // 如果健康检查失败，使用默认值
       systemInfo.value = { version: '1.0.0' };
     }
-    
+
     // 计算今日新增用户数
     try {
       const usersResponse = await getUsers({ limit: 100 });
@@ -461,20 +461,20 @@ const handleExecuteDailyTask = async () => {
         type: 'warning'
       }
     );
-    
+
     executingDailyTask.value = true;
     const { data } = await triggerTrafficReset();
-    
+
     operationResult.value = {
       title: '操作成功',
       type: 'success',
       description: data.message || '每日定时任务执行完成，已处理用户流量重置和节点流量重置'
     };
     ElMessage.success(data.message || '每日定时任务执行成功，已完成流量重置和数据清理');
-    
+
     // 刷新系统统计
     await loadSystemStats();
-    
+
   } catch (error) {
     if (error !== 'cancel') {
       console.error('执行每日定时任务失败:', error);
@@ -501,17 +501,17 @@ const handleResetAllPasswords = async () => {
         type: 'error'
       }
     );
-    
+
     resettingPasswords.value = true;
     const { data } = await resetAllUserPasswords();
-    
+
     operationResult.value = {
       title: '操作成功',
       type: 'success',
       description: data.message || `已重置 ${data.count} 个用户的节点密码`
     };
     ElMessage.success(data.message || '节点密码重置成功');
-    
+
   } catch (error) {
     if (error !== 'cancel') {
       console.error('重置节点密码失败:', error);
@@ -530,7 +530,7 @@ const handleResetAllPasswords = async () => {
 const handleResetAllSubscriptions = async () => {
   try {
     await ElMessageBox.confirm(
-      '此操作将重置所有用户的订阅链接，用户需要重新获取订阅链接，是否继续？',
+      '此操作将重置所有用户的订阅链接，原有Token将失效，是否继续？',
       '危险操作确认',
       {
         confirmButtonText: '确定',
@@ -538,17 +538,17 @@ const handleResetAllSubscriptions = async () => {
         type: 'error'
       }
     );
-    
+
     resettingSubscriptions.value = true;
     const { data } = await resetAllSubscriptionTokens();
-    
+
     operationResult.value = {
       title: '操作成功',
       type: 'success',
-      description: data.message || `已重置 ${data.count} 个用户的订阅链接`
+      description: data.message || `已重置 ${data.count ?? 0} 个用户的订阅链接`
     };
     ElMessage.success(data.message || '订阅链接重置成功');
-    
+
   } catch (error) {
     if (error !== 'cancel') {
       console.error('重置订阅链接失败:', error);
@@ -579,7 +579,7 @@ const handleClearAuditRulesCache = async () => {
 
     clearingAuditCache.value = true;
     const { data } = await clearAuditRulesCache();
-    
+
     operationResult.value = {
       title: '操作成功',
       type: 'success',
@@ -615,7 +615,7 @@ const handleClearWhitelistCache = async () => {
 
     clearingWhitelistCache.value = true;
     const { data } = await clearWhitelistCache();
-    
+
     operationResult.value = {
       title: '操作成功',
       type: 'success',
@@ -688,13 +688,13 @@ onMounted(async () => {
 .admin-dashboard {
   .page-header {
     margin-bottom: 24px;
-    
+
     h2 {
       margin: 0 0 8px 0;
       color: #303133;
       font-size: 24px;
     }
-    
+
     p {
       margin: 0;
       color: #909399;
@@ -774,7 +774,7 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
-  
+
   h3 {
     margin: 0;
     color: #303133;
@@ -790,23 +790,23 @@ onMounted(async () => {
       align-items: center;
       padding: 12px 0;
       border-bottom: 1px solid #f5f7fa;
-      
+
       &:last-child {
         border-bottom: none;
       }
-      
+
       .user-info {
         display: flex;
         align-items: center;
         gap: 12px;
-        
+
         .user-details {
           .user-name {
             font-weight: 500;
             color: #303133;
             margin-bottom: 4px;
           }
-          
+
           .user-meta {
             color: #909399;
             font-size: 12px;
@@ -824,29 +824,29 @@ onMounted(async () => {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
-    
+
     h3 {
       margin: 0;
       color: #303133;
     }
-    
+
     .admin-tip {
       color: #e6a23c;
       font-size: 12px;
     }
   }
-  
+
   .action-buttons {
     display: flex;
     gap: 16px;
     flex-wrap: wrap;
     margin-bottom: 20px;
-    
+
     .el-button {
       min-width: 180px;
     }
   }
-  
+
   .operation-status {
     margin-top: 20px;
   }
@@ -858,19 +858,19 @@ onMounted(async () => {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    
+
     h3 {
       margin: 0;
       color: #303133;
       font-size: 16px;
     }
-    
+
     .el-icon {
       color: #409eff;
       font-size: 18px;
     }
   }
-  
+
   .version-item {
     display: flex;
     align-items: center;
@@ -879,12 +879,12 @@ onMounted(async () => {
     background: #f8f9fa;
     border-radius: 8px;
     transition: all 0.3s ease;
-    
+
     &:hover {
       background: #f0f2f5;
       transform: translateY(-1px);
     }
-    
+
     .version-icon {
       width: 40px;
       height: 40px;
@@ -897,16 +897,16 @@ onMounted(async () => {
       font-size: 18px;
       flex-shrink: 0;
     }
-    
+
     .version-content {
       flex: 1;
-      
+
       .version-label {
         font-size: 12px;
         color: #909399;
         margin-bottom: 4px;
       }
-      
+
       .version-value {
         font-size: 14px;
         font-weight: 600;
