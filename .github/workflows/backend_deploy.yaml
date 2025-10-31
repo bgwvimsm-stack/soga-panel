@@ -43,5 +43,5 @@ jobs:
         working-directory: worker
 
       - name: Deploy worker
-        run: pnpm run deploy
+        run: pnpm run deploy 2>&1
         working-directory: worker
