@@ -41,7 +41,7 @@
 | GET | `/api/user/traffic/summary` | 周/月流量汇总 |
 | POST | `/api/user/traffic/manual-update` | 手动触发流量同步 |
 | POST | `/api/user/reset-subscription-token` | 重置订阅令牌 |
-| GET | `/api/subscription/{client}` | 生成订阅（`v2ray` / `clash` / `quantumult` 等） |
+| GET | `/api/subscription/{client}` | 生成订阅（`v2ray` / `clash` / `quantumultx` 等） |
 
 ## 管理后台 `/api/admin/*`
 

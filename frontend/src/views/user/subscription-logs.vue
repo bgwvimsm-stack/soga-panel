@@ -42,7 +42,7 @@
           <el-option label="全部" value="" />
           <el-option label="Clash" value="clash" />
           <el-option label="Shadowrocket" value="shadowrocket" />
-          <el-option label="Quantumult X" value="quantumult" />
+          <el-option label="Quantumult X" value="quantumultx" />
           <el-option label="Surge" value="surge" />
         </el-select>
       </template>
@@ -120,7 +120,7 @@ const getTypeTagColor = (type: string) => {
   const colorMap: Record<string, string> = {
     clash: 'primary',
     shadowrocket: 'success',
-    quantumult: 'warning',
+    quantumultx: 'warning',
     surge: 'info'
   };
   return colorMap[type] || '';
@@ -130,7 +130,7 @@ const getTypeDisplayName = (type: string) => {
   const nameMap: Record<string, string> = {
     clash: 'Clash',
     shadowrocket: 'Shadowrocket',
-    quantumult: 'Quantumult X',
+    quantumultx: 'Quantumult X',
     surge: 'Surge'
   };
   return nameMap[type] || type;

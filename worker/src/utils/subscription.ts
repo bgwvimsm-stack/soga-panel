@@ -84,9 +84,8 @@ function generateVlessLink(node, config, user) {
   if (config.server) params.set("host", config.server);
   if (config.service_name) params.set("serviceName", config.service_name);
 
-  return `vless://${user.uuid}@${node.server}:${
-    node.server_port
-  }?${params.toString()}#${encodeURIComponent(node.name)}`;
+  const host = formatHostForUrl(node.server);
+  return `vless://${user.uuid}@${host}:${node.server_port}?${params.toString()}#${encodeURIComponent(node.name)}`;
 }
 
 /**
@@ -101,7 +100,8 @@ function generateTrojanLink(node, config, user) {
   if (config.server) params.set("host", config.server);
 
   const queryString = params.toString();
-  const url = `trojan://${user.passwd}@${node.server}:${node.server_port}`;
+  const host = formatHostForUrl(node.server);
+  const url = `trojan://${user.passwd}@${host}:${node.server_port}`;
 
   return queryString
     ? `${url}?${queryString}#${encodeURIComponent(node.name)}`
@@ -116,7 +116,8 @@ function generateShadowsocksLink(node, config, user) {
   const userInfo = `${method}:${user.passwd}`;
   const encoded = btoa(userInfo);
 
-  let link = `ss://${encoded}@${node.server}:${node.server_port}`;
+  const host = formatHostForUrl(node.server);
+  let link = `ss://${encoded}@${host}:${node.server_port}`;
 
   // 添加混淆参数
   if (config.obfs && config.obfs !== "plain") {
@@ -150,9 +151,8 @@ function generateHysteriaLink(node, config, user) {
     if (config.obfs_password) params.set("obfsParam", config.obfs_password);
   }
 
-  return `hysteria://${node.server}:${
-    node.server_port
-  }?${params.toString()}#${encodeURIComponent(node.name)}`;
+  const host = formatHostForUrl(node.server);
+  return `hysteria://${host}:${node.server_port}?${params.toString()}#${encodeURIComponent(node.name)}`;
 }
 
 /**
@@ -415,63 +415,187 @@ export function generateClashConfig(nodes, user) {
 }
 
 /**
- * 生成 Quantumult 配置
+ * 生成 Quantumult X 配置
  * @param {Array} nodes - 节点列表
  * @param {Object} user - 用户信息
- * @returns {string} - Quantumult 格式配置
+ * @returns {string} - Quantumult X 格式配置
  */
-export function generateQuantumultConfig(nodes, user) {
-  const servers = [];
+export function generateQuantumultXConfig(nodes, user) {
+  const entries = [];
 
   for (const node of nodes) {
     const nodeConfig = JSON.parse(node.node_config || "{}");
     const config = nodeConfig.config || nodeConfig; // 兼容两种格式
-    let server = "";
+    let line = "";
 
     switch (node.type) {
       case "v2ray":
-        server = `vmess=${node.server}:${
-          node.server_port
-        }, method=aes-128-gcm, password=${user.uuid}`;
-        if (config.stream_type === "ws") {
-          server += `, obfs=ws, obfs-uri=${config.path || "/"}`;
-          if (config.server) server += `, obfs-host=${config.server}`;
-        }
-        if (config.tls_type === "tls") {
-          server += ", over-tls=true, tls-verification=false";
-        }
-        server += `, tag=${node.name}`;
+        line = buildQuantumultXVmessEntry(node, config, user);
         break;
-
+      case "vless":
+        line = buildQuantumultXVlessEntry(node, config, user);
+        break;
       case "trojan":
-        server = `trojan=${node.server}:${node.server_port}, password=${
-          user.passwd
-        }, over-tls=true, tls-verification=false`;
-        if (config.sni) server += `, tls-host=${config.sni}`;
-        server += `, tag=${node.name}`;
+        line = buildQuantumultXTrojanEntry(node, config, user);
         break;
-
       case "ss":
-        server = `shadowsocks=${node.server}:${node.server_port}, method=${
-          config.cipher || "aes-128-gcm"
-        }, password=${user.passwd}`;
-        if (config.obfs && config.obfs !== "plain") {
-          server += `, obfs=${
-            config.obfs === "simple_obfs_http" ? "http" : "tls"
-          }`;
-          if (config.server) server += `, obfs-host=${config.server}`;
-          if (config.path) server += `, obfs-uri=${config.path}`;
-        }
-        server += `, tag=${node.name}`;
+        line = buildQuantumultXSSEntry(node, config, user);
         break;
+      default:
+        line = "";
     }
 
-    if (server) {
-      servers.push(server);
+    if (line) {
+      entries.push(line);
     }
   }
 
-  return servers.join("\n");
+  return entries.join("\n");
+}
+
+function buildQuantumultXSSEntry(node, config, user) {
+  const options = [];
+  pushOption(options, "method", config.cipher || "aes-128-gcm");
+  pushOption(options, "password", user.passwd);
+  pushOption(options, "fast-open", false);
+  pushOption(options, "udp-relay", true);
+
+  const obfs = normalizeObfs(config.obfs);
+  if (obfs && obfs !== "plain") {
+    pushOption(options, "obfs", obfs);
+    pushOption(options, "obfs-host", getHeaderHost(node, config));
+    pushOption(options, "obfs-uri", normalizePath(config.path));
+  }
+
+  pushOption(options, "tag", node.name);
+  return formatQuantumultXEntry("shadowsocks", node.server, node.server_port, options);
+}
+
+function buildQuantumultXVmessEntry(node, config, user) {
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  if (streamType === "grpc") {
+    return "";
+  }
+
+  const options = [];
+  pushOption(options, "method", config.security || "auto");
+  pushOption(options, "password", user.uuid);
+  pushOption(options, "fast-open", false);
+  pushOption(options, "udp-relay", false);
+  if (typeof config.aead === "boolean") {
+    pushOption(options, "aead", config.aead);
+  }
+
+  applyStreamOptions(options, node, config);
+  pushOption(options, "tag", node.name);
+  return formatQuantumultXEntry("vmess", node.server, node.server_port, options);
+}
+
+function buildQuantumultXVlessEntry(node, config, user) {
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  if (streamType === "grpc" || config.tls_type === "reality") {
+    return "";
+  }
+
+  const options = [];
+  pushOption(options, "method", "none");
+  pushOption(options, "password", user.uuid);
+  pushOption(options, "fast-open", false);
+  pushOption(options, "udp-relay", false);
+
+  applyStreamOptions(options, node, config);
+  pushOption(options, "tag", node.name);
+  return formatQuantumultXEntry("vless", node.server, node.server_port, options);
+}
+
+function buildQuantumultXTrojanEntry(node, config, user) {
+  const options = [];
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  const isWebsocket = streamType === "ws";
+  const tlsEnabled = config.tls_type === "tls" || isWebsocket;
+  const host = getHeaderHost(node, config);
+
+  pushOption(options, "password", user.passwd);
+  pushOption(options, "fast-open", false);
+  pushOption(options, "tls-verification", false);
+
+  if (isWebsocket) {
+    pushOption(options, "obfs", tlsEnabled ? "wss" : "ws");
+    pushOption(options, "obfs-host", host);
+    pushOption(options, "obfs-uri", normalizePath(config.path));
+    pushOption(options, "udp-relay", true);
+  } else {
+    if (tlsEnabled) {
+      pushOption(options, "over-tls", true);
+      pushOption(options, "tls-host", host);
+    }
+    pushOption(options, "udp-relay", false);
+  }
+
+  pushOption(options, "tag", node.name);
+  return formatQuantumultXEntry("trojan", node.server, node.server_port, options);
+}
+
+function applyStreamOptions(options, node, config) {
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  const isTLS = config.tls_type === "tls";
+  const host = getHeaderHost(node, config);
+
+  if (streamType === "ws") {
+    pushOption(options, "obfs", isTLS ? "wss" : "ws");
+    pushOption(options, "obfs-host", host);
+    pushOption(options, "obfs-uri", normalizePath(config.path));
+  } else if (streamType === "http") {
+    pushOption(options, "obfs", "http");
+    pushOption(options, "obfs-host", host);
+    pushOption(options, "obfs-uri", normalizePath(config.path));
+  } else if (isTLS) {
+    pushOption(options, "obfs", "over-tls");
+    pushOption(options, "obfs-host", host);
+  }
+}
+
+function getHeaderHost(node, config) {
+  return node.tls_host || config.sni || config.host || config.server || node.server;
+}
+
+function normalizePath(path) {
+  if (!path || typeof path !== "string") return "/";
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
+function normalizeObfs(obfs) {
+  if (!obfs) return "";
+  const value = String(obfs);
+  const lower = value.toLowerCase();
+  if (lower === "simple_obfs_http") return "http";
+  if (lower === "simple_obfs_tls") return "tls";
+  return value;
+}
+
+function pushOption(options, key, value) {
+  if (value === undefined || value === null || value === "") {
+    return;
+  }
+  if (typeof value === "boolean") {
+    options.push(`${key}=${value ? "true" : "false"}`);
+  } else {
+    options.push(`${key}=${value}`);
+  }
+}
+
+function formatQuantumultXEntry(protocol, server, port, options) {
+  const endpoint = `${formatHostForUrl(server)}:${port}`;
+  return options.length ? `${protocol}=${endpoint}, ${options.join(", ")}` : `${protocol}=${endpoint}`;
+}
+
+function formatHostForUrl(host) {
+  if (!host) return "";
+  const value = String(host).trim();
+  if (value.includes(":") && !value.startsWith("[") && !value.endsWith("]")) {
+    return `[${value}]`;
+  }
+  return value;
 }
 
 /**

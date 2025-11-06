@@ -6,13 +6,13 @@ import { errorResponse } from "../utils/response";
 import {
   generateV2rayConfig,
   generateClashConfig,
-  generateQuantumultConfig,
+  generateQuantumultXConfig,
   generateShadowrocketConfig,
   generateSurgeConfig,
 } from "../utils/subscription";
 import { ensureNumber } from "../utils/d1";
 
-type SubscriptionType = "v2ray" | "clash" | "quantumult" | "shadowrocket" | "surge";
+type SubscriptionType = "v2ray" | "clash" | "quantumultx" | "shadowrocket" | "surge";
 
 type SubscriptionUserRow = {
   id: number;
@@ -31,7 +31,7 @@ type SubscriptionGenerator = (nodes: SubscriptionNode[], user: SubscriptionUserR
 const GENERATORS: Record<SubscriptionType, SubscriptionGenerator> = {
   v2ray: generateV2rayConfig,
   clash: generateClashConfig,
-  quantumult: generateQuantumultConfig,
+  quantumultx: generateQuantumultXConfig,
   shadowrocket: generateShadowrocketConfig,
   surge: generateSurgeConfig,
 };
@@ -39,7 +39,7 @@ const GENERATORS: Record<SubscriptionType, SubscriptionGenerator> = {
 const CONTENT_TYPES: Record<SubscriptionType, string> = {
   v2ray: "text/plain",
   clash: "text/yaml",
-  quantumult: "text/plain",
+  quantumultx: "text/plain",
   shadowrocket: "text/plain",
   surge: "text/plain",
 };
@@ -47,7 +47,7 @@ const CONTENT_TYPES: Record<SubscriptionType, string> = {
 const FILE_EXTENSIONS: Record<SubscriptionType, string> = {
   v2ray: "txt",
   clash: "yaml",
-  quantumult: "txt",
+  quantumultx: "txt",
   shadowrocket: "txt",
   surge: "txt",
 };
@@ -103,9 +103,9 @@ export class SubscriptionAPI {
     return this._getSubscriptionByType(request, "clash");
   }
 
-  // Quantumult订阅
-  async getQuantumultSubscription(request) {
-    return this._getSubscriptionByType(request, "quantumult");
+  // Quantumult X订阅
+  async getQuantumultXSubscription(request) {
+    return this._getSubscriptionByType(request, "quantumultx");
   }
 
   // Shadowrocket订阅
