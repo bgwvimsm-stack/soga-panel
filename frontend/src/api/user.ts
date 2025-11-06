@@ -213,3 +213,29 @@ export const createRechargeOrder = (data: {
 }>> => {
   return http.post("/user/recharge", data);
 };
+
+export const startTwoFactorSetup = (): Promise<ApiResponse<{
+  secret: string;
+  otp_auth_url: string;
+  provisioning_uri: string;
+}>> => {
+  return http.post("/user/two-factor/setup");
+};
+
+export const enableTwoFactor = (data: { code: string }): Promise<ApiResponse<{
+  message: string;
+  backup_codes: string[];
+}>> => {
+  return http.post("/user/two-factor/enable", data);
+};
+
+export const regenerateTwoFactorBackupCodes = (data: { code: string }): Promise<ApiResponse<{
+  message: string;
+  backup_codes: string[];
+}>> => {
+  return http.post("/user/two-factor/backup-codes", data);
+};
+
+export const disableTwoFactor = (data: { password: string; code: string }): Promise<ApiResponse<{ message: string }>> => {
+  return http.post("/user/two-factor/disable", data);
+};

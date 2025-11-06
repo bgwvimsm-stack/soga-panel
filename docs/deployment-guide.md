@@ -50,6 +50,7 @@ wrangler d1 execute soga-panel-d1 --file=./db/insert_package_data.sql --remote
 ```toml
 JWT_SECRET = "your-secure-secret"
 WEBAPI_KEY = "your-soga-api-key"
+TWO_FACTOR_SECRET_KEY = "your-2fa-encryption-secret"
 MAIL_PROVIDER = "none"           # none / resend / smtp / sendgrid
 MAIL_FROM = "no-reply@example.com"
 ```

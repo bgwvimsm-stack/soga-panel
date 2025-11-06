@@ -12,6 +12,7 @@ import {
   generateUUID,
   generateRandomString,
   generateNumericCode,
+  sha256Hex,
 } from "../utils/crypto";
 import { EmailService } from "../services/email";
 import {
@@ -32,6 +33,7 @@ import {
   getChanges,
   getLastRowId,
 } from "../utils/d1";
+import { TwoFactorService } from "../services/twoFactor";
 
 const GOOGLE_TOKENINFO_ENDPOINT = "https://oauth2.googleapis.com/tokeninfo";
 
@@ -69,11 +71,24 @@ interface GithubEmailEntry {
   [key: string]: unknown;
 }
 
+type TwoFactorChallengePayload = {
+  userId: number;
+  remember: boolean;
+  loginMethod: string;
+  clientIP: string;
+  userAgent: string;
+  issuedAt: number;
+  meta?: Record<string, unknown> | null;
+};
+
 const EMAIL_REGEX =
   /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
 const PURPOSE_REGISTER = "register";
 const PURPOSE_PASSWORD_RESET = "password_reset";
+
+const TWO_FACTOR_CHALLENGE_TTL = 300;
+const TRUSTED_DEVICE_TTL_DAYS = 30;
 
 interface AuthUserRow {
   id: number;
@@ -85,6 +100,10 @@ interface AuthUserRow {
   google_sub?: string | null;
   github_id?: string | null;
   username?: string | null;
+  two_factor_enabled?: number;
+  two_factor_secret?: string | null;
+  two_factor_backup_codes?: string | null;
+  two_factor_temp_secret?: string | null;
   [key: string]: unknown;
 }
 
@@ -111,6 +130,7 @@ export class AuthAPI {
   configManager: SystemConfigManager;
   logger: Logger;
   private readonly dbRaw: D1Database;
+  private readonly twoFactorService: TwoFactorService;
 
   constructor(env: Env) {
     this.dbRaw = env.DB as D1Database;
@@ -120,6 +140,7 @@ export class AuthAPI {
     this.emailService = new EmailService(env);
     this.configManager = createSystemConfigManager(env);
     this.logger = getLogger(env);
+    this.twoFactorService = new TwoFactorService(env);
   }
 
   getIntConfig(value: unknown, fallback: number, options: GetIntOptions = {}) {
@@ -157,6 +178,205 @@ export class AuthAPI {
       }
     }
     return defaultValue;
+  }
+
+  private isTwoFactorEnabled(user: AuthUserRow): boolean {
+    return Number(user.two_factor_enabled) === 1 && Boolean(user.two_factor_secret);
+  }
+
+  private async shouldRequireTwoFactor(
+    user: AuthUserRow,
+    trustToken: string
+  ): Promise<boolean> {
+    if (!this.isTwoFactorEnabled(user)) {
+      return false;
+    }
+    if (trustToken && (await this.validateTrustedDevice(user.id, trustToken))) {
+      return false;
+    }
+    return true;
+  }
+
+  private async validateTrustedDevice(userId: number, trustToken: string): Promise<boolean> {
+    if (!trustToken) return false;
+    const tokenHash = await sha256Hex(trustToken);
+    const record = await this.db.db
+      .prepare(
+        `
+        SELECT id FROM two_factor_trusted_devices
+        WHERE user_id = ? AND token_hash = ? AND disabled = 0
+          AND expires_at > datetime('now', '+8 hours')
+      `
+      )
+      .bind(userId, tokenHash)
+      .first<{ id: number }>();
+
+    if (record) {
+      await this.db.db
+        .prepare(
+          `
+        UPDATE two_factor_trusted_devices
+        SET last_used_at = datetime('now', '+8 hours')
+        WHERE id = ?
+      `
+        )
+        .bind(record.id)
+        .run();
+      return true;
+    }
+    return false;
+  }
+
+  private async createTwoFactorChallenge(
+    payload: Omit<TwoFactorChallengePayload, "issuedAt">
+  ) {
+    const challengeId = generateRandomString(48);
+    const data: TwoFactorChallengePayload = {
+      ...payload,
+      issuedAt: Date.now(),
+      meta: payload.meta ?? null,
+    };
+    await this.cache.set(
+      `twofa_challenge_${challengeId}`,
+      JSON.stringify(data),
+      TWO_FACTOR_CHALLENGE_TTL
+    );
+    return challengeId;
+  }
+
+  private async getTwoFactorChallenge(
+    challengeId: string
+  ): Promise<TwoFactorChallengePayload | null> {
+    const cacheKey = `twofa_challenge_${challengeId}`;
+    const raw = await this.cache.get(cacheKey);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as TwoFactorChallengePayload;
+    } catch {
+      return null;
+    }
+  }
+
+  private async clearTwoFactorChallenge(challengeId: string) {
+    await this.cache.delete(`twofa_challenge_${challengeId}`);
+  }
+
+  private async finalizeLogin(
+    user: AuthUserRow,
+    remember: boolean,
+    loginMethod: string,
+    clientIP: string,
+    userAgent: string,
+    extra: Record<string, unknown> = {}
+  ) {
+    const token = await generateToken(
+      {
+        userId: user.id,
+        email: user.email,
+        isAdmin: user.is_admin === 1,
+      },
+      this.env.JWT_SECRET
+    );
+
+    const sessionTTL = remember ? 604800 : 86400;
+    await this.cache.set(
+      `session_${token}`,
+      JSON.stringify(this.buildSessionPayload(user)),
+      sessionTTL
+    );
+
+    await this.db.db
+      .prepare(
+        `
+        UPDATE users 
+        SET last_login_time = datetime('now', '+8 hours'), 
+            last_login_ip = ?
+        WHERE id = ?
+      `
+      )
+      .bind(clientIP, user.id)
+      .run();
+
+    const loginNote = user.status === 0 ? "禁用用户登录" : null;
+    await this.db.db
+      .prepare(
+        `
+        INSERT INTO login_logs (user_id, login_ip, user_agent, login_status, failure_reason, login_method)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `
+      )
+      .bind(user.id, clientIP, userAgent, 1, loginNote, loginMethod)
+      .run();
+
+    const userResponse = this.buildUserResponse(user);
+
+    return successResponse({
+      token,
+      user: userResponse,
+      remember,
+      ...extra,
+    });
+  }
+
+  private async verifyTwoFactorCode(
+    user: AuthUserRow,
+    code: string
+  ): Promise<{ success: boolean; usedBackup: boolean }> {
+    if (!code) return { success: false, usedBackup: false };
+    const trimmed = code.trim();
+    const secret = await this.twoFactorService.decryptSecret(user.two_factor_secret);
+    if (!secret) return { success: false, usedBackup: false };
+
+    if (await this.twoFactorService.verifyTotp(secret, trimmed)) {
+      return { success: true, usedBackup: false };
+    }
+
+    const normalizedBackup = this.twoFactorService.normalizeBackupCodeInput(trimmed);
+    if (!normalizedBackup || normalizedBackup.length < 6) {
+      return { success: false, usedBackup: false };
+    }
+
+    const hashedInput = await this.twoFactorService.hashBackupCode(normalizedBackup);
+    const storedCodes = this.twoFactorService.parseBackupCodes(user.two_factor_backup_codes);
+    const index = storedCodes.findIndex((hash) => hash === hashedInput);
+    if (index === -1) {
+      return { success: false, usedBackup: false };
+    }
+
+    storedCodes.splice(index, 1);
+    await this.db.db
+      .prepare("UPDATE users SET two_factor_backup_codes = ? WHERE id = ?")
+      .bind(JSON.stringify(storedCodes), user.id)
+      .run();
+    user.two_factor_backup_codes = JSON.stringify(storedCodes);
+
+    return { success: true, usedBackup: true };
+  }
+
+  private async issueTrustedDeviceToken(
+    userId: number,
+    userAgent: string,
+    deviceName?: string
+  ): Promise<{ token: string; expires_at: string }> {
+    const token = generateRandomString(64);
+    const tokenHash = await sha256Hex(token);
+    const expiresInExpression = `+${TRUSTED_DEVICE_TTL_DAYS} days`;
+
+    await this.db.db
+      .prepare(
+        `
+        INSERT INTO two_factor_trusted_devices (user_id, token_hash, device_name, user_agent, expires_at)
+        VALUES (?, ?, ?, ?, datetime('now', '+8 hours', ?))
+      `
+      )
+      .bind(userId, tokenHash, deviceName || null, userAgent || "", expiresInExpression)
+      .run();
+
+    const expiresAt = new Date(Date.now() + TRUSTED_DEVICE_TTL_DAYS * 24 * 60 * 60 * 1000);
+    return {
+      token,
+      expires_at: expiresAt.toISOString(),
+    };
   }
 
   private getGoogleClientIds(): string[] {
@@ -297,6 +517,7 @@ export class AuthAPI {
       device_limit: user.device_limit,
       expire_time: user.expire_time,
       status: user.status,
+      two_factor_enabled: Number(user.two_factor_enabled) === 1,
     };
   }
 
@@ -325,6 +546,7 @@ export class AuthAPI {
       device_limit: user.device_limit,
       status: user.status,
       token: user.token,
+      two_factor_enabled: Number(user.two_factor_enabled) === 1,
     };
   }
 
@@ -1117,6 +1339,10 @@ export class AuthAPI {
       const email = rawEmail.toLowerCase();
       const password = typeof body.password === "string" ? body.password : "";
       const remember = this.parseBoolean(body.remember, false);
+      const trustToken =
+        typeof body.twoFactorTrustToken === "string"
+          ? body.twoFactorTrustToken.trim()
+          : "";
 
       if (!email || !password) {
         return errorResponse("请填写邮箱和密码", 400);
@@ -1174,61 +1400,121 @@ export class AuthAPI {
         return errorResponse("账户已过期，请联系管理员续费", 403);
       }
 
-      // 生成 Token
-      const token = await generateToken(
-        {
+      if (await this.shouldRequireTwoFactor(user, trustToken)) {
+        const challengeId = await this.createTwoFactorChallenge({
           userId: user.id,
-          email: user.email,
-          isAdmin: user.is_admin === 1,
-        },
-        this.env.JWT_SECRET
-      );
+          remember,
+          loginMethod: "password",
+          clientIP,
+          userAgent,
+        });
+        return successResponse({
+          need_2fa: true,
+          challenge_id: challengeId,
+          two_factor_enabled: true,
+        });
+      }
 
-      const sessionTTL = remember ? 604800 : 86400;
-
-      // 保存会话，包含代理连接所需信息但不包含密码哈希
-      await this.cache.set(
-        `session_${token}`,
-        JSON.stringify(this.buildSessionPayload(user)),
-        sessionTTL
-      );
-
-      // 更新最后登录信息
-      await this.db.db
-        .prepare(
-          `
-        UPDATE users 
-        SET last_login_time = datetime('now', '+8 hours'), 
-            last_login_ip = ?
-        WHERE id = ?
-      `
-        )
-        .bind(clientIP, user.id)
-        .run();
-
-      // 记录登录日志
-      const loginNote = user.status === 0 ? "禁用用户登录" : null;
-      await this.db.db
-        .prepare(
-          `
-        INSERT INTO login_logs (user_id, login_ip, user_agent, login_status, failure_reason, login_method)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `
-        )
-        .bind(user.id, clientIP, userAgent, 1, loginNote, "password")
-        .run();
-
-      // 返回用户信息，包含代理连接所需的passwd，但不包含password_hash
-      const userResponse = this.buildUserResponse(user);
-
-      return successResponse({
-        token,
-        user: userResponse,
-        remember,
-      });
+      return this.finalizeLogin(user, remember, "password", clientIP, userAgent);
     } catch (error) {
       console.error("Login error:", error);
       return errorResponse(error.message, 500);
+    }
+  }
+
+  async verifyTwoFactor(request) {
+    try {
+      const body = await request.json();
+      const challengeId =
+        typeof body.challenge_id === "string"
+          ? body.challenge_id.trim()
+          : typeof body.challengeId === "string"
+          ? body.challengeId.trim()
+          : "";
+      const code = typeof body.code === "string" ? body.code.trim() : "";
+      const rememberDevice = this.parseBoolean(body.rememberDevice, false);
+      const deviceName =
+        typeof body.deviceName === "string"
+          ? body.deviceName.trim().slice(0, 64)
+          : "";
+
+      if (!challengeId) {
+        return errorResponse("缺少验证会话，请重新登录", 400);
+      }
+      if (!code) {
+        return errorResponse("请输入验证码", 400);
+      }
+
+      const challenge = await this.getTwoFactorChallenge(challengeId);
+      if (!challenge) {
+        return errorResponse("验证会话已过期，请重新登录", 400);
+      }
+
+      const user = await this.db.db
+        .prepare("SELECT * FROM users WHERE id = ?")
+        .bind(challenge.userId)
+        .first<AuthUserRow>();
+
+      if (!user || !this.isTwoFactorEnabled(user)) {
+        await this.clearTwoFactorChallenge(challengeId);
+        return errorResponse("用户未启用二步验证", 400);
+      }
+
+      const verification = await this.verifyTwoFactorCode(user, code);
+      if (!verification.success) {
+        await this.db.db
+          .prepare(
+            `
+          INSERT INTO login_logs (user_id, login_ip, user_agent, login_status, failure_reason, login_method)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `
+          )
+          .bind(
+            user.id,
+            challenge.clientIP,
+            challenge.userAgent,
+            0,
+            "二步验证失败",
+            challenge.loginMethod || "password"
+          )
+          .run();
+        return errorResponse("二步验证码无效，请重试", 401);
+      }
+
+      await this.clearTwoFactorChallenge(challengeId);
+
+      let trustInfo: Record<string, unknown> = {};
+      if (rememberDevice) {
+        const trusted = await this.issueTrustedDeviceToken(
+          user.id,
+          challenge.userAgent,
+          deviceName || "Trusted device"
+        );
+        trustInfo = {
+          trust_token: trusted.token,
+          trust_token_expires_at: trusted.expires_at,
+        };
+      }
+
+      const extra = {
+        ...(challenge.meta || {}),
+        ...trustInfo,
+      };
+
+      return this.finalizeLogin(
+        user,
+        challenge.remember,
+        challenge.loginMethod || "password",
+        challenge.clientIP,
+        challenge.userAgent,
+        extra
+      );
+    } catch (error) {
+      this.logger.error("二步验证失败", error);
+      return errorResponse(
+        error instanceof Error ? error.message : "二步验证失败，请稍后重试",
+        500
+      );
     }
   }
 
@@ -1242,6 +1528,10 @@ export class AuthAPI {
     }
 
     const remember = this.parseBoolean(body?.remember, false);
+    const trustToken =
+      typeof body?.twoFactorTrustToken === "string"
+        ? body.twoFactorTrustToken.trim()
+        : "";
 
     const possibleToken =
       typeof body?.idToken === "string"
@@ -1478,13 +1768,11 @@ export class AuthAPI {
             oauth_provider = 'google',
             first_oauth_login_at = COALESCE(first_oauth_login_at, datetime('now', '+8 hours')),
             last_oauth_login_at = datetime('now', '+8 hours'),
-            last_login_time = datetime('now', '+8 hours'),
-            last_login_ip = ?,
             updated_at = datetime('now', '+8 hours')
         WHERE id = ?
       `
         )
-        .bind(googleSub, clientIP, user.id)
+        .bind(googleSub, user.id)
         .run();
 
       user = await this.db.db
@@ -1510,44 +1798,35 @@ export class AuthAPI {
         return errorResponse("账户已过期，请联系管理员续费", 403);
       }
 
-      const token = await generateToken(
-        {
+      if (await this.shouldRequireTwoFactor(user, trustToken)) {
+        const challengeId = await this.createTwoFactorChallenge({
           userId: user.id,
-          email: user.email,
-          isAdmin: user.is_admin === 1,
-        },
-        this.env.JWT_SECRET
-      );
+          remember,
+          loginMethod: "google_oauth",
+          clientIP,
+          userAgent,
+          meta: {
+            isNewUser,
+            tempPassword,
+            passwordEmailSent,
+            provider: "google",
+          },
+        });
+        return successResponse({
+          need_2fa: true,
+          challenge_id: challengeId,
+          two_factor_enabled: true,
+          isNewUser,
+          tempPassword,
+          passwordEmailSent,
+          provider: "google",
+        });
+      }
 
-      const sessionTTL = remember ? 604800 : 86400;
-
-      await this.cache.set(
-        `session_${token}`,
-        JSON.stringify(this.buildSessionPayload(user)),
-        sessionTTL
-      );
-
-      const userStatus = typeof user.status === "number" ? user.status : Number(user.status ?? 0);
-      const loginNote = userStatus === 0 ? "禁用用户登录" : null;
-      await this.db.db
-        .prepare(
-          `
-        INSERT INTO login_logs (user_id, login_ip, user_agent, login_status, failure_reason, login_method)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `
-        )
-        .bind(user.id, clientIP, userAgent, 1, loginNote, "google_oauth")
-        .run();
-
-      const userResponse = this.buildUserResponse(user);
-
-      return successResponse({
-        token,
-        user: userResponse,
+      return this.finalizeLogin(user, remember, "google_oauth", clientIP, userAgent, {
         isNewUser,
         tempPassword,
         passwordEmailSent,
-        remember,
         provider: "google",
       });
     } catch (error) {
@@ -1588,6 +1867,10 @@ export class AuthAPI {
       const redirectUri =
         typeof body?.redirectUri === "string" ? body.redirectUri.trim() : "";
       const remember = this.parseBoolean(body?.remember, false);
+      const trustToken =
+        typeof body?.twoFactorTrustToken === "string"
+          ? body.twoFactorTrustToken.trim()
+          : "";
 
       if (!code) {
         return errorResponse("缺少 GitHub 授权码", 400);
@@ -1868,13 +2151,11 @@ export class AuthAPI {
             oauth_provider = 'github',
             first_oauth_login_at = COALESCE(first_oauth_login_at, datetime('now', '+8 hours')),
             last_oauth_login_at = datetime('now', '+8 hours'),
-            last_login_time = datetime('now', '+8 hours'),
-            last_login_ip = ?,
             updated_at = datetime('now', '+8 hours')
         WHERE id = ?
       `
         )
-        .bind(githubId, clientIP, user.id)
+        .bind(githubId, user.id)
         .run();
 
       user = await this.db.db
@@ -1882,43 +2163,35 @@ export class AuthAPI {
         .bind(user.id)
         .first();
 
-      const token = await generateToken(
-        {
+      if (await this.shouldRequireTwoFactor(user, trustToken)) {
+        const challengeId = await this.createTwoFactorChallenge({
           userId: user.id,
-          email: user.email,
-          isAdmin: user.is_admin === 1,
-        },
-        this.env.JWT_SECRET
-      );
+          remember,
+          loginMethod: "github_oauth",
+          clientIP,
+          userAgent,
+          meta: {
+            isNewUser,
+            tempPassword,
+            passwordEmailSent,
+            provider: "github",
+          },
+        });
+        return successResponse({
+          need_2fa: true,
+          challenge_id: challengeId,
+          two_factor_enabled: true,
+          isNewUser,
+          tempPassword,
+          passwordEmailSent,
+          provider: "github",
+        });
+      }
 
-      const sessionTTL = remember ? 604800 : 86400;
-
-      await this.cache.set(
-        `session_${token}`,
-        JSON.stringify(this.buildSessionPayload(user)),
-        sessionTTL
-      );
-
-      const loginNote = user.status === 0 ? "禁用用户登录" : null;
-      await this.db.db
-        .prepare(
-          `
-        INSERT INTO login_logs (user_id, login_ip, user_agent, login_status, failure_reason, login_method)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `
-        )
-        .bind(user.id, clientIP, userAgent, 1, loginNote, "github_oauth")
-        .run();
-
-      const userResponse = this.buildUserResponse(user);
-
-      return successResponse({
-        token,
-        user: userResponse,
+      return this.finalizeLogin(user, remember, "github_oauth", clientIP, userAgent, {
         isNewUser,
         tempPassword,
         passwordEmailSent,
-        remember,
         provider: "github",
       });
     } catch (error) {

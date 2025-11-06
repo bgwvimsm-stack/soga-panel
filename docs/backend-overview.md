@@ -51,6 +51,7 @@ account_id = "your-account-id"
 [vars]
 JWT_SECRET = "your-secure-secret"
 WEBAPI_KEY = "your-soga-api-key"
+TWO_FACTOR_SECRET_KEY = "your-2fa-encryption-secret"
 
 [[d1_databases]]
 binding = "DB"
@@ -85,6 +86,7 @@ wrangler deploy
 | --- | --- |
 | `JWT_SECRET` | JWT 签名密钥 |
 | `WEBAPI_KEY` | Soga WebAPI 密钥（与节点配置一致） |
+| `TWO_FACTOR_SECRET_KEY` | 二步验证密钥加密用对称密钥（不配置则回退到 `JWT_SECRET`） |
 | `MAIL_PROVIDER` | `none` / `resend` / `smtp` / `sendgrid` |
 | `MAIL_FROM` | 发件邮箱地址 |
 | `RESEND_API_KEY` | 使用 Resend 时必填 |

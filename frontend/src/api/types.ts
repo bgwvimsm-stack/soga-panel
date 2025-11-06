@@ -31,6 +31,8 @@ export interface User {
   class_expire_time: string;
   traffic_reset_day: number;
   subscription_url: string;
+  two_factor_enabled?: boolean;
+  has_two_factor_backup_codes?: boolean;
 }
 
 // 节点相关类型
@@ -73,15 +75,25 @@ export interface LoginRequest {
   email: string;
   password: string;
   remember?: boolean;
+  twoFactorTrustToken?: string;
 }
 
 // 登录响应
 export interface LoginResponse {
-  token: string;
-  user: User;
+  token?: string;
+  user?: User;
   isNewUser?: boolean;
   tempPassword?: string | null;
   passwordEmailSent?: boolean;
+  remember?: boolean;
+  need2FA?: boolean;
+  need_2fa?: boolean;
+  challengeId?: string;
+  challenge_id?: string;
+  two_factor_enabled?: boolean;
+  trust_token?: string;
+  trust_token_expires_at?: string;
+  provider?: string;
 }
 
 // 注册请求

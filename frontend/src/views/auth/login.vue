@@ -160,6 +160,38 @@
       </el-button>
     </template>
   </el-dialog>
+
+  <el-dialog
+    v-model="twoFactorDialogVisible"
+    :title="`${pendingTwoFactorProvider} 二步验证`"
+    width="400px"
+    :close-on-click-modal="false"
+    :close-on-press-escape="false"
+    @close="closeTwoFactorDialog"
+  >
+    <p class="twofactor-tip">
+      为了保护您的账号，请输入来自 {{ pendingTwoFactorProvider }} 的 6 位验证码或备用码。
+    </p>
+    <el-form class="twofactor-form">
+      <el-form-item label="验证码">
+        <el-input
+          v-model="twoFactorForm.code"
+          maxlength="16"
+          placeholder="请输入验证码"
+          autofocus
+        />
+      </el-form-item>
+      <el-checkbox v-model="twoFactorForm.rememberDevice">
+        记住此设备 30 天
+      </el-checkbox>
+    </el-form>
+    <template #footer>
+      <el-button @click="closeTwoFactorDialog">取消</el-button>
+      <el-button type="primary" :loading="twoFactorSubmitting" @click="submitTwoFactor">
+        验证
+      </el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
@@ -181,7 +213,8 @@ import {
   login,
   loginWithGoogle,
   loginWithGithub,
-  getRegisterConfig
+  getRegisterConfig,
+  verifyTwoFactor
 } from "@/api/auth";
 import { setToken } from "@/utils/auth-soga";
 import { useUserStore } from "@/store/user";
@@ -234,10 +267,123 @@ const lastOAuthProviderLabel = computed(
 );
 
 const formatProviderLabel = (label: string) => {
-  const lower = label.toLowerCase();
+  const lower = label?.toLowerCase?.() || "";
   if (lower === "google") return "Google";
   if (lower === "github") return "GitHub";
   return label || "第三方";
+};
+
+const requiresTwoFactor = (payload: Partial<LoginResponse>) =>
+  Boolean(payload.need2FA ?? payload.need_2fa);
+
+const extractChallengeId = (payload: Partial<LoginResponse>) =>
+  (payload.challenge_id || payload.challengeId || "")?.toString() || "";
+
+const completeLogin = (payload: LoginResponse, providerLabel?: string) => {
+  if (!payload.token || !payload.user) {
+    ElMessage.error("登录响应不完整，请重试");
+    return;
+  }
+  if (payload.trust_token) {
+    localStorage.setItem(trustTokenStorageKey, payload.trust_token);
+  }
+  setToken(payload.token);
+  userStore.setUser(payload.user);
+
+  if (payload.user.status === 0) {
+    ElMessage.warning("您的账号已被禁用，只能访问仪表盘、公告详情和个人资料页面");
+  } else {
+    const label = formatProviderLabel(providerLabel || payload.provider || "");
+    if (label && label !== "第三方") {
+      ElMessage.success(`${label} 登录成功`);
+    } else {
+      ElMessage.success("登录成功");
+    }
+  }
+};
+
+const handleOAuthPostLogin = (
+  providerLabel: string,
+  payload: LoginResponse
+) => {
+  lastOAuthProvider.value = formatProviderLabel(providerLabel);
+  rememberLogin.value = Boolean(payload.remember ?? rememberLogin.value);
+  passwordEmailSent.value = Boolean(payload.passwordEmailSent);
+  generatedPassword.value = payload.tempPassword || "";
+  redirectAfterDialog.value = false;
+
+  if (payload.isNewUser && payload.tempPassword) {
+    showPasswordDialog.value = true;
+    redirectAfterDialog.value = true;
+  } else {
+    router.push("/dashboard");
+  }
+};
+
+const navigateAfterLogin = (
+  payload: LoginResponse,
+  providerLabel?: string
+) => {
+  const provider = (payload.provider || providerLabel || "").toLowerCase();
+  if (provider === "google" || provider === "github") {
+    handleOAuthPostLogin(providerLabel || provider, payload);
+  } else {
+    router.push("/dashboard");
+  }
+};
+
+const openTwoFactorDialog = (
+  payload: Partial<LoginResponse>,
+  providerLabel?: string
+) => {
+  const challengeId = extractChallengeId(payload);
+  if (!challengeId) {
+    ElMessage.error("未获取到二步验证会话，请重新登录");
+    return;
+  }
+  activeChallengeId.value = challengeId;
+  pendingTwoFactorProvider.value = formatProviderLabel(
+    providerLabel || payload.provider || "账号"
+  );
+  twoFactorForm.code = "";
+  twoFactorForm.rememberDevice = false;
+  twoFactorDialogVisible.value = true;
+};
+
+const closeTwoFactorDialog = () => {
+  twoFactorDialogVisible.value = false;
+  activeChallengeId.value = "";
+};
+
+const submitTwoFactor = async () => {
+  if (!activeChallengeId.value) {
+    ElMessage.error("验证会话已过期，请重新登录");
+    twoFactorDialogVisible.value = false;
+    return;
+  }
+  if (!twoFactorForm.code.trim()) {
+    ElMessage.warning("请输入验证码");
+    return;
+  }
+
+  twoFactorSubmitting.value = true;
+  try {
+    const { data } = await verifyTwoFactor({
+      challenge_id: activeChallengeId.value,
+      code: twoFactorForm.code.trim(),
+      rememberDevice: twoFactorForm.rememberDevice,
+      deviceName: pendingTwoFactorProvider.value,
+    });
+    twoFactorDialogVisible.value = false;
+    activeChallengeId.value = "";
+    completeLogin(data, pendingTwoFactorProvider.value);
+    navigateAfterLogin(data, pendingTwoFactorProvider.value);
+  } catch (error) {
+    console.error("二步验证失败:", error);
+    ElMessage.error((error as any)?.message || "二步验证失败，请重试");
+  } finally {
+    twoFactorSubmitting.value = false;
+  }
 };
 
 const googleButtonConfig = {
@@ -255,6 +401,16 @@ const handleGoogleClick = () => {
 
 const githubStateStorageKey = "github_oauth_state";
 const githubRememberStorageKey = "github_oauth_remember";
+const trustTokenStorageKey = "soga_tf_trust_token";
+
+const twoFactorDialogVisible = ref(false);
+const twoFactorSubmitting = ref(false);
+const twoFactorForm = reactive({
+  code: "",
+  rememberDevice: false
+});
+const activeChallengeId = ref("");
+const pendingTwoFactorProvider = ref("账号");
 
 const createOAuthState = (length = 16) => {
   if (typeof crypto !== "undefined" && crypto.getRandomValues) {
@@ -298,27 +454,14 @@ const handleOAuthLoginSuccess = (
   providerLabel: string,
   payload: OAuthLoginPayload
 ) => {
-  lastOAuthProvider.value = formatProviderLabel(providerLabel);
-  rememberLogin.value = Boolean(payload.remember ?? rememberLogin.value);
-  setToken(payload.token);
-  userStore.setUser(payload.user);
-
-  if (payload.user.status === 0) {
-    ElMessage.warning("您的账号已被禁用，只能访问仪表盘、公告详情和个人资料页面");
-  } else {
-    ElMessage.success("登录成功");
+  if (requiresTwoFactor(payload)) {
+    localStorage.removeItem(trustTokenStorageKey);
+    openTwoFactorDialog(payload, providerLabel);
+    return;
   }
 
-  passwordEmailSent.value = Boolean(payload.passwordEmailSent);
-  generatedPassword.value = payload.tempPassword || "";
-  redirectAfterDialog.value = false;
-
-  if (payload.isNewUser && payload.tempPassword) {
-    showPasswordDialog.value = true;
-    redirectAfterDialog.value = true;
-  } else {
-    router.push("/dashboard");
-  }
+  completeLogin(payload, providerLabel);
+  handleOAuthPostLogin(providerLabel, payload);
 };
 
 const handleLogin = async () => {
@@ -330,21 +473,22 @@ const handleLogin = async () => {
   loading.value = true;
 
   try {
+    const storedTrustToken = localStorage.getItem(trustTokenStorageKey) || "";
     const { data } = await login({
       email: loginForm.email,
       password: loginForm.password,
       remember: rememberLogin.value,
+      twoFactorTrustToken: storedTrustToken || undefined,
     });
-    setToken(data.token);
-    userStore.setUser(data.user);
 
-    if (data.user.status === 0) {
-      ElMessage.warning("您的账号已被禁用，只能访问仪表盘、公告详情和个人资料页面");
-    } else {
-      ElMessage.success("登录成功");
+    if (requiresTwoFactor(data)) {
+      localStorage.removeItem(trustTokenStorageKey);
+      openTwoFactorDialog(data, "账号");
+      return;
     }
 
-    router.push("/dashboard");
+    completeLogin(data, "账号");
+    navigateAfterLogin(data, "账号");
   } catch (error) {
     console.error("登录失败:", error);
     ElMessage.error((error as any)?.message || "登录失败，请稍后重试");
@@ -383,9 +527,11 @@ const handleGoogleCredential = async (
   googleLoading.value = true;
 
   try {
+    const storedTrustToken = localStorage.getItem(trustTokenStorageKey) || "";
     const { data } = await loginWithGoogle({
       idToken: credential,
       remember: rememberLogin.value,
+      twoFactorTrustToken: storedTrustToken || undefined,
     });
     handleOAuthLoginSuccess("Google", data as OAuthLoginPayload);
   } catch (error) {
@@ -455,11 +601,13 @@ const processGithubCallback = async () => {
   githubLoading.value = true;
   try {
     const redirectUri = `${window.location.origin}/auth/login`;
+    const storedTrustToken = localStorage.getItem(trustTokenStorageKey) || "";
     const { data } = await loginWithGithub({
       code,
       redirectUri,
       state: returnedState,
       remember: rememberFlag,
+      twoFactorTrustToken: storedTrustToken || undefined,
     });
     handleOAuthLoginSuccess(
       (data as any)?.provider || "GitHub",
@@ -732,6 +880,16 @@ const copyGeneratedPassword = async () => {
   margin-top: 6px;
   color: #6b7280;
   font-size: 14px;
+}
+
+.twofactor-tip {
+  font-size: 13px;
+  color: #6b7280;
+  margin-bottom: 12px;
+}
+
+.twofactor-form :deep(.el-form-item) {
+  margin-bottom: 12px;
 }
 
 .oauth-loading {

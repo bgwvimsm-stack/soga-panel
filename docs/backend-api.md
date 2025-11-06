@@ -28,6 +28,7 @@
 | GET | `/api/auth/register-config` | 返回注册/验证码开关状态 |
 | POST | `/api/auth/google` | Google OAuth 登录 |
 | POST | `/api/auth/github` | GitHub OAuth 登录 |
+| POST | `/api/auth/verify-2fa` | 二步验证挑战确认 |
 
 ## 用户功能 `/api/user/*`
 
@@ -41,6 +42,10 @@
 | GET | `/api/user/traffic/summary` | 周/月流量汇总 |
 | POST | `/api/user/traffic/manual-update` | 手动触发流量同步 |
 | POST | `/api/user/reset-subscription-token` | 重置订阅令牌 |
+| POST | `/api/user/two-factor/setup` | 生成 TOTP 密钥（需登录） |
+| POST | `/api/user/two-factor/enable` | 验证并开启二步验证 |
+| POST | `/api/user/two-factor/backup-codes` | 重置备用验证码 |
+| POST | `/api/user/two-factor/disable` | 关闭二步验证 |
 | GET | `/api/subscription/{client}` | 生成订阅（`v2ray` / `clash` / `quantumultx` 等） |
 
 ## 管理后台 `/api/admin/*`

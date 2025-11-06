@@ -71,6 +71,7 @@ export async function handleRequest(
     "POST /api/auth/password-reset/confirm": () =>
       authAPI.confirmPasswordReset(request),
     "GET /api/auth/register-config": () => authAPI.getRegisterConfig(),
+    "POST /api/auth/verify-2fa": () => authAPI.verifyTwoFactor(request),
     "GET /api/site/settings": () => authAPI.getSiteSettings(),
 
     // 用户 API
@@ -87,6 +88,11 @@ export async function handleRequest(
     "GET /api/user/login-logs": () => userAPI.getLoginLogs(request),
     "GET /api/user/online-devices": () => userAPI.getOnlineDevices(request),
     "GET /api/user/online-ips-detail": () => userAPI.getOnlineIpsDetail(request),
+    "POST /api/user/two-factor/setup": () => userAPI.startTwoFactorSetup(request),
+    "POST /api/user/two-factor/enable": () => userAPI.enableTwoFactor(request),
+    "POST /api/user/two-factor/backup-codes": () =>
+      userAPI.regenerateTwoFactorBackupCodes(request),
+    "POST /api/user/two-factor/disable": () => userAPI.disableTwoFactor(request),
     
     // 用户审计功能 API
     "GET /api/user/audit-rules": () => userAPI.getAuditRules(request),

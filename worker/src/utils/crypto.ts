@@ -209,3 +209,83 @@ export function getUtc8DateString() {
   const utc8Time = new Date(Date.now() + 8 * 60 * 60 * 1000);
   return utc8Time.toISOString().split('T')[0];
 }
+
+/**
+ * 计算字符串的 SHA-256 十六进制哈希
+ */
+export async function sha256Hex(value) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(value);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const AES_ALGORITHM = "AES-GCM";
+const AES_IV_LENGTH = 12;
+
+async function importAesKey(secret) {
+  if (!secret || typeof secret !== "string" || !secret.trim()) {
+    throw new Error("Missing encryption key");
+  }
+  const encoder = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", encoder.encode(secret));
+  return crypto.subtle.importKey("raw", hashBuffer, { name: AES_ALGORITHM }, false, [
+    "encrypt",
+    "decrypt",
+  ]);
+}
+
+function arrayBufferToBase64(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8Array(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * 使用 AES-GCM 加密文本
+ */
+export async function encryptText(plainText, secret) {
+  const encoder = new TextEncoder();
+  const key = await importAesKey(secret);
+  const iv = crypto.getRandomValues(new Uint8Array(AES_IV_LENGTH));
+  const cipherBuffer = await crypto.subtle.encrypt(
+    { name: AES_ALGORITHM, iv },
+    key,
+    encoder.encode(plainText)
+  );
+  return `${arrayBufferToBase64(iv)}:${arrayBufferToBase64(cipherBuffer)}`;
+}
+
+/**
+ * 解密 AES-GCM 文本
+ */
+export async function decryptText(payload, secret) {
+  if (!payload) return "";
+  const [ivPart, dataPart] = payload.split(":");
+  if (!ivPart || !dataPart) {
+    throw new Error("Invalid encrypted payload");
+  }
+  const key = await importAesKey(secret);
+  const iv = base64ToUint8Array(ivPart);
+  const cipherBytes = base64ToUint8Array(dataPart);
+  const plainBuffer = await crypto.subtle.decrypt(
+    { name: AES_ALGORITHM, iv },
+    key,
+    cipherBytes
+  );
+  const decoder = new TextDecoder();
+  return decoder.decode(plainBuffer);
+}

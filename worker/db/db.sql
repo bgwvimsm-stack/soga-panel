@@ -69,6 +69,11 @@ CREATE TABLE
         class_expire_time DATETIME,
         bark_key TEXT,
         bark_enabled INTEGER DEFAULT 0,
+        two_factor_enabled INTEGER DEFAULT 0,
+        two_factor_secret TEXT,
+        two_factor_backup_codes TEXT,
+        two_factor_temp_secret TEXT,
+        two_factor_confirmed_at DATETIME,
         money DECIMAL(10,2) DEFAULT 0.00,
         created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
         updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
@@ -399,6 +404,31 @@ CREATE TABLE
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     );
 
+-- 二步验证可信设备表
+-- 字段说明：
+-- id: 唯一标识
+-- user_id: 用户ID
+-- token_hash: 记住设备令牌哈希
+-- device_name: 设备名称
+-- user_agent: UA
+-- expires_at: 过期时间
+-- last_used_at: 最后使用时间
+-- created_at: 创建时间
+-- disabled: 是否禁用
+CREATE TABLE IF NOT EXISTS two_factor_trusted_devices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    token_hash TEXT NOT NULL,
+    device_name TEXT,
+    user_agent TEXT,
+    expires_at DATETIME NOT NULL,
+    last_used_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    disabled INTEGER DEFAULT 0,
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+    UNIQUE (user_id, token_hash)
+);
+
 -- 套餐表
 -- 字段说明：
 -- id: 套餐唯一标识ID（主键）
@@ -538,6 +568,10 @@ CREATE INDEX IF NOT EXISTS idx_node_status_node_time ON node_status (node_id, cr
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions (token);
 
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_two_factor_trusted_devices_user ON two_factor_trusted_devices (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_two_factor_trusted_devices_expires ON two_factor_trusted_devices (expires_at);
 
 -- 登录记录索引
 CREATE INDEX IF NOT EXISTS idx_login_logs_user_id ON login_logs(user_id);

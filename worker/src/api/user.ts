@@ -8,6 +8,7 @@ import { successResponse, errorResponse } from "../utils/response";
 import { hashPassword, verifyPassword } from "../utils/crypto";
 import { createSystemConfigManager, type SystemConfigManager } from "../utils/systemConfig";
 import { ensureNumber, ensureString } from "../utils/d1";
+import { TwoFactorService } from "../services/twoFactor";
 
 type AuthenticatedUser = {
   id: number;
@@ -36,16 +37,57 @@ export class UserAPI {
   private readonly cache: CacheService;
   private readonly env: Env;
   private readonly configManager: SystemConfigManager;
+  private readonly twoFactorService: TwoFactorService;
 
   constructor(env: Env) {
     this.db = new DatabaseService(env.DB);
     this.cache = new CacheService(env.DB);
     this.env = env;
     this.configManager = createSystemConfigManager(env);
+    this.twoFactorService = new TwoFactorService(env);
   }
 
   private async validateUser(request: Request): Promise<AuthResult> {
     return (await validateUserAuth(request, this.env)) as AuthResult;
+  }
+
+  private async verifyUserTwoFactorCode(userRow: DbRow, code: string) {
+    if (!code) {
+      return { success: false, usedBackup: false };
+    }
+    const trimmed = code.trim();
+    const secret = await this.twoFactorService.decryptSecret(userRow.two_factor_secret);
+    if (!secret) {
+      return { success: false, usedBackup: false };
+    }
+    if (await this.twoFactorService.verifyTotp(secret, trimmed)) {
+      return { success: true, usedBackup: false };
+    }
+
+    const normalized = this.twoFactorService.normalizeBackupCodeInput(trimmed);
+    if (!normalized || normalized.length < 6) {
+      return { success: false, usedBackup: false };
+    }
+    const hashedInput = await this.twoFactorService.hashBackupCode(normalized);
+    const stored = this.twoFactorService.parseBackupCodes(userRow.two_factor_backup_codes);
+    const index = stored.findIndex((hash) => hash === hashedInput);
+    if (index === -1) {
+      return { success: false, usedBackup: false };
+    }
+    stored.splice(index, 1);
+    await this.db.db
+      .prepare("UPDATE users SET two_factor_backup_codes = ? WHERE id = ?")
+      .bind(JSON.stringify(stored), userRow.id)
+      .run();
+    userRow.two_factor_backup_codes = JSON.stringify(stored);
+    return { success: true, usedBackup: true };
+  }
+
+  private async revokeTrustedDevices(userId: number) {
+    await this.db.db
+      .prepare("DELETE FROM two_factor_trusted_devices WHERE user_id = ?")
+      .bind(userId)
+      .run();
   }
 
   async getProfile(request: Request) {
@@ -132,6 +174,8 @@ export class UserAPI {
         status: user.status,
         traffic_reset_day: trafficResetDay,
         subscription_url: subscriptionUrl,
+        two_factor_enabled: Number(user.two_factor_enabled) === 1,
+        has_two_factor_backup_codes: Boolean(user.two_factor_backup_codes),
       });
     } catch (error: unknown) {
       return errorResponse(toErrorMessage(error), 500);
@@ -717,6 +761,252 @@ export class UserAPI {
     } catch (error: unknown) {
       console.error('Get login logs error:', error);
       return errorResponse('获取登录记录失败', 500);
+    }
+  }
+
+  async startTwoFactorSetup(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+      const userId = authResult.user.id;
+      const user = await this.db.db
+        .prepare(
+          "SELECT id, email, username, two_factor_enabled, two_factor_secret FROM users WHERE id = ?"
+        )
+        .bind(userId)
+        .first<DbRow | null>();
+
+      if (!user) {
+        return errorResponse("用户不存在", 404);
+      }
+      if (Number(user.two_factor_enabled) === 1 && user.two_factor_secret) {
+        return errorResponse("二步验证已启用", 400);
+      }
+
+      const secret = this.twoFactorService.generateSecret(32);
+      const encryptedSecret = await this.twoFactorService.encryptSecret(secret);
+
+      await this.db.db
+        .prepare(
+          `
+        UPDATE users
+        SET two_factor_temp_secret = ?
+        WHERE id = ?
+      `
+        )
+        .bind(encryptedSecret, userId)
+        .run();
+
+      const siteConfigs = await this.configManager.getSiteConfigs();
+      const issuer = siteConfigs.site_name || "Soga Panel";
+      const accountName =
+        ensureString(user.email) ||
+        ensureString(user.username) ||
+        `user_${user.id}`;
+      const otpAuthUrl = this.twoFactorService.createOtpAuthUrl(
+        secret,
+        accountName,
+        issuer
+      );
+
+      return successResponse({
+        secret,
+        otp_auth_url: otpAuthUrl,
+        provisioning_uri: otpAuthUrl,
+      });
+    } catch (error: unknown) {
+      return errorResponse(toErrorMessage(error), 500);
+    }
+  }
+
+  async enableTwoFactor(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+      const userId = authResult.user.id;
+      const body = await request.json();
+      const code =
+        typeof body?.code === "string" ? body.code.trim() : "";
+      if (!code) {
+        return errorResponse("请输入验证码", 400);
+      }
+
+      const user = await this.db.db
+        .prepare(
+          "SELECT * FROM users WHERE id = ?"
+        )
+        .bind(userId)
+        .first<DbRow | null>();
+
+      if (!user) {
+        return errorResponse("用户不存在", 404);
+      }
+      if (!user.two_factor_temp_secret) {
+        return errorResponse("请先获取新的密钥", 400);
+      }
+
+      const tempSecret = await this.twoFactorService.decryptSecret(
+        user.two_factor_temp_secret
+      );
+      if (!tempSecret) {
+        return errorResponse("临时密钥无效，请重新生成", 400);
+      }
+
+      const verified = await this.twoFactorService.verifyTotp(
+        tempSecret,
+        code
+      );
+      if (!verified) {
+        return errorResponse("验证码无效，请重试", 401);
+      }
+
+      const backupCodes = this.twoFactorService.generateBackupCodes();
+      const hashedCodes = await this.twoFactorService.hashBackupCodes(
+        backupCodes
+      );
+
+      await this.db.db
+        .prepare(
+          `
+        UPDATE users
+        SET two_factor_enabled = 1,
+            two_factor_secret = two_factor_temp_secret,
+            two_factor_backup_codes = ?,
+            two_factor_temp_secret = NULL,
+            two_factor_confirmed_at = datetime('now', '+8 hours')
+        WHERE id = ?
+      `
+        )
+        .bind(JSON.stringify(hashedCodes), userId)
+        .run();
+
+      await this.revokeTrustedDevices(userId);
+      await this.cache.deleteByPrefix(`user_${userId}`);
+
+      return successResponse({
+        message: "二步验证已启用",
+        backup_codes: backupCodes,
+      });
+    } catch (error: unknown) {
+      return errorResponse(toErrorMessage(error), 500);
+    }
+  }
+
+  async regenerateTwoFactorBackupCodes(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+      const userId = authResult.user.id;
+      const body = await request.json();
+      const code =
+        typeof body?.code === "string" ? body.code.trim() : "";
+      if (!code) {
+        return errorResponse("请输入验证码", 400);
+      }
+
+      const user = await this.db.db
+        .prepare("SELECT * FROM users WHERE id = ?")
+        .bind(userId)
+        .first<DbRow | null>();
+
+      if (!user || Number(user.two_factor_enabled) !== 1) {
+        return errorResponse("尚未启用二步验证", 400);
+      }
+
+      const verification = await this.verifyUserTwoFactorCode(user, code);
+      if (!verification.success) {
+        return errorResponse("验证码无效，请重试", 401);
+      }
+
+      const backupCodes = this.twoFactorService.generateBackupCodes();
+      const hashedCodes = await this.twoFactorService.hashBackupCodes(
+        backupCodes
+      );
+
+      await this.db.db
+        .prepare(
+          "UPDATE users SET two_factor_backup_codes = ? WHERE id = ?"
+        )
+        .bind(JSON.stringify(hashedCodes), userId)
+        .run();
+
+      return successResponse({
+        message: "已生成新的备用验证码",
+        backup_codes: backupCodes,
+      });
+    } catch (error: unknown) {
+      return errorResponse(toErrorMessage(error), 500);
+    }
+  }
+
+  async disableTwoFactor(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+      const userId = authResult.user.id;
+      const body = await request.json();
+      const password =
+        typeof body?.password === "string" ? body.password : "";
+      const code =
+        typeof body?.code === "string" ? body.code.trim() : "";
+
+      if (!password || !code) {
+        return errorResponse("请输入密码和验证码", 400);
+      }
+
+      const user = await this.db.db
+        .prepare("SELECT * FROM users WHERE id = ?")
+        .bind(userId)
+        .first<DbRow | null>();
+
+      if (!user || Number(user.two_factor_enabled) !== 1) {
+        return errorResponse("尚未启用二步验证", 400);
+      }
+
+      const validPassword = await verifyPassword(
+        password,
+        ensureString(user.password_hash)
+      );
+      if (!validPassword) {
+        return errorResponse("密码错误", 401);
+      }
+
+      const verification = await this.verifyUserTwoFactorCode(user, code);
+      if (!verification.success) {
+        return errorResponse("验证码无效，请重试", 401);
+      }
+
+      await this.db.db
+        .prepare(
+          `
+        UPDATE users
+        SET two_factor_enabled = 0,
+            two_factor_secret = NULL,
+            two_factor_backup_codes = NULL,
+            two_factor_temp_secret = NULL,
+            two_factor_confirmed_at = NULL
+        WHERE id = ?
+      `
+        )
+        .bind(userId)
+        .run();
+
+      await this.revokeTrustedDevices(userId);
+      await this.cache.deleteByPrefix(`user_${userId}`);
+
+      return successResponse({
+        message: "二步验证已关闭",
+      });
+    } catch (error: unknown) {
+      return errorResponse(toErrorMessage(error), 500);
     }
   }
 
