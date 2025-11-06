@@ -165,7 +165,7 @@
           </div>
         </el-collapse-item>
         
-        <el-collapse-item name="quantumult" title="Quantumult X 客户端">
+        <el-collapse-item name="quantumultx" title="Quantumult X 客户端">
           <div class="guide-content">
             <ol>
               <li>打开 Quantumult X 应用</li>
@@ -234,7 +234,7 @@ const subscriptionTypes = [
     recommended: false
   },
   {
-    type: 'quantumult',
+    type: 'quantumultx',
     name: 'Quantumult X',
     description: '适用于 iOS 平台的 Quantumult X 客户端',
     icon: markRaw(Cellphone),
@@ -327,7 +327,7 @@ const oneClickImport = async (type: string, name: string) => {
     case 'shadowrocket':
       schemeUrl = `shadowrocket://add/sub://${encodeURIComponent(subscriptionUrl)}`;
       break;
-    case 'quantumult':
+    case 'quantumultx':
       schemeUrl = `quantumult-x://add-resource?remote-resource=${subscriptionUrl}`;
       break;
     case 'surge':

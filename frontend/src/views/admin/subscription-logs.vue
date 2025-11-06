@@ -84,7 +84,7 @@
         >
           <el-option label="V2Ray" value="v2ray" />
           <el-option label="Clash" value="clash" />
-          <el-option label="Quantumult" value="quantumult" />
+          <el-option label="Quantumult X" value="quantumultx" />
           <el-option label="Shadowsocks" value="shadowsocks" />
         </el-select>
 
@@ -294,7 +294,7 @@ const getSubscriptionTypeName = (type: string) => {
   const typeMap: Record<string, string> = {
     v2ray: 'V2Ray',
     clash: 'Clash',
-    quantumult: 'Quantumult',
+    quantumultx: 'Quantumult X',
     shadowsocks: 'Shadowsocks'
   };
   return typeMap[type] || type;
@@ -304,7 +304,7 @@ const getSubscriptionTypeColor = (type: string) => {
   const colorMap: Record<string, string> = {
     v2ray: 'primary',
     clash: 'success',
-    quantumult: 'warning',
+    quantumultx: 'warning',
     shadowsocks: 'info'
   };
   return colorMap[type] || '';

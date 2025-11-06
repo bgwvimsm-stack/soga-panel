@@ -96,7 +96,7 @@ export async function handleRequest(
     // 订阅 API
     "GET /api/subscription/v2ray": () => subscriptionAPI.getV2RaySubscription(request),
     "GET /api/subscription/clash": () => subscriptionAPI.getClashSubscription(request),
-    "GET /api/subscription/quantumult": () => subscriptionAPI.getQuantumultSubscription(request),
+    "GET /api/subscription/quantumultx": () => subscriptionAPI.getQuantumultXSubscription(request),
     "GET /api/subscription/shadowrocket": () => subscriptionAPI.getShadowrocketSubscription(request),
     "GET /api/subscription/surge": () => subscriptionAPI.getSurgeSubscription(request),
 

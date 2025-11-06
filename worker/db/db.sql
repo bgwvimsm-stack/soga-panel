@@ -148,7 +148,7 @@ CREATE TABLE
 -- 字段说明：
 -- id: 订阅记录唯一标识ID（主键）
 -- user_id: 用户ID（外键关联users表）
--- type: 订阅类型（v2ray、clash、quantumult等）
+-- type: 订阅类型（v2ray、clash、quantumultx等）
 -- request_ip: 请求来源IP地址
 -- request_time: 请求时间（UTC+8时区）
 -- request_user_agent: 请求用户代理字符串
