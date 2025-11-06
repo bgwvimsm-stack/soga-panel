@@ -110,3 +110,15 @@ export const changePassword = (data: {
 }): Promise<ApiResponse<null>> => {
   return http.post("/user/change-password", data);
 };
+
+/**
+ * 二步验证校验
+ */
+export const verifyTwoFactor = (data: {
+  challenge_id: string;
+  code: string;
+  rememberDevice?: boolean;
+  deviceName?: string;
+}): Promise<ApiResponse<LoginResponse>> => {
+  return http.post("/auth/verify-2fa", data);
+};

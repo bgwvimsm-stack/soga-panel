@@ -22,6 +22,7 @@ WEBAPI_KEY = "114514"
 JWT_SECRET = "ABCDEFG123456"
 # 前后端通信密钥
 FRONTEND_API_SECRET = "123456"
+TWO_FACTOR_SECRET_KEY = "your-2fa-encryption-secret"
 
 # ------------------------------------------------------------------------
 # 站点名称（用于邮件、页面抬头）

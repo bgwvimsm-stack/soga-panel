@@ -103,9 +103,30 @@
                   <el-icon><Key /></el-icon>
                   二步验证
                 </div>
-                <div class="security-desc">增强账户安全性</div>
+                <div class="security-desc">
+                  <el-tag :type="hasTwoFactor ? 'success' : 'info'" size="small">
+                    {{ hasTwoFactor ? '已开启' : '未开启' }}
+                  </el-tag>
+                  <span class="security-hint">
+                    {{ hasTwoFactor ? '建议保管好备用验证码' : '开启后可显著提升安全性' }}
+                  </span>
+                </div>
               </div>
-              <el-button disabled>暂未开放</el-button>
+              <div class="security-actions">
+                <template v-if="hasTwoFactor">
+                  <el-button size="small" @click="handleRegenerateBackupCodes">
+                    重置备用码
+                  </el-button>
+                  <el-button size="small" type="danger" @click="openDisableTwoFactorDialog">
+                    关闭
+                  </el-button>
+                </template>
+                <template v-else>
+                  <el-button type="primary" @click="openTwoFactorSetupDialog">
+                    立即开启
+                  </el-button>
+                </template>
+              </div>
             </div>
             
             <div class="security-item">
@@ -266,7 +287,105 @@
         <el-button type="primary" @click="changePassword" :loading="passwordChanging">
           确认修改
         </el-button>
-</template>
+      </template>
+    </el-dialog>
+
+    <!-- 二步验证开启 -->
+    <el-dialog
+      v-model="twoFactorSetupDialogVisible"
+      title="开启二步验证"
+      width="520px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      @close="closeTwoFactorSetupDialog"
+    >
+      <div v-loading="twoFactorSetupLoading" class="totp-setup">
+        <div class="totp-qr" ref="twoFactorQrRef">
+          <div class="qr-placeholder" v-if="!twoFactorSetupData.otpAuthUrl">
+            <span>二维码加载中...</span>
+          </div>
+        </div>
+        <div class="totp-details">
+          <p>使用支持 TOTP 的 App 扫描二维码，或手动输入密钥：</p>
+          <el-input
+            v-model="twoFactorSetupData.secret"
+            readonly
+            class="secret-input"
+          >
+            <template #append>
+              <el-button text @click="copyTwoFactorSecret">
+                复制
+              </el-button>
+            </template>
+          </el-input>
+          <el-divider />
+          <el-input
+            v-model="twoFactorCodeInput"
+            placeholder="请输入 6 位验证码"
+            maxlength="10"
+          />
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="closeTwoFactorSetupDialog">取消</el-button>
+        <el-button type="primary" :loading="twoFactorEnabling" @click="confirmEnableTwoFactor">
+          确认开启
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 备用验证码展示 -->
+    <el-dialog
+      v-model="twoFactorCodesDialogVisible"
+      title="备用验证码"
+      width="420px"
+      :close-on-click-modal="false"
+    >
+      <p>以下备用验证码仅显示一次，请妥善保管，可用于无法获取动态码时登录。</p>
+      <ul class="backup-code-list">
+        <li v-for="code in twoFactorBackupCodes" :key="code">{{ code }}</li>
+      </ul>
+      <template #footer>
+        <el-button type="primary" @click="twoFactorCodesDialogVisible = false">
+          我已保存
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 关闭二步验证 -->
+    <el-dialog
+      v-model="twoFactorDisableDialogVisible"
+      title="关闭二步验证"
+      width="420px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+    >
+      <el-form label-width="100px">
+        <el-form-item label="账户密码">
+          <el-input
+            v-model="disableTwoFactorForm.password"
+            type="password"
+            placeholder="请输入账户密码"
+            show-password
+          />
+        </el-form-item>
+        <el-form-item label="验证码">
+          <el-input
+            v-model="disableTwoFactorForm.code"
+            placeholder="请输入动态码或备用码"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="twoFactorDisableDialogVisible = false">取消</el-button>
+        <el-button
+          type="danger"
+          :loading="disableTwoFactorLoading"
+          @click="confirmDisableTwoFactor"
+        >
+          确认关闭
+        </el-button>
+      </template>
     </el-dialog>
 
     <!-- Bark配置对话框 -->
@@ -306,14 +425,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from "vue";
+import { ref, reactive, onMounted, computed, nextTick } from "vue";
 import { ElMessage, ElMessageBox, type FormInstance } from "element-plus";
 import { User, Lock, Key, Message } from "@element-plus/icons-vue";
-import { changeUserPassword, getBarkSettings, updateBarkSettings as updateBarkSettingsAPI, testBarkNotification, getLoginLogs } from "@/api/user";
+import { changeUserPassword, getBarkSettings, updateBarkSettings as updateBarkSettingsAPI, testBarkNotification, getLoginLogs, startTwoFactorSetup, enableTwoFactor, regenerateTwoFactorBackupCodes, disableTwoFactor } from "@/api/user";
 import { getUserProfile } from "@/api/auth";
 import { useUserStore } from "@/store/user";
 import router from "@/router";
 import http from "@/api/http";
+import QRCode from "qrcode";
 
 const userStore = useUserStore();
 
@@ -329,6 +449,24 @@ const loginLogs = ref<any[]>([]);
 const loginLogsLoading = ref(false);
 const onlineIps = ref<any[]>([]);
 const onlineIpsLoading = ref(false);
+const hasTwoFactor = computed(() => Boolean(userStore.user?.two_factor_enabled));
+const twoFactorSetupDialogVisible = ref(false);
+const twoFactorDisableDialogVisible = ref(false);
+const twoFactorCodesDialogVisible = ref(false);
+const twoFactorSetupLoading = ref(false);
+const twoFactorEnabling = ref(false);
+const twoFactorSetupData = reactive({
+  secret: "",
+  otpAuthUrl: ""
+});
+const twoFactorCodeInput = ref("");
+const twoFactorBackupCodes = ref<string[]>([]);
+const twoFactorQrRef = ref<HTMLElement | null>(null);
+const disableTwoFactorForm = reactive({
+  password: "",
+  code: ""
+});
+const disableTwoFactorLoading = ref(false);
 
 // 表单引用
 const passwordFormRef = ref<FormInstance>();
@@ -417,6 +555,169 @@ const getUserStatusType = (status: number) => {
     [-1]: 'danger'
   };
   return statusMap[status] || 'info';
+};
+
+const renderTwoFactorQr = async () => {
+  if (!twoFactorQrRef.value || !twoFactorSetupData.otpAuthUrl) return;
+  twoFactorQrRef.value.innerHTML = "";
+  try {
+    const canvas = document.createElement("canvas");
+    await QRCode.toCanvas(canvas, twoFactorSetupData.otpAuthUrl, {
+      width: 180,
+      margin: 1,
+      color: {
+        dark: "#1f2937",
+        light: "#ffffff"
+      }
+    });
+    twoFactorQrRef.value.appendChild(canvas);
+  } catch (error) {
+    console.error("二维码生成失败", error);
+  }
+};
+
+const openTwoFactorSetupDialog = async () => {
+  try {
+    twoFactorSetupLoading.value = true;
+    const { data } = await startTwoFactorSetup();
+    twoFactorSetupData.secret = data.secret;
+    twoFactorSetupData.otpAuthUrl = data.otp_auth_url || data.provisioning_uri;
+    twoFactorCodeInput.value = "";
+    twoFactorSetupDialogVisible.value = true;
+    await nextTick(() => renderTwoFactorQr());
+  } catch (error) {
+    console.error("获取二步验证密钥失败:", error);
+    ElMessage.error((error as any)?.message || "获取二步验证密钥失败，请稍后重试");
+  } finally {
+    twoFactorSetupLoading.value = false;
+  }
+};
+
+const closeTwoFactorSetupDialog = () => {
+  twoFactorSetupDialogVisible.value = false;
+  twoFactorCodeInput.value = "";
+};
+
+const copyTwoFactorSecret = async () => {
+  if (!twoFactorSetupData.secret) {
+    ElMessage.warning("暂无可复制的密钥");
+    return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(twoFactorSetupData.secret);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = twoFactorSetupData.secret;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    ElMessage.success("密钥已复制");
+  } catch (error) {
+    console.error("复制二步验证密钥失败:", error);
+    ElMessage.error("复制失败，请手动选择密钥复制");
+  }
+};
+
+const showBackupCodesDialog = (codes: string[]) => {
+  twoFactorBackupCodes.value = codes;
+  twoFactorCodesDialogVisible.value = true;
+};
+
+const confirmEnableTwoFactor = async () => {
+  if (!twoFactorCodeInput.value.trim()) {
+    ElMessage.warning("请输入动态验证码");
+    return;
+  }
+  twoFactorEnabling.value = true;
+  try {
+    const { data } = await enableTwoFactor({
+      code: twoFactorCodeInput.value.trim(),
+    });
+    ElMessage.success(data?.message || "二步验证已开启");
+    closeTwoFactorSetupDialog();
+    userStore.updateUser({
+      two_factor_enabled: 1,
+      has_two_factor_backup_codes: true,
+    });
+    localStorage.removeItem("soga_tf_trust_token");
+    if (Array.isArray(data?.backup_codes)) {
+      showBackupCodesDialog(data.backup_codes);
+    }
+  } catch (error) {
+    console.error("启用二步验证失败:", error);
+    ElMessage.error((error as any)?.message || "启用失败，请检查验证码");
+  } finally {
+    twoFactorEnabling.value = false;
+  }
+};
+
+const handleRegenerateBackupCodes = async () => {
+  if (!hasTwoFactor.value) {
+    ElMessage.warning("请先开启二步验证");
+    return;
+  }
+  try {
+    const { value, action } = await ElMessageBox.prompt(
+      "请输入当前动态验证码或备用码，以生成新的备用验证码。",
+      "重置备用验证码",
+      {
+        confirmButtonText: "生成",
+        cancelButtonText: "取消",
+        inputPlaceholder: "请输入验证码",
+        inputPattern: /\S+/,
+        inputErrorMessage: "请输入验证码",
+      }
+    );
+    if (action === "cancel") return;
+    const { data } = await regenerateTwoFactorBackupCodes({
+      code: value.trim(),
+    });
+    ElMessage.success(data?.message || "备用验证码已更新");
+    if (Array.isArray(data?.backup_codes)) {
+      showBackupCodesDialog(data.backup_codes);
+    }
+  } catch (error) {
+    if (error === "cancel") return;
+    console.error("生成备用验证码失败:", error);
+    ElMessage.error((error as any)?.message || "生成备用验证码失败");
+  }
+};
+
+const openDisableTwoFactorDialog = () => {
+  disableTwoFactorForm.password = "";
+  disableTwoFactorForm.code = "";
+  twoFactorDisableDialogVisible.value = true;
+};
+
+const confirmDisableTwoFactor = async () => {
+  if (!disableTwoFactorForm.password || !disableTwoFactorForm.code) {
+    ElMessage.warning("请输入密码和验证码");
+    return;
+  }
+  disableTwoFactorLoading.value = true;
+  try {
+    const { data } = await disableTwoFactor({
+      password: disableTwoFactorForm.password,
+      code: disableTwoFactorForm.code,
+    });
+    ElMessage.success(data?.message || "二步验证已关闭");
+    twoFactorDisableDialogVisible.value = false;
+    userStore.updateUser({
+      two_factor_enabled: 0,
+      has_two_factor_backup_codes: false,
+    });
+    localStorage.removeItem("soga_tf_trust_token");
+  } catch (error) {
+    console.error("关闭二步验证失败:", error);
+    ElMessage.error((error as any)?.message || "关闭失败，请检查信息");
+  } finally {
+    disableTwoFactorLoading.value = false;
+  }
 };
 
 const getUserStatusText = (status: number) => {
@@ -780,7 +1081,17 @@ onMounted(async () => {
         .security-desc {
           color: #909399;
           font-size: 12px;
+          
+          .security-hint {
+            margin-left: 8px;
+          }
         }
+      }
+      
+      .security-actions {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
       }
       
       .bark-controls {
@@ -819,6 +1130,63 @@ onMounted(async () => {
     &:last-child {
       margin-bottom: 0;
     }
+  }
+}
+
+.totp-setup {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  min-height: 220px;
+}
+
+.totp-qr {
+  width: 200px;
+  height: 200px;
+  border: 1px dashed #dcdfe6;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  
+  canvas {
+    width: 100%;
+    height: 100%;
+  }
+  
+  .qr-placeholder {
+    font-size: 13px;
+    color: #909399;
+  }
+}
+
+.totp-details {
+  flex: 1;
+  font-size: 13px;
+  color: #606266;
+  
+  .secret-input {
+    margin: 12px 0;
+  }
+}
+
+.backup-code-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  
+  li {
+    background: #f5f7fa;
+    border-radius: 6px;
+    padding: 8px;
+    text-align: center;
+    font-family: 'Roboto Mono', monospace;
+    letter-spacing: 1px;
+    color: #303133;
   }
 }
 
