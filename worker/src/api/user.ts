@@ -325,6 +325,20 @@ export class UserAPI {
       const authUser = authResult.user;
       const userClass = toNumber(authUser.class);
       const userId = authUser.id;
+      const url = new URL(request.url);
+      const pageParam = parseInt(url.searchParams.get("page") || "1", 10);
+      const limitParam = parseInt(url.searchParams.get("limit") || "20", 10);
+      const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+      const limitCandidate = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 20;
+      const limit = Math.min(limitCandidate, 100);
+      const offset = (page - 1) * limit;
+      const typeFilterParam = url.searchParams.get("type");
+      const statusParam = url.searchParams.get("status");
+      const normalizedTypeFilter = typeFilterParam ? typeFilterParam.trim().toLowerCase() : "";
+      const statusFilter =
+        statusParam === null || statusParam === ""
+          ? null
+          : statusParam === "1";
 
       // 获取用户可访问的节点（用户等级大于等于节点等级）
       const nodesStmt = this.db.db.prepare(`
@@ -383,9 +397,32 @@ export class UserAPI {
         };
       }));
 
+      let filteredNodes = processedNodes;
+
+      if (normalizedTypeFilter) {
+        filteredNodes = filteredNodes.filter(
+          (node) => (node.type || "").toLowerCase() === normalizedTypeFilter
+        );
+      }
+
+      if (statusFilter !== null) {
+        const shouldBeOnline = statusFilter === true;
+        filteredNodes = filteredNodes.filter((node) =>
+          shouldBeOnline ? Boolean(node.is_online) : !node.is_online
+        );
+      }
+
+      const total = filteredNodes.length;
+      const pagedNodes = filteredNodes.slice(offset, offset + limit);
+
       return successResponse({
-        nodes: processedNodes,
-        statistics: nodeStats
+        nodes: pagedNodes,
+        statistics: nodeStats,
+        pagination: {
+          total,
+          page,
+          limit
+        }
       });
     } catch (error: unknown) {
       return errorResponse(toErrorMessage(error), 500);

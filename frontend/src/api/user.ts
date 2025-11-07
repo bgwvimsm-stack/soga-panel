@@ -12,8 +12,10 @@ import type {
 /**
  * 获取可访问节点列表
  */
-export const getUserNodes = (): Promise<ApiResponse<NodesResponse>> => {
-  return http.get("/user/nodes");
+export const getUserNodes = (
+  params?: PaginationParams & { type?: string; status?: string | number }
+): Promise<ApiResponse<NodesResponse>> => {
+  return http.get("/user/nodes", { params });
 };
 
 /**
