@@ -1,4 +1,6 @@
 // src/utils/subscription.js - 订阅配置生成工具
+import { buildClashTemplate } from "./templates/clashTemplate";
+import { buildSurgeTemplate } from "./templates/surgeTemplate";
 
 /**
  * 生成 V2Ray 订阅配置
@@ -372,44 +374,7 @@ export function generateClashConfig(nodes, user) {
     }
   }
 
-  const clashConfig = {
-    "mixed-port": 7890,
-    "allow-lan": true,
-    mode: "rule",
-    "log-level": "info",
-    dns: {
-      enable: true,
-      ipv6: false,
-      "enhanced-mode": "fake-ip",
-      "fake-ip-range": "198.18.0.1/16",
-      nameserver: ["114.114.114.114", "223.5.5.5"],
-    },
-    proxies: proxies,
-    "proxy-groups": [
-      {
-        name: "🚀 节点选择",
-        type: "select",
-        proxies: ["♻️ 自动选择", "🎯 全球直连", ...proxyNames],
-      },
-      {
-        name: "♻️ 自动选择",
-        type: "url-test",
-        proxies: proxyNames,
-        url: "http://www.gstatic.com/generate_204",
-        interval: 300,
-      },
-      {
-        name: "🎯 全球直连",
-        type: "select",
-        proxies: ["DIRECT"],
-      },
-    ],
-    rules: [
-      "DOMAIN-SUFFIX,cn,🎯 全球直连",
-      "GEOIP,CN,🎯 全球直连",
-      "MATCH,🚀 节点选择",
-    ],
-  };
+  const clashConfig = buildClashTemplate(proxyNames, proxies);
 
   return yaml.dump(clashConfig);
 }
@@ -689,26 +654,7 @@ export function generateSurgeConfig(nodes, user) {
     }
   }
 
-  const surgeConfig = `#!MANAGED-CONFIG
-
-[General]
-loglevel = notify
-skip-proxy = 127.0.0.1, 192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 100.64.0.0/10, localhost, *.local
-dns-server = 114.114.114.114, 223.5.5.5
-
-[Proxy]
-${proxies.join("\n")}
-
-[Proxy Group]
-🚀 节点选择 = select, ${proxyNames.join(", ")}
-♻️ 自动选择 = url-test, ${proxyNames.join(", ")}, url = http://www.gstatic.com/generate_204, interval = 300
-
-[Rule]
-DOMAIN-SUFFIX,cn,DIRECT
-GEOIP,CN,DIRECT
-FINAL,🚀 节点选择`;
-
-  return surgeConfig;
+  return buildSurgeTemplate(proxies, proxyNames);
 }
 
 // 简单的 YAML 转换函数（用于 Clash 配置）
