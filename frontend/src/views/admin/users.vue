@@ -130,17 +130,15 @@
           <el-option label="禁用" :value="0" />
         </el-select>
 
-        <el-select
+        <el-input
           v-model="classFilter"
           placeholder="用户等级"
-          @change="loadUsers"
+          type="number"
           clearable
-          style="width: 120px; margin-right: 12px;"
-        >
-          <el-option label="等级1" :value="1" />
-          <el-option label="等级2" :value="2" />
-          <el-option label="等级3" :value="3" />
-        </el-select>
+          @change="handleClassFilterChange"
+          @clear="handleClassFilterChange"
+          style="width: 140px; margin-right: 12px;"
+        />
 
         <!-- 操作按钮 -->
         <el-button type="primary" @click="showAddUserDialog = true">
@@ -496,7 +494,7 @@ const pagerConfig = reactive({
 // 筛选条件
 const searchQuery = ref('');
 const statusFilter = ref<number | null>(null);
-const classFilter = ref<number | null>(null);
+const classFilter = ref<string>('');
 
 // 表格高度计算
 const getTableHeight = computed(() => {
@@ -672,13 +670,20 @@ const loadSystemStats = async () => {
 const loadUsers = async () => {
   loading.value = true;
   try {
-    const params = {
+    const params: Record<string, any> = {
       page: pagerConfig.currentPage,
       limit: pagerConfig.pageSize,
       search: searchQuery.value || undefined,
       status: statusFilter.value !== null ? statusFilter.value : undefined,
-      class: classFilter.value || undefined
     };
+
+    const classValue = classFilter.value.trim();
+    if (classValue !== '') {
+      const parsedClass = Number(classValue);
+      if (!Number.isNaN(parsedClass)) {
+        params.class = parsedClass;
+      }
+    }
 
     const { data } = await getUsers(params);
     users.value = data.users || [];
@@ -691,6 +696,11 @@ const loadUsers = async () => {
   } finally {
     loading.value = false;
   }
+};
+
+const handleClassFilterChange = () => {
+  pagerConfig.currentPage = 1;
+  loadUsers();
 };
 
 // 分页变化处理

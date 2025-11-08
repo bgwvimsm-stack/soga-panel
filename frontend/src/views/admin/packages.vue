@@ -64,9 +64,15 @@
           <el-option label="启用" :value="1" />
           <el-option label="禁用" :value="0" />
         </el-select>
-        <el-select v-model="filterLevel" placeholder="筛选等级" clearable @change="loadPackages" style="width: 120px; margin-left: 12px;">
-          <el-option v-for="level in 5" :key="level" :label="`等级${level}`" :value="level" />
-        </el-select>
+        <el-input
+          v-model="filterLevel"
+          placeholder="筛选等级"
+          type="number"
+          clearable
+          @change="handleLevelFilterChange"
+          @clear="handleLevelFilterChange"
+          style="width: 150px; margin-left: 12px;"
+        />
       </template>
 
       <template v-slot="{ size, dynamicColumns }">
@@ -284,7 +290,10 @@ const loadPackages = async () => {
     }
 
     if (filterLevel.value !== '') {
-      params.level = filterLevel.value;
+      const levelValue = Number(filterLevel.value);
+      if (!Number.isNaN(levelValue)) {
+        params.level = levelValue;
+      }
     }
 
     const response = await http.get('/admin/packages', { params });
@@ -299,6 +308,11 @@ const loadPackages = async () => {
   } finally {
     loading.value = false;
   }
+};
+
+const handleLevelFilterChange = () => {
+  pagerConfig.currentPage = 1;
+  loadPackages();
 };
 
 const handlePageChange = ({ currentPage, pageSize }) => {

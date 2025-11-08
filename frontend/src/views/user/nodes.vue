@@ -47,14 +47,14 @@
 
     <VxeTableBar :vxeTableRef="vxeTableRef" :columns="columns" title="节点列表" @refresh="loadNodes">
       <template #buttons>
-        <el-select v-model="filterType" placeholder="节点类型" clearable @change="loadNodes" style="width: 150px">
+        <el-select v-model="filterType" placeholder="节点类型" clearable @change="handleFilterChange" style="width: 150px">
           <el-option label="全部" value="" />
           <el-option label="Shadowsocks" value="ss" />
           <el-option label="V2Ray" value="v2ray" />
           <el-option label="Trojan" value="trojan" />
           <el-option label="Hysteria" value="hysteria" />
         </el-select>
-        <el-select v-model="filterStatus" placeholder="节点状态" clearable @change="loadNodes" style="width: 120px; margin-left: 12px;">
+        <el-select v-model="filterStatus" placeholder="节点状态" clearable @change="handleFilterChange" style="width: 120px; margin-left: 12px;">
           <el-option label="全部" value="" />
           <el-option label="在线" :value="1" />
           <el-option label="离线" :value="0" />
@@ -751,28 +751,39 @@ const generateHysteriaUrl = (node: any, config: any): string => {
 const loadNodes = async () => {
   loading.value = true;
   try {
-    const params: any = {
+    const params: Record<string, any> = {
       page: pagerConfig.currentPage,
       limit: pagerConfig.pageSize
     };
-    if (filterType.value) params.type = filterType.value;
-    if (filterStatus.value !== '') params.status = filterStatus.value;
+
+    if (filterType.value) {
+      params.type = filterType.value;
+    }
+
+    if (filterStatus.value !== '' && filterStatus.value !== null && filterStatus.value !== undefined) {
+      params.status = filterStatus.value;
+    }
 
     const response = await getUserNodes(params);
-    if (response.code === 0 && response.data) {
-      nodes.value = response.data.nodes || [];
-      pagerConfig.total = response.data.nodes?.length || 0;
-      totalNodes.value = response.data.statistics?.total || 0;
-      onlineNodes.value = response.data.statistics?.online || 0;
-      offlineNodes.value = response.data.statistics?.offline || 0;
-      availableNodes.value = response.data.statistics?.accessible || 0;
-    }
+    const responseData = response.data;
+
+    nodes.value = responseData.nodes || [];
+    pagerConfig.total = responseData.pagination?.total || nodes.value.length;
+    totalNodes.value = responseData.statistics?.total || 0;
+    onlineNodes.value = responseData.statistics?.online || 0;
+    offlineNodes.value = responseData.statistics?.offline || 0;
+    availableNodes.value = responseData.statistics?.accessible || 0;
   } catch (error) {
     console.error('加载节点列表失败:', error);
     ElMessage.error('加载节点列表失败');
   } finally {
     loading.value = false;
   }
+};
+
+const handleFilterChange = () => {
+  pagerConfig.currentPage = 1;
+  loadNodes();
 };
 
 const handlePageChange = ({ currentPage, pageSize }) => {

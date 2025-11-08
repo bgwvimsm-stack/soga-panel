@@ -1067,31 +1067,87 @@ export class AdminAPI {
         return errorResponse(adminCheck.message, 401);
       }
 
-      // 测试简单查询
-      const stmt = this.db.db.prepare("SELECT * FROM nodes");
-      const result = await stmt.all();
-      
-      console.log('Database query result:', result);
-      console.log('Result type:', typeof result);
-      console.log('Is array:', Array.isArray(result));
-      
-      // 确保返回数组
-      let nodes = [];
-      if (Array.isArray(result)) {
-        nodes = result;
-      } else if (result && result.results && Array.isArray(result.results)) {
-        nodes = result.results;
-      } else if (result) {
-        nodes = [result];
+      const url = new URL(request.url);
+      const pageParam = parseInt(url.searchParams.get("page") || "1", 10);
+      const limitParam = parseInt(url.searchParams.get("limit") || "20", 10);
+      const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+      const limitCandidate = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 20;
+      const limit = Math.min(limitCandidate, 100);
+      const offset = (page - 1) * limit;
+      const keywordRaw = url.searchParams.get("keyword");
+      const keyword = keywordRaw ? keywordRaw.trim() : "";
+      const statusParam = url.searchParams.get("status");
+
+      const conditions: string[] = [];
+      const params: Array<string | number> = [];
+
+      if (keyword) {
+        conditions.push("(name LIKE ? OR server LIKE ?)");
+        const keywordPattern = `%${keyword}%`;
+        params.push(keywordPattern, keywordPattern);
       }
-      
-      console.log('Final nodes array:', nodes);
-      console.log('Final nodes length:', nodes.length);
-      
-      return successResponse(nodes);
+
+      if (statusParam !== null && statusParam !== undefined && statusParam !== "") {
+        const statusValue = parseInt(statusParam, 10);
+        conditions.push("status = ?");
+        params.push(statusValue === 1 ? 1 : 0);
+      }
+
+      const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      const totalRow = await this.db.db
+        .prepare(`SELECT COUNT(*) as total FROM nodes ${whereClause}`)
+        .bind(...params)
+        .first<CountRow>();
+
+      const total = ensureNumber(totalRow?.total);
+
+      const nodesResult = await this.db.db
+        .prepare(
+          `
+        SELECT 
+          id,
+          name,
+          type,
+          server,
+          server_port,
+          tls_host,
+          node_class,
+          node_bandwidth,
+          node_bandwidth_limit,
+          node_config,
+          status,
+          created_at,
+          updated_at
+        FROM nodes
+        ${whereClause}
+        ORDER BY id DESC
+        LIMIT ? OFFSET ?
+      `
+        )
+        .bind(...params, limit, offset)
+        .all<DbRow>();
+
+      const nodes = nodesResult.results ?? [];
+      const formattedNodes = nodes.map((node) => ({
+        ...node,
+        node_class: ensureNumber(node.node_class),
+        node_bandwidth: ensureNumber(node.node_bandwidth),
+        node_bandwidth_limit: ensureNumber(node.node_bandwidth_limit),
+        server_port: ensureNumber(node.server_port),
+        status: ensureNumber(node.status),
+      }));
+
+      return successResponse({
+        data: formattedNodes,
+        total,
+        page,
+        limit,
+      });
     } catch (error) {
-      console.error('Get nodes error:', error);
-      return errorResponse(error.message, 500);
+      console.error("Get nodes error:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      return errorResponse(message, 500);
     }
   }
 

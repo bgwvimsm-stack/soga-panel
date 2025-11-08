@@ -11,6 +11,7 @@ import {
   generateSurgeConfig,
 } from "../utils/subscription";
 import { ensureNumber } from "../utils/d1";
+import { createSystemConfigManager, SystemConfigManager } from "../utils/systemConfig";
 
 type SubscriptionType = "v2ray" | "clash" | "quantumultx" | "shadowrocket" | "surge";
 
@@ -49,7 +50,7 @@ const FILE_EXTENSIONS: Record<SubscriptionType, string> = {
   clash: "yaml",
   quantumultx: "txt",
   shadowrocket: "txt",
-  surge: "txt",
+  surge: "conf",
 };
 
 function isSupportedType(value: string | null): value is SubscriptionType {
@@ -66,10 +67,12 @@ function getExpireTimestamp(expireTime: SubscriptionUserRow["expire_time"]): num
 export class SubscriptionAPI {
   private readonly db: DatabaseService;
   private readonly env: Env;
+  private readonly configManager: SystemConfigManager;
 
   constructor(env: Env) {
     this.db = new DatabaseService(env.DB);
     this.env = env;
+    this.configManager = createSystemConfigManager(env);
   }
 
   async getSubscription(request: Request) {
@@ -182,23 +185,84 @@ export class SubscriptionAPI {
       const contentType = CONTENT_TYPES[type];
       const extension = FILE_EXTENSIONS[type];
       const config = generator(nodes, user);
+      const filename = await this.buildFilename(type, extension);
+      const profileWebPageUrl = await this.getSiteUrl();
 
       const uploadTraffic = ensureNumber(user.upload_traffic);
       const downloadTraffic = ensureNumber(user.download_traffic);
 
-      return new Response(config, {
-        headers: {
-          "Content-Type": contentType,
-          "Content-Disposition": `attachment; filename="${type}.${extension}"`,
-          "Profile-Update-Interval": "24",
-          "Subscription-Userinfo": `upload=${uploadTraffic}; download=${downloadTraffic}; total=${trafficQuota}; expire=${getExpireTimestamp(
-            user.expire_time
-          )}`,
-        },
-      });
+      const headers: Record<string, string> = {
+        "Content-Type": contentType,
+        "Content-Disposition": this.buildContentDisposition(filename),
+        "Profile-Update-Interval": "24",
+        "Subscription-Userinfo": `upload=${uploadTraffic}; download=${downloadTraffic}; total=${trafficQuota}; expire=${getExpireTimestamp(
+          user.expire_time
+        )}`,
+      };
+
+      if (profileWebPageUrl) {
+        headers["profile-web-page-url"] = profileWebPageUrl;
+      }
+
+      return new Response(config, { headers });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return errorResponse(message, 500);
     }
+  }
+
+  private async buildFilename(type: SubscriptionType, extension: string): Promise<string> {
+    if (type === "clash" || type === "surge") {
+      const siteName =
+        (await this.configManager.getSystemConfig(
+          "site_name",
+          (this.env.SITE_NAME as string) || "Soga Panel"
+        )) || "Soga Panel";
+      const safeSiteName = this.sanitizeFilename(siteName);
+      return `${safeSiteName}.${extension}`;
+    }
+
+    return `${type}.${extension}`;
+  }
+
+  private buildContentDisposition(filename: string): string {
+    const fallback = this.forceAsciiFilename(filename);
+    if (this.isAscii(filename)) {
+      return `attachment; filename=${fallback}`;
+    }
+    const encoded = encodeURIComponent(filename);
+    return `attachment; filename=${fallback}; filename*=UTF-8''${encoded}`;
+  }
+
+  private async getSiteUrl(): Promise<string> {
+    return (
+      (await this.configManager.getSystemConfig(
+        "site_url",
+        (this.env.SITE_URL as string) || "https://panel.example.com"
+      )) || ""
+    );
+  }
+
+  private sanitizeFilename(value: string): string {
+    const cleaned = value
+      .replace(/[\\/:*?"<>|]/g, "_")
+      .replace(/\s+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .trim();
+    return cleaned.length > 0 ? cleaned : "soga_panel";
+  }
+
+  private isAscii(value: string): boolean {
+    return /^[\x00-\x7F]*$/.test(value);
+  }
+
+  private forceAsciiFilename(value: string): string {
+    const sanitized = this.sanitizeFilename(value);
+    const ascii = sanitized
+      .replace(/[^\x00-\x7F]/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    return ascii.length > 0 ? ascii : "soga_panel";
   }
 }

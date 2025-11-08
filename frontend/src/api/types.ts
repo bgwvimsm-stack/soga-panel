@@ -68,6 +68,11 @@ export interface NodeStatistics {
 export interface NodesResponse {
   nodes: Node[];
   statistics: NodeStatistics;
+  pagination?: {
+    total: number;
+    page: number;
+    limit: number;
+  };
 }
 
 // 登录请求

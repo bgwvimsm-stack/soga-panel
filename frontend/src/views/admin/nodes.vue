@@ -16,10 +16,18 @@
         <el-button type="warning" @click="batchOfflineNodes" :disabled="selectedNodes.length === 0">
           <el-icon><CircleClose /></el-icon>批量禁用({{ selectedNodes.length }})
         </el-button>
-        <el-input v-model="searchKeyword" placeholder="搜索节点名称或地址" clearable @change="loadNodes" style="width: 200px; margin-left: 12px;">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索节点名称或地址"
+          clearable
+          @keyup.enter="handleSearch"
+          @change="handleSearch"
+          @clear="handleSearch"
+          style="width: 200px; margin-left: 12px;"
+        >
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
-        <el-select v-model="statusFilter" placeholder="节点状态" clearable @change="loadNodes" style="width: 120px; margin-left: 12px;">
+        <el-select v-model="statusFilter" placeholder="节点状态" clearable @change="handleStatusFilterChange" style="width: 120px; margin-left: 12px;">
           <el-option label="启用" :value="1" />
           <el-option label="禁用" :value="0" />
         </el-select>
@@ -326,13 +334,30 @@ const formatDateTime = (dateStr: string): string => {
 const loadNodes = async () => {
   loading.value = true;
   try {
-    const { data } = await getNodes();
-    nodes.value = data || [];
-    pagerConfig.total = nodes.value.length;
+    const params: Record<string, any> = {
+      page: pagerConfig.currentPage,
+      limit: pagerConfig.pageSize
+    };
+
+    const keyword = searchKeyword.value.trim();
+    if (keyword) {
+      params.keyword = keyword;
+    }
+
+    if (statusFilter.value !== null && statusFilter.value !== undefined) {
+      params.status = statusFilter.value;
+    }
+
+    const response = await getNodes(params);
+    const payload = response.data;
+
+    nodes.value = payload.data || [];
+    pagerConfig.total = payload.total || 0;
   } catch (error) {
     console.error('加载节点失败:', error);
     ElMessage.error('加载节点列表失败');
     nodes.value = [];
+    pagerConfig.total = 0;
   } finally {
     loading.value = false;
   }
@@ -341,6 +366,17 @@ const loadNodes = async () => {
 const handlePageChange = ({ currentPage, pageSize }) => {
   pagerConfig.currentPage = currentPage;
   pagerConfig.pageSize = pageSize;
+  loadNodes();
+};
+
+const handleSearch = () => {
+  pagerConfig.currentPage = 1;
+  loadNodes();
+};
+
+const handleStatusFilterChange = () => {
+  pagerConfig.currentPage = 1;
+  loadNodes();
 };
 
 const handleSelectionChange = () => {
