@@ -43,7 +43,9 @@ import {
   CircleCheckFilled,
   DocumentCopy,
   Tools,
-  Wallet
+  Wallet,
+  Key,
+  CollectionTag
 } from '@element-plus/icons-vue';
 
 interface MenuItem {
@@ -100,7 +102,9 @@ const iconMap = {
   CircleCheckFilled,
   DocumentCopy,
   Tools,
-  Wallet
+  Wallet,
+  Key,
+  CollectionTag
 };
 
 const getIcon = (iconName: string) => {

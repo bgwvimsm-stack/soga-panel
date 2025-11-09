@@ -429,6 +429,24 @@ CREATE TABLE IF NOT EXISTS two_factor_trusted_devices (
     UNIQUE (user_id, token_hash)
 );
 
+-- 苹果账号共享ID配置表
+-- 字段说明：
+-- id: 主键
+-- name: 共享ID名称，展示给用户
+-- fetch_url: 需要代理获取的远程JSON地址
+-- remote_account_id: 远程JSON中的账户ID
+-- status: 状态（1启用，0禁用）
+-- created_at/updated_at: 记录创建与更新时间（UTC+8）
+CREATE TABLE IF NOT EXISTS shared_ids (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    fetch_url TEXT NOT NULL,
+    remote_account_id INTEGER NOT NULL,
+    status INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
+);
+
 -- 套餐表
 -- 字段说明：
 -- id: 套餐唯一标识ID（主键）
@@ -572,6 +590,9 @@ CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions (expires_a
 CREATE INDEX IF NOT EXISTS idx_two_factor_trusted_devices_user ON two_factor_trusted_devices (user_id);
 
 CREATE INDEX IF NOT EXISTS idx_two_factor_trusted_devices_expires ON two_factor_trusted_devices (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_shared_ids_status ON shared_ids (status);
+CREATE INDEX IF NOT EXISTS idx_shared_ids_remote_id ON shared_ids (remote_account_id);
 
 -- 登录记录索引
 CREATE INDEX IF NOT EXISTS idx_login_logs_user_id ON login_logs(user_id);

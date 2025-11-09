@@ -1,4 +1,4 @@
-import http from "./http";
+import http, { httpClient } from "./http";
 import type { ApiResponse, PaginationResponse, PaginationParams } from "./types";
 
 // 公告接口类型定义
@@ -63,6 +63,7 @@ export interface User {
   bark_key?: string;
   bark_enabled?: boolean;
   is_admin?: number;
+  money?: number | string;
 }
 
 export interface CreateUserRequest {
@@ -92,6 +93,7 @@ export interface UpdateUserRequest {
   device_limit?: number;
   bark_key?: string;
   bark_enabled?: boolean;
+  money?: number;
 }
 
 export const getUsers = (params?: PaginationParams & {
@@ -123,7 +125,12 @@ export const resetUserTraffic = (id: number): Promise<ApiResponse<null>> => {
 };
 
 export const exportUsersCSV = (userIds?: number[]): Promise<string> => {
-  return http.get('/admin/users/export', { responseType: 'text' });
+  return httpClient
+    .get<string>("/admin/users/export", {
+      responseType: "text",
+      params: { ids: userIds }
+    })
+    .then((response) => response.data);
 };
 
 // 节点管理API
@@ -183,6 +190,58 @@ export const batchUpdateNodes = (data: {
   return http.post('/admin/nodes/batch', data);
 };
 
+export interface SharedIdConfig {
+  id: number;
+  name: string;
+  fetch_url: string;
+  remote_account_id: number;
+  status: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export const getSharedIdConfigs = (params?: {
+  page?: number;
+  limit?: number;
+  keyword?: string;
+  status?: string | number;
+}): Promise<ApiResponse<{
+  records: SharedIdConfig[];
+  pagination: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}>> => {
+  return http.get("/admin/shared-ids", { params });
+};
+
+export const createSharedIdConfig = (data: {
+  name: string;
+  fetch_url: string;
+  remote_account_id: number;
+  status?: number;
+}): Promise<ApiResponse<{ record: SharedIdConfig }>> => {
+  return http.post("/admin/shared-ids", data);
+};
+
+export const updateSharedIdConfig = (
+  id: number,
+  data: {
+    name?: string;
+    fetch_url?: string;
+    remote_account_id?: number;
+    status?: number;
+  }
+): Promise<ApiResponse<{ record: SharedIdConfig }>> => {
+  return http.put(`/admin/shared-ids/${id}`, data);
+};
+
+export const deleteSharedIdConfig = (id: number): Promise<ApiResponse<{ id: number }>> => {
+  return http.delete(`/admin/shared-ids/${id}`);
+};
+
 // 系统统计API
 export interface SystemStats {
   users: {
@@ -239,7 +298,9 @@ export const batchDeleteLoginLogs = (ids: number[]): Promise<ApiResponse<null>> 
 };
 
 export const exportLoginLogsCSV = (ids?: number[]): Promise<string> => {
-  return http.post('/admin/login-logs/export-csv', { ids }, { responseType: 'text' });
+  return httpClient
+    .post<string>("/admin/login-logs/export-csv", { ids }, { responseType: "text" })
+    .then((response) => response.data);
 };
 
 // 订阅记录API
@@ -269,7 +330,9 @@ export const batchDeleteSubscriptionLogs = (ids: number[]): Promise<ApiResponse<
 };
 
 export const exportSubscriptionLogsCSV = (ids?: number[]): Promise<string> => {
-  return http.post('/admin/subscription-logs/export-csv', { ids }, { responseType: 'text' });
+  return httpClient
+    .post<string>("/admin/subscription-logs/export-csv", { ids }, { responseType: "text" })
+    .then((response) => response.data);
 };
 
 // 在线IP管理API
@@ -313,7 +376,9 @@ export const batchDeleteOnlineIPs = (ids: number[]): Promise<ApiResponse<null>> 
 };
 
 export const exportOnlineIPsCSV = (ids?: number[]): Promise<string> => {
-  return http.post('/admin/online-ips/export-csv', { ids }, { responseType: 'text' });
+  return httpClient
+    .post<string>("/admin/online-ips/export-csv", { ids }, { responseType: "text" })
+    .then((response) => response.data);
 };
 
 export const blockIP = (ip: string): Promise<ApiResponse<null>> => {
