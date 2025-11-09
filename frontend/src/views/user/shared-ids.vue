@@ -268,11 +268,18 @@ onMounted(fetchSharedIds);
   @media (max-width: 768px) {
     .instructions-layout {
       flex-direction: column;
+      align-items: stretch;
     }
 
     .warning-panel,
     .guide-panel {
       max-width: 100%;
+      flex: none;
+      width: 100%;
+    }
+
+    .guide-panel {
+      margin-bottom: 16px;
     }
   }
 
