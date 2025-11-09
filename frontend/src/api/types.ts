@@ -13,7 +13,7 @@ export interface User {
   uuid: string;
   passwd: string;
   token: string;
-  is_admin: boolean | number;
+  is_admin: boolean | number | string;
   speed_limit: number;
   device_limit: number;
   upload_traffic: number;
@@ -31,8 +31,11 @@ export interface User {
   class_expire_time: string;
   traffic_reset_day: number;
   subscription_url: string;
-  two_factor_enabled?: boolean;
+  two_factor_enabled?: boolean | number;
   has_two_factor_backup_codes?: boolean;
+  avatar?: string;
+  u?: number;
+  d?: number;
 }
 
 // 节点相关类型
@@ -123,6 +126,7 @@ export interface PasswordResetConfirmPayload {
 export interface GoogleLoginRequest {
   idToken: string;
   remember?: boolean;
+  twoFactorTrustToken?: string;
 }
 
 export interface GithubLoginRequest {
@@ -130,6 +134,7 @@ export interface GithubLoginRequest {
   redirectUri?: string;
   state?: string;
   remember?: boolean;
+  twoFactorTrustToken?: string;
 }
 
 export interface SendEmailCodeResponse {

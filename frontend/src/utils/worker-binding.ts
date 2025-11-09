@@ -1,7 +1,11 @@
 // Cloudflare Worker 绑定工具
 
+type WorkerFetcher = {
+  fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+};
+
 declare global {
-  const BACKEND: Fetcher;
+  const BACKEND: WorkerFetcher;
 }
 
 /**

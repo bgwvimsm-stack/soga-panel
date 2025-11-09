@@ -13,7 +13,7 @@ export function useAsync<T, TArgs extends unknown[] = unknown[]>(
   immediate = false,
   defaultValue: T | null = null
 ): AsyncState<T> & { execute: (...args: TArgs) => Promise<T> } {
-  const data = ref<T | null>(defaultValue);
+  const data = ref<T | null>(defaultValue) as Ref<T | null>;
   const loading = ref(false);
   const error = ref<Error | null>(null);
   let lastArgs: TArgs = [] as unknown as TArgs;
@@ -39,7 +39,7 @@ export function useAsync<T, TArgs extends unknown[] = unknown[]>(
   const retry = () => execute(...lastArgs);
 
   if (immediate) {
-    execute();
+    execute(...([] as unknown as TArgs));
   }
 
   return {
@@ -67,7 +67,7 @@ export function useAsyncWithMessage<T, TArgs extends unknown[] = unknown[]>(
     defaultValue = null
   } = options;
 
-  const asyncState = useAsync(asyncFunction, false, defaultValue);
+  const asyncState = useAsync<T, TArgs>(asyncFunction, false, defaultValue);
 
   const executeWithMessage = async (...args: TArgs): Promise<T> => {
     try {
@@ -83,7 +83,7 @@ export function useAsyncWithMessage<T, TArgs extends unknown[] = unknown[]>(
   };
 
   if (immediate) {
-    executeWithMessage();
+    executeWithMessage(...([] as unknown as TArgs));
   }
 
   return {

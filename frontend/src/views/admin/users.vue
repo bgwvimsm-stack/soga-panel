@@ -466,8 +466,7 @@ import {
   getSystemStats,
   type User,
   type CreateUserRequest,
-  type UpdateUserRequest,
-  type SystemStats
+  type UpdateUserRequest
 } from "@/api/admin";
 
 const vxeTableRef = ref();
@@ -479,7 +478,16 @@ const batchOperating = ref(false);
 const showAddUserDialog = ref(false);
 const editingUser = ref<User | null>(null);
 const users = ref<User[]>([]);
-const systemStats = ref<SystemStats | null>(null);
+interface UserStatsOverview {
+  total_users: number;
+  active_users: number;
+  total_nodes: number;
+  online_nodes: number;
+  total_traffic: number;
+  today_traffic: number;
+}
+
+const systemStats = ref<UserStatsOverview | null>(null);
 const selectedUsers = ref<User[]>([]);
 
 // 分页配置
@@ -686,8 +694,8 @@ const loadUsers = async () => {
     }
 
     const { data } = await getUsers(params);
-    users.value = data.users || [];
-    pagerConfig.total = data.total || 0;
+    users.value = data?.data || [];
+    pagerConfig.total = data?.total || 0;
   } catch (error) {
     console.error('加载用户列表失败:', error);
     ElMessage.error('加载用户列表失败');
@@ -834,8 +842,8 @@ const toggleUserStatus = async (user: User) => {
       }
     );
 
-    const { data } = await toggleUserStatusAPI(user.id);
-    user.status = data.status;
+    await toggleUserStatusAPI(user.id);
+    user.status = user.status === 1 ? 0 : 1;
     ElMessage.success(`用户${action}成功`);
   } catch (error) {
     if (error !== 'cancel') {

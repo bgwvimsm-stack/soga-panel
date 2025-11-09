@@ -22,7 +22,8 @@ const app = createApp(App);
 
 // 处理Vue应用级错误
 app.config.errorHandler = (err, instance, info) => {
-  globalErrorHandler.handleComponentError(err, instance, info);
+  const normalizedError = err instanceof Error ? err : new Error(String(err));
+  globalErrorHandler.handleComponentError(normalizedError, instance, info);
 };
 
 // 全局注册简化图标组件

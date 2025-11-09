@@ -4,36 +4,42 @@ import { ElIcon, ElDivider, ElDropdown, ElDropdownMenu, ElDropdownItem, ElPopove
 import { FullScreen, ScaleToOriginal, Refresh, Setting } from '@element-plus/icons-vue';
 import CollapseIcon from '@/assets/table-bar/collapse.svg?component';
 
-const props = defineProps({
-  title: {
-    type: String,
-    default: '列表'
-  },
-  vxeTableRef: {
-    type: Object,
-    default: null
-  },
-  columns: {
-    type: Array,
-    default: () => []
-  }
+interface ColumnConfig {
+  field?: string;
+  title?: string;
+  columnSelectable?: boolean;
+  visible?: boolean;
+  [key: string]: unknown;
+}
+
+const props = withDefaults(defineProps<{
+  title?: string;
+  vxeTableRef?: unknown;
+  columns: ColumnConfig[];
+}>(), {
+  title: '列表',
+  vxeTableRef: null,
+  columns: () => []
 });
 
-const emit = defineEmits(['refresh']);
+const emit = defineEmits<{
+  (e: 'refresh'): void;
+  (e: 'fullscreen', value: boolean): void;
+}>();
 
 const size = ref('small');
 const loading = ref(false);
 const isFullscreen = ref(false);
-const dynamicColumns = ref([...props.columns]);
+const dynamicColumns = ref<ColumnConfig[]>([...props.columns]);
 
 const selectableColumns = computed(() =>
-  props.columns.filter((col: any) => col.columnSelectable !== false)
+  props.columns.filter((col) => col.columnSelectable !== false && (col.title || col.field))
 );
 
 const checkedColumns = ref(
   selectableColumns.value
-    .filter((col: any) => col.visible !== false)
-    .map((col: any) => col.title)
+    .filter((col) => col.visible !== false)
+    .map((col) => col.title || String(col.field ?? ''))
 );
 
 // 监听 columns 变化
@@ -67,10 +73,13 @@ const onFullscreen = () => {
 
 // 列显示切换
 const handleCheckedColumnsChange = (values: string[]) => {
-  dynamicColumns.value = props.columns.map(col => ({
-    ...col,
-    visible: col.columnSelectable === false ? col.visible !== false : values.includes(col.title)
-  }));
+  dynamicColumns.value = props.columns.map((col) => {
+    const identifier = col.title || String(col.field ?? "");
+    return {
+      ...col,
+      visible: col.columnSelectable === false ? col.visible !== false : values.includes(identifier)
+    };
+  });
 };
 
 const getSizeLabel = (s: string) => {
@@ -128,9 +137,16 @@ const getSizeLabel = (s: string) => {
           <div class="column-setting">
             <ElScrollbar max-height="400px">
               <ElCheckboxGroup v-model="checkedColumns" @change="handleCheckedColumnsChange">
-                <div v-for="col in selectableColumns" :key="col.field || col.title" class="column-item">
-                  <ElCheckbox :label="col.title" :value="col.title">
-                    {{ col.title }}
+                <div
+                  v-for="(col, index) in selectableColumns"
+                  :key="col.field || col.title || index"
+                  class="column-item"
+                >
+                  <ElCheckbox
+                    :label="col.title || col.field || `column_${index}`"
+                    :value="col.title || col.field || `column_${index}`"
+                  >
+                    {{ col.title || col.field || `列${index + 1}` }}
                   </ElCheckbox>
                 </div>
               </ElCheckboxGroup>

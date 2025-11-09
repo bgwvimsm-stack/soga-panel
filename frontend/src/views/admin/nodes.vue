@@ -153,7 +153,14 @@
         <el-row :gutter="20">
           <el-col :span="12">
             <el-form-item label="节点等级" prop="node_class">
-              <el-input v-model="nodeForm.node_class" placeholder="请输入节点等级" />
+              <el-input-number
+                v-model="nodeForm.node_class"
+                :min="0"
+                :max="10"
+                :step="1"
+                style="width: 100%"
+                placeholder="请输入节点等级"
+              />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -267,7 +274,7 @@ const nodeForm = reactive({
   server: '',
   server_port: 443,
   tls_host: '',
-  node_class: '',
+  node_class: 0,
   node_bandwidth_limit_gb: 0,
   node_bandwidth: 0,
   bandwidthlimit_resetday: 1,
@@ -285,7 +292,10 @@ const nodeRules = {
     { required: true, message: '请输入端口号', trigger: 'blur' },
     { type: 'number', min: 1, max: 65535, message: '端口号应在1-65535之间', trigger: 'blur' }
   ],
-  node_class: [{ required: true, message: '请输入节点等级', trigger: 'blur' }]
+  node_class: [
+    { required: true, message: '请输入节点等级', trigger: 'change' },
+    { type: 'number', min: 0, message: '节点等级必须为非负整数', trigger: 'change' }
+  ]
 };
 
 const getNodeTypeColor = (type: string) => {
@@ -544,7 +554,7 @@ const resetForm = () => {
   nodeForm.server = '';
   nodeForm.server_port = 443;
   nodeForm.tls_host = '';
-  nodeForm.node_class = '';
+  nodeForm.node_class = 0;
   nodeForm.node_bandwidth_limit_gb = 0;
   nodeForm.node_bandwidth = 0;
   nodeForm.bandwidthlimit_resetday = 1;

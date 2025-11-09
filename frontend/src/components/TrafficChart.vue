@@ -5,6 +5,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import * as echarts from 'echarts';
+import type { EChartsOption } from 'echarts';
 import { formatBytes } from '@/utils/format';
 
 interface TrafficData {
@@ -34,7 +35,7 @@ let chartInstance: echarts.ECharts | null = null;
 // formatBytes函数已从@/utils/format导入
 
 // 图表配置
-const chartOption = computed(() => {
+const chartOption = computed<EChartsOption>(() => {
   if (!props.data || props.data.length === 0) {
     return {
       title: {
@@ -46,7 +47,7 @@ const chartOption = computed(() => {
           color: '#909399'
         }
       }
-    };
+    } as unknown as EChartsOption;
   }
 
   // 直接使用后端返回的label作为X轴标签
@@ -197,7 +198,7 @@ const chartOption = computed(() => {
     animation: true,
     animationDuration: 1000,
     animationEasing: 'cubicOut'
-  };
+  } as unknown as EChartsOption;
 });
 
 // 初始化图表

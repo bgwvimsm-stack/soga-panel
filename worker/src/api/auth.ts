@@ -251,6 +251,9 @@ export class AuthAPI {
     const raw = await this.cache.get(cacheKey);
     if (!raw) return null;
     try {
+      if (typeof raw !== "string") {
+        return null;
+      }
       return JSON.parse(raw) as TwoFactorChallengePayload;
     } catch {
       return null;
@@ -1608,16 +1611,16 @@ export class AuthAPI {
     const userAgent = request.headers.get("User-Agent") || "";
 
     try {
-      let user = await this.db.db
+      let user: AuthUserRow | null = await this.db.db
         .prepare("SELECT * FROM users WHERE google_sub = ?")
         .bind(googleSub)
-        .first();
+        .first<AuthUserRow | null>();
 
       if (!user) {
         const existingByEmail = await this.db.db
           .prepare("SELECT * FROM users WHERE email = ?")
           .bind(email)
-          .first();
+          .first<AuthUserRow | null>();
 
         if (existingByEmail) {
           if (
@@ -1986,10 +1989,10 @@ export class AuthAPI {
         "unknown";
       const userAgent = request.headers.get("User-Agent") || "";
 
-      let user = await this.db.db
+      let user: AuthUserRow | null = await this.db.db
         .prepare("SELECT * FROM users WHERE github_id = ?")
         .bind(githubId)
-        .first<AuthUserRow>();
+        .first<AuthUserRow | null>();
 
       if (!user) {
         const existingByEmail = await this.db.db

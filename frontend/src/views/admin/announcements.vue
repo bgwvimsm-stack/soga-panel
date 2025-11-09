@@ -292,8 +292,8 @@ const loadAnnouncements = async () => {
       limit: pagerConfig.pageSize
     });
 
-    announcements.value = data.announcements || [];
-    pagerConfig.total = data.total || 0;
+    announcements.value = data?.data ?? (data as any)?.records ?? [];
+    pagerConfig.total = data?.total ?? (data as any)?.pagination?.total ?? 0;
   } catch (error) {
     console.error('加载公告失败:', error);
     ElMessage.error('加载公告列表失败');
