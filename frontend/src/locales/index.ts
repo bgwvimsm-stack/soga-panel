@@ -77,5 +77,6 @@ export function getCurrentLocaleInfo() {
 
 // 类型安全的翻译函数
 export function t(key: string, ...args: any[]): string {
-  return i18n.global.t(key, ...args);
+  const translate = i18n.global.t as (...params: any[]) => string;
+  return translate(key, ...args);
 }

@@ -15,7 +15,7 @@ import {
   getUtc8IsoString,
 } from "../utils/crypto";
 import { createSystemConfigManager } from "../utils/systemConfig";
-import { getChanges, toRunResult, ensureNumber, ensureString, ensureDate } from "../utils/d1";
+import { getChanges, toRunResult, ensureNumber, ensureString, ensureDate, getLastRowId } from "../utils/d1";
 
 interface AdminAuthResult {
   success: boolean;
@@ -282,6 +282,26 @@ interface PopularPackageRow {
   revenue: number | string | null;
 }
 
+interface SharedIdRow {
+  id: number;
+  name: string | null;
+  fetch_url: string | null;
+  remote_account_id: number | null;
+  status: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+type SharedIdRecord = {
+  id: number;
+  name: string;
+  fetch_url: string;
+  remote_account_id: number;
+  status: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export class AdminAPI {
   private readonly env: Env;
   private readonly db: DatabaseService;
@@ -310,6 +330,33 @@ export class AdminAPI {
     }
 
     return { success: true, admin: { ...user, is_admin: true } };
+  }
+
+  private mapSharedIdRow(row: SharedIdRow | null): SharedIdRecord | null {
+    if (!row) {
+      return null;
+    }
+    return {
+      id: ensureNumber(row.id),
+      name: ensureString(row.name),
+      fetch_url: ensureString(row.fetch_url),
+      remote_account_id: ensureNumber(row.remote_account_id),
+      status: ensureNumber(row.status),
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    };
+  }
+
+  private async findSharedIdById(id: number): Promise<SharedIdRecord | null> {
+    const row = await this.db.db
+      .prepare(
+        `SELECT id, name, fetch_url, remote_account_id, status, created_at, updated_at 
+         FROM shared_ids 
+         WHERE id = ?`
+      )
+      .bind(id)
+      .first<SharedIdRow>();
+    return this.mapSharedIdRow(row);
   }
 
   // ... 其他现有方法保持不变 ...
@@ -1126,7 +1173,7 @@ export class AdminAPI {
       `
         )
         .bind(...params, limit, offset)
-        .all<DbRow>();
+        .all<Record<string, unknown>>();
 
       const nodes = nodesResult.results ?? [];
       const formattedNodes = nodes.map((node) => ({
@@ -3964,6 +4011,330 @@ export class AdminAPI {
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       console.error("删除系统配置失败:", err);
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  // ===== 苹果账号管理相关方法 =====
+
+  /**
+   * 获取苹果账号列表
+   * GET /api/admin/shared-ids
+   */
+  async getSharedIds(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
+      const limitParam = Number(url.searchParams.get("limit")) || 20;
+      const safeLimit = Math.min(Math.max(limitParam, 1), 100);
+      const keyword = url.searchParams.get("keyword")?.trim();
+      const statusParam = url.searchParams.get("status");
+
+      const conditions: string[] = [];
+      const params: Array<string | number> = [];
+
+      if (keyword) {
+        conditions.push("name LIKE ?");
+        params.push(`%${keyword}%`);
+      }
+
+      if (statusParam !== null && statusParam !== undefined && statusParam !== "") {
+        conditions.push("status = ?");
+        params.push(Number(statusParam));
+      }
+
+      const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+      const countRow = await this.db.db
+        .prepare(`SELECT COUNT(*) as total FROM shared_ids ${whereClause}`)
+        .bind(...params)
+        .first<CountRow>();
+      const total = ensureNumber(countRow?.total);
+      const offset = (page - 1) * safeLimit;
+
+      const listResult = await this.db.db
+        .prepare(
+          `
+          SELECT id, name, fetch_url, remote_account_id, status, created_at, updated_at
+          FROM shared_ids
+          ${whereClause}
+          ORDER BY id DESC
+          LIMIT ? OFFSET ?
+        `
+        )
+        .bind(...params, safeLimit, offset)
+        .all<SharedIdRow>();
+
+      const records: SharedIdRecord[] = [];
+      for (const row of listResult.results ?? []) {
+        const formatted = this.mapSharedIdRow(row);
+        if (formatted) {
+          records.push(formatted);
+        }
+      }
+
+      return successResponse({
+        records,
+        pagination: {
+          total,
+          page,
+          limit: safeLimit,
+          totalPages: total > 0 ? Math.ceil(total / safeLimit) : 0,
+        },
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error("获取苹果账号列表失败:", err);
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  /**
+   * 新建苹果账号
+   * POST /api/admin/shared-ids
+   */
+  async createSharedId(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const body = (await request.json()) as Record<string, unknown>;
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const fetchUrl = typeof body.fetch_url === "string" ? body.fetch_url.trim() : "";
+      const remoteAccountId = ensureNumber(body.remote_account_id, NaN);
+      const statusValue =
+        body.status === undefined || body.status === null
+          ? 1
+          : Number(body.status) === 1
+          ? 1
+          : 0;
+
+      if (!name) {
+        return errorResponse("苹果账号名称不能为空", 400);
+      }
+
+      if (!fetchUrl) {
+        return errorResponse("苹果账号获取URL不能为空", 400);
+      }
+
+      let normalizedUrl: string;
+      try {
+        normalizedUrl = new URL(fetchUrl).toString();
+      } catch {
+        return errorResponse("苹果账号获取URL格式不正确", 400);
+      }
+
+      if (!Number.isFinite(remoteAccountId)) {
+        return errorResponse("苹果账号编号必须是数字", 400);
+      }
+
+      const duplicate = await this.db.db
+        .prepare("SELECT id FROM shared_ids WHERE name = ?")
+        .bind(name)
+        .first<{ id: number }>();
+      if (duplicate) {
+        return errorResponse("苹果账号名称已存在", 400);
+      }
+
+      const insertResult = toRunResult(
+        await this.db.db
+          .prepare(
+            `
+            INSERT INTO shared_ids (name, fetch_url, remote_account_id, status)
+            VALUES (?, ?, ?, ?)
+          `
+          )
+          .bind(name, normalizedUrl, remoteAccountId, statusValue)
+          .run()
+      );
+
+      if (getChanges(insertResult) === 0) {
+        return errorResponse("创建苹果账号失败", 500);
+      }
+
+      const insertedId = getLastRowId(insertResult);
+      const created = insertedId ? await this.findSharedIdById(insertedId) : null;
+
+      console.log(
+        `管理员 ${ensureString(adminCheck.admin?.email)} 创建苹果账号: ${name}(${normalizedUrl})`
+      );
+
+      return successResponse({
+        message: "苹果账号创建成功",
+        record: created,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error("创建苹果账号失败:", err);
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  /**
+   * 更新苹果账号
+   * PUT /api/admin/shared-ids/:id
+   */
+  async updateSharedId(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const idStr = url.pathname.split("/").pop();
+      const sharedId = idStr ? Number(idStr) : NaN;
+      if (!Number.isFinite(sharedId)) {
+        return errorResponse("无效的苹果账号", 400);
+      }
+
+      const existing = await this.findSharedIdById(sharedId);
+      if (!existing) {
+        return errorResponse("苹果账号不存在", 404);
+      }
+
+      const body = (await request.json()) as Record<string, unknown>;
+      const updateFields: string[] = [];
+      const updateValues: Array<string | number> = [];
+
+      if (body.name !== undefined) {
+        const name = typeof body.name === "string" ? body.name.trim() : "";
+        if (!name) {
+          return errorResponse("苹果账号名称不能为空", 400);
+        }
+        const duplicate = await this.db.db
+          .prepare("SELECT id FROM shared_ids WHERE name = ? AND id != ?")
+          .bind(name, sharedId)
+          .first<{ id: number }>();
+        if (duplicate) {
+          return errorResponse("苹果账号名称已存在", 400);
+        }
+        updateFields.push("name = ?");
+        updateValues.push(name);
+      }
+
+      if (body.fetch_url !== undefined) {
+        const fetchUrl = typeof body.fetch_url === "string" ? body.fetch_url.trim() : "";
+        if (!fetchUrl) {
+          return errorResponse("苹果账号获取URL不能为空", 400);
+        }
+        let normalizedUrl: string;
+        try {
+          normalizedUrl = new URL(fetchUrl).toString();
+        } catch {
+          return errorResponse("苹果账号获取URL格式不正确", 400);
+        }
+        updateFields.push("fetch_url = ?");
+        updateValues.push(normalizedUrl);
+      }
+
+      if (body.remote_account_id !== undefined) {
+        const remoteAccountId = ensureNumber(body.remote_account_id, NaN);
+        if (!Number.isFinite(remoteAccountId)) {
+          return errorResponse("苹果账号编号必须是数字", 400);
+        }
+        updateFields.push("remote_account_id = ?");
+        updateValues.push(remoteAccountId);
+      }
+
+      if (body.status !== undefined) {
+        const statusValue = Number(body.status) === 1 ? 1 : 0;
+        updateFields.push("status = ?");
+        updateValues.push(statusValue);
+      }
+
+      if (updateFields.length === 0) {
+        return errorResponse("没有提供需要更新的字段", 400);
+      }
+
+      updateFields.push("updated_at = datetime('now', '+8 hours')");
+      updateValues.push(sharedId);
+
+      const updateResult = toRunResult(
+        await this.db.db
+          .prepare(
+            `
+          UPDATE shared_ids
+          SET ${updateFields.join(", ")}
+          WHERE id = ?
+        `
+          )
+          .bind(...updateValues)
+          .run()
+      );
+
+      if (getChanges(updateResult) === 0) {
+        return errorResponse("更新苹果账号失败", 500);
+      }
+
+      const updated = await this.findSharedIdById(sharedId);
+
+      console.log(
+        `管理员 ${ensureString(adminCheck.admin?.email)} 更新苹果账号: ${ensureNumber(sharedId)}`
+      );
+
+      return successResponse({
+        message: "苹果账号更新成功",
+        record: updated,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error("更新苹果账号失败:", err);
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  /**
+   * 删除苹果账号
+   * DELETE /api/admin/shared-ids/:id
+   */
+  async deleteSharedId(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const idStr = url.pathname.split("/").pop();
+      const sharedId = idStr ? Number(idStr) : NaN;
+      if (!Number.isFinite(sharedId)) {
+        return errorResponse("无效的苹果账号", 400);
+      }
+
+      const existing = await this.findSharedIdById(sharedId);
+      if (!existing) {
+        return errorResponse("苹果账号不存在", 404);
+      }
+
+      const deleteResult = toRunResult(
+        await this.db.db
+          .prepare("DELETE FROM shared_ids WHERE id = ?")
+          .bind(sharedId)
+          .run()
+      );
+
+      if (getChanges(deleteResult) === 0) {
+        return errorResponse("删除苹果账号失败", 500);
+      }
+
+      console.log(
+        `管理员 ${ensureString(adminCheck.admin?.email)} 删除苹果账号: ${ensureNumber(sharedId)}`
+      );
+
+      return successResponse({
+        message: "苹果账号删除成功",
+        id: sharedId,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error("删除苹果账号失败:", err);
       return errorResponse(err.message, 500);
     }
   }

@@ -30,7 +30,7 @@ export const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: "/auth/register", 
+    path: "/auth/register",
     name: "Register",
     component: () => import("@/views/auth/register.vue"),
     meta: {
@@ -74,7 +74,7 @@ export const routes: RouteRecordRaw[] = [
       },
       {
         path: "traffic",
-        name: "Traffic", 
+        name: "Traffic",
         component: () => import("@/views/user/traffic.vue"),
         meta: {
           title: "流量统计",
@@ -91,6 +91,15 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: "shared-ids",
+        name: "SharedIds",
+        component: () => import("@/views/user/shared-ids.vue"),
+        meta: {
+          title: "苹果账号",
+          requiresAuth: true
+        }
+      },
+      {
         path: "subscription-logs",
         name: "SubscriptionLogs",
         component: () => import("@/views/user/subscription-logs.vue"),
@@ -101,7 +110,7 @@ export const routes: RouteRecordRaw[] = [
       },
       {
         path: "announcements",
-        name: "Announcements", 
+        name: "Announcements",
         component: () => import("@/views/user/announcements.vue"),
         meta: {
           title: "公告详情",
@@ -186,7 +195,7 @@ export const routes: RouteRecordRaw[] = [
       },
       {
         path: "nodes",
-        name: "AdminNodes", 
+        name: "AdminNodes",
         component: () => import("@/views/admin/nodes.vue"),
         meta: {
           title: "节点管理",
@@ -280,6 +289,16 @@ export const routes: RouteRecordRaw[] = [
         component: () => import("@/views/admin/system-configs.vue"),
         meta: {
           title: "系统配置",
+          requiresAuth: true,
+          requiresAdmin: true
+        }
+      },
+      {
+        path: "shared-ids",
+        name: "AdminSharedIds",
+        component: () => import("@/views/admin/shared-ids.vue"),
+        meta: {
+          title: "苹果账号管理",
           requiresAuth: true,
           requiresAdmin: true
         }

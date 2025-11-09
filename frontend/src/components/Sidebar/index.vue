@@ -2,9 +2,9 @@
   <div class="sidebar-wrapper" :class="$attrs.class">
     <div
       class="sidebar-container"
-      :class="{ 
+      :class="{
         'sidebar-collapse': isCollapse,
-        'sidebar-mobile-show': isMobileMenuVisible 
+        'sidebar-mobile-show': isMobileMenuVisible
       }"
       @mouseenter="handleMouseEnter"
       @mouseleave="handleMouseLeave"
@@ -28,22 +28,22 @@
           />
         </el-menu>
       </el-scrollbar>
-      
-      
+
+
       <!-- 管理员模式切换 (管理员被禁用时仍然显示) -->
       <SidebarModeToggle v-if="isUserAdmin" :is-admin-mode="isAdminMode" :is-collapse="isCollapse" @toggle="toggleAdminMode" />
-      
+
       <!-- 折叠控制按钮 -->
-      <SidebarCollapse 
+      <SidebarCollapse
         v-if="showCollapseButton || isCollapse"
         :is-active="!isCollapse"
         @toggle="toggleSidebar"
       />
     </div>
-    
+
     <!-- 手机端遮罩层 -->
-    <div 
-      v-if="isMobileMenuVisible" 
+    <div
+      v-if="isMobileMenuVisible"
       class="mobile-sidebar-mask mask-show"
       @click="handleMaskClick"
     ></div>
@@ -103,6 +103,7 @@ const userRoutes: MenuRoute[] = [
   { path: '/user/nodes', name: 'nodes', icon: 'Connection', title: '节点列表' },
   { path: '/user/traffic', name: 'traffic', icon: 'TrendCharts', title: '流量统计' },
   { path: '/user/subscription', name: 'subscription', icon: 'Link', title: '订阅管理' },
+  { path: '/user/shared-ids', name: 'shared-ids', icon: 'Key', title: '苹果账号' },
   { path: '/user/subscription-logs', name: 'subscription-logs', icon: 'List', title: '订阅记录' },
   { path: '/user/audit-rules', name: 'audit-rules', icon: 'Lock', title: '审计规则' },
   { path: '/user/audit-logs', name: 'audit-logs', icon: 'Warning', title: '审计记录' },
@@ -123,13 +124,14 @@ const adminRoutes: MenuRoute[] = [
   { path: '/admin/audit-rules', name: 'admin-audit-rules', icon: 'View', title: '审计规则' },
   { path: '/admin/whitelist', name: 'admin-whitelist', icon: 'CircleCheckFilled', title: '审计白名单' },
   { path: '/admin/audit-logs', name: 'admin-audit-logs', icon: 'DocumentCopy', title: '审计记录' },
-  { path: '/admin/system-configs', name: 'admin-system-configs', icon: 'Tools', title: '系统配置' }
+  { path: '/admin/system-configs', name: 'admin-system-configs', icon: 'Tools', title: '系统配置' },
+  { path: '/admin/shared-ids', name: 'admin-shared-ids', icon: 'CollectionTag', title: '苹果账号管理' }
 ];
 
 // 禁用用户可访问的路由
 const allowedRoutesForDisabledUser = [
   '/user/dashboard',
-  '/user/announcements', 
+  '/user/announcements',
   '/user/profile'
 ];
 
@@ -138,14 +140,14 @@ const menuRoutes = computed(() => {
   if (isAdminMode.value) {
     return adminRoutes;
   }
-  
+
   // 如果用户被禁用，只显示允许访问的菜单
   if (userStore.isDisabledUser()) {
-    return userRoutes.filter(route => 
+    return userRoutes.filter(route =>
       allowedRoutesForDisabledUser.includes(route.path)
     );
   }
-  
+
   return userRoutes;
 });
 
@@ -233,20 +235,20 @@ window.addEventListener('resize', handleResize);
   display: flex;
   flex-direction: column;
   box-shadow: 2px 0 6px rgba(0, 0, 0, 0.1);
-  
+
   &.sidebar-collapse {
     width: 64px;
-    
+
     .scrollbar {
       :deep(.el-menu) {
         .el-menu-item {
           text-align: center;
           padding: 0 !important;
-          
+
           span {
             display: none;
           }
-          
+
           .el-icon {
             margin-right: 0;
           }
@@ -254,20 +256,20 @@ window.addEventListener('resize', handleResize);
       }
     }
   }
-  
+
   .scrollbar {
     flex: 1;
     overflow: hidden;
-    
+
     :deep(.scrollbar-wrapper) {
       overflow-x: hidden !important;
     }
-    
+
     :deep(.el-scrollbar__bar) {
       &.is-vertical {
         right: 0;
         width: 6px;
-        
+
         .el-scrollbar__thumb {
           background-color: rgba(255, 255, 255, 0.2);
           border-radius: 3px;
@@ -275,12 +277,12 @@ window.addEventListener('resize', handleResize);
       }
     }
   }
-  
+
   .sidebar-menu {
     border: none;
     background: transparent;
     width: 100%;
-    
+
     :deep(.el-menu-item) {
       height: 48px;
       line-height: 48px;
@@ -288,17 +290,17 @@ window.addEventListener('resize', handleResize);
       border-bottom: none;
       padding: 0 20px;
       transition: all 0.3s ease;
-      
+
       &:hover {
         background-color: rgba(255, 255, 255, 0.1);
         color: #ffffff;
       }
-      
+
       &.is-active {
         background-color: var(--sidebar-active-bg, #409eff);
         color: #ffffff;
         position: relative;
-        
+
         &::before {
           content: '';
           position: absolute;
@@ -309,7 +311,7 @@ window.addEventListener('resize', handleResize);
           background: #ffffff;
         }
       }
-      
+
       .el-icon {
         margin-right: 12px;
         font-size: 18px;
@@ -422,14 +424,14 @@ window.addEventListener('resize', handleResize);
 @media (max-width: 480px) {
   .sidebar-container {
     width: 220px;
-    
+
     .sidebar-menu {
       :deep(.el-menu-item) {
         height: 44px;
         line-height: 44px;
         padding: 0 16px;
         font-size: 14px;
-        
+
         .el-icon {
           margin-right: 10px;
           font-size: 16px;
@@ -452,11 +454,11 @@ window.addEventListener('resize', handleResize);
   transition: opacity 0.3s ease;
   opacity: 0;
   visibility: hidden;
-  
+
   @media (max-width: 768px) {
     display: block;
   }
-  
+
   // 当遮罩层需要显示时
   &.mask-show {
     opacity: 1;

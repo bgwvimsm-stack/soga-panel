@@ -27,7 +27,7 @@ export async function handleRequest(
   // 验证订阅域名访问权限（对所有请求）
   const subscriptionValidation = await validateSubscriptionDomain(request, env);
   if (!subscriptionValidation.success) {
-    return subscriptionValidation.response;
+    return subscriptionValidation.response ?? errorResponse("Access denied", 403);
   }
 
 
@@ -93,6 +93,7 @@ export async function handleRequest(
     "POST /api/user/two-factor/backup-codes": () =>
       userAPI.regenerateTwoFactorBackupCodes(request),
     "POST /api/user/two-factor/disable": () => userAPI.disableTwoFactor(request),
+    "GET /api/user/shared-ids": () => userAPI.getSharedIds(request),
     
     // 用户审计功能 API
     "GET /api/user/audit-rules": () => userAPI.getAuditRules(request),
@@ -165,6 +166,10 @@ export async function handleRequest(
     "PUT /api/admin/whitelist/:id": () => adminAPI.updateWhitelistRule(request),
     "DELETE /api/admin/whitelist/:id": () => adminAPI.deleteWhitelistRule(request),
     "POST /api/admin/whitelist/batch": () => adminAPI.batchWhitelistOperation(request),
+    "GET /api/admin/shared-ids": () => adminAPI.getSharedIds(request),
+    "POST /api/admin/shared-ids": () => adminAPI.createSharedId(request),
+    "PUT /api/admin/shared-ids/:id": () => adminAPI.updateSharedId(request),
+    "DELETE /api/admin/shared-ids/:id": () => adminAPI.deleteSharedId(request),
     
     // 定时任务管理
     "POST /api/admin/trigger-traffic-reset": () => adminAPI.triggerTrafficReset(request),

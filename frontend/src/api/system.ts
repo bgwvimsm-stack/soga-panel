@@ -7,5 +7,5 @@ export interface SiteSettingsResponse {
 }
 
 export function getSiteSettings() {
-  return http.get<ApiResponse<SiteSettingsResponse>>("/site/settings");
+  return http.get<SiteSettingsResponse>("/site/settings");
 }

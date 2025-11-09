@@ -415,7 +415,8 @@ const loadSystemStats = async () => {
       const usersResponse = await getUsers({ limit: 100 });
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      systemStats.newUsersToday = (usersResponse.data.users || []).filter(user => {
+      const recentList = usersResponse.data?.data ?? [];
+      systemStats.newUsersToday = recentList.filter(user => {
         const createdAt = new Date(user.created_at);
         return createdAt >= today;
       }).length;
@@ -434,7 +435,8 @@ const loadRecentUsers = async () => {
   try {
     const { data } = await getUsers({ limit: 10 });
     // 按注册时间降序排序，最新注册的用户显示在最上面
-    recentUsers.value = (data.users || [])
+    const userList = data?.data ?? [];
+    recentUsers.value = userList
       .map(user => ({
         id: user.id,
         email: user.email,

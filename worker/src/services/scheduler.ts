@@ -760,6 +760,7 @@ export class SchedulerService {
           body,
           badge: 1,
           sound: 'default',
+          action: 'none',
           group: siteName || '流量管理',
           icon: siteUrl ? `${siteUrl.replace(/\/?$/, '')}/favicon.ico` : undefined,
           url: siteUrl || undefined

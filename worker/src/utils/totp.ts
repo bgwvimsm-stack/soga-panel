@@ -71,9 +71,13 @@ async function hotp(secretBytes: Uint8Array, counter: number, digits = DEFAULT_D
   if (!secretBytes.length) {
     throw new Error("Invalid TOTP secret");
   }
+  const secretBuffer = secretBytes.buffer.slice(
+    secretBytes.byteOffset,
+    secretBytes.byteOffset + secretBytes.byteLength
+  ) as ArrayBuffer;
   const key = await crypto.subtle.importKey(
     "raw",
-    secretBytes,
+    secretBuffer,
     { name: "HMAC", hash: "SHA-1" },
     false,
     ["sign"]

@@ -203,6 +203,21 @@ export const getUserRechargeRecords = (params?: {
   return http.get("/user/recharge-records", { params });
 };
 
+export interface SharedIdItem {
+  id: number;
+  name: string;
+  remote_account_id: number;
+  status: 'ok' | 'missing' | 'error';
+  account: Record<string, unknown> | null;
+  fetched_at?: string;
+  message?: string | null;
+  error?: string;
+}
+
+export const getUserSharedIds = (): Promise<ApiResponse<{ items: SharedIdItem[] }>> => {
+  return http.get("/user/shared-ids");
+};
+
 /**
  * 创建充值订单
  */

@@ -100,6 +100,7 @@ const getPageTitle = () => {
     '/nodes': '节点列表',
     '/traffic': '流量统计',
     '/subscription': '订阅管理',
+    '/user/shared-ids': '苹果账号',
     '/subscription-logs': '订阅记录',
     '/audit-rules': '审计规则',
     '/audit-logs': '审计记录',
@@ -116,7 +117,7 @@ const getPageTitle = () => {
     '/admin/whitelist': '审计白名单',
     '/admin/statistics': '系统统计',
     '/admin/system-configs': '系统配置',
-    '/admin/api-settings': 'API设置'
+    '/admin/shared-ids': '苹果账号管理'
   };
 
   return titleMap[route.path] || '控制台';

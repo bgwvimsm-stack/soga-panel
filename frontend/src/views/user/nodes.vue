@@ -443,7 +443,7 @@ const nodeConfigJson = computed(() => {
   if (!selectedNode.value) return '';
 
   try {
-    let nodeConfig = {};
+    let nodeConfig: Record<string, any> = {};
 
     // 检查node_config是否存在且有效
     if (selectedNode.value.node_config && selectedNode.value.node_config !== 'undefined') {
@@ -459,7 +459,7 @@ const nodeConfigJson = computed(() => {
     switch (selectedNode.value.type.toLowerCase()) {
       case 'ss':
       case 'shadowsocks':
-        const ssConfig = {
+        const ssConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "ss",
           server: selectedNode.value.server,
@@ -481,7 +481,7 @@ const nodeConfigJson = computed(() => {
         return JSON.stringify(ssConfig, null, 2);
 
       case 'v2ray':
-        const vmessConfig = {
+        const vmessConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "vmess",
           server: selectedNode.value.server,
@@ -531,7 +531,7 @@ const nodeConfigJson = computed(() => {
         return JSON.stringify(vmessConfig, null, 2);
 
       case 'vless':
-        const vlessConfig = {
+        const vlessConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "vless",
           server: selectedNode.value.server,
@@ -582,7 +582,7 @@ const nodeConfigJson = computed(() => {
         return JSON.stringify(vlessConfig, null, 2);
 
       case 'trojan':
-        const trojanConfig = {
+        const trojanConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "trojan",
           server: selectedNode.value.server,
@@ -614,7 +614,7 @@ const nodeConfigJson = computed(() => {
 
       case 'hysteria':
       case 'hysteria2':
-        const hysteriaConfig = {
+        const hysteriaConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "hysteria2",
           server: selectedNode.value.server,
@@ -668,7 +668,7 @@ const nodeConfigJson = computed(() => {
 
 // 生成各类协议的URL
 const generateVMessUrl = (node: any, config: any): string => {
-  const vmessConfig = {
+  const vmessConfig: Record<string, any> = {
     v: "2",
     ps: node.name,
     add: node.server,

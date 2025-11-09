@@ -27,6 +27,24 @@ type AuthResult = AuthResultSuccess | AuthResultFailure;
 
 type DbRow = Record<string, any>;
 
+type SharedIdRow = {
+  id: number;
+  name: string | null;
+  fetch_url: string | null;
+  remote_account_id: number | null;
+};
+
+type SharedIdPayload = {
+  id: number;
+  name: string;
+  remote_account_id: number;
+  status: "ok" | "missing" | "error";
+  account: unknown;
+  fetched_at?: string;
+  message?: string | null;
+  error?: string;
+};
+
 const toNumber = (value: unknown, fallback = 0): number => ensureNumber(value, fallback);
 const toString = (value: unknown, fallback = ""): string => ensureString(value, fallback);
 const toErrorMessage = (error: unknown, fallback = "Internal Server Error"): string =>
@@ -801,6 +819,116 @@ export class UserAPI {
     }
   }
 
+  // ===== 苹果账号功能 =====
+
+  private async fetchSharedIdAccount(record: SharedIdRow): Promise<SharedIdPayload> {
+    const id = toNumber(record.id);
+    const cacheKey = `shared_id_payload_${id}`;
+    const cached = this.cache.memoryCache.get<SharedIdPayload>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const baseInfo: SharedIdPayload = {
+      id,
+      name: toString(record.name),
+      remote_account_id: toNumber(record.remote_account_id),
+      status: "error",
+      account: null,
+      error: undefined,
+    };
+
+    if (!record.fetch_url) {
+      const result: SharedIdPayload = {
+        ...baseInfo,
+        error: "苹果账号未配置拉取地址",
+      };
+      this.cache.memoryCache.set(cacheKey, result, 30);
+      return result;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const response = await fetch(record.fetch_url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`远程接口返回状态 ${response.status}`);
+      }
+
+      const payload = (await response.json()) as Record<string, unknown>;
+      const rawAccounts = (payload as { accounts?: unknown }).accounts;
+      const accounts = Array.isArray(rawAccounts) ? rawAccounts : [];
+
+      const matched =
+        accounts.find((item) => Number((item as Record<string, unknown>)?.id) === toNumber(record.remote_account_id)) ??
+        null;
+
+      const isMatched = Boolean(matched);
+      const result: SharedIdPayload = {
+        ...baseInfo,
+        status: isMatched ? "ok" : "missing",
+        fetched_at: new Date().toISOString(),
+        account: matched,
+        message:
+          toString((payload as { msg?: unknown }).msg) ||
+          toString((payload as { message?: unknown }).message),
+        error: isMatched ? undefined : "未找到匹配的ID",
+      };
+      this.cache.memoryCache.set(cacheKey, result, 60);
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "远程拉取失败";
+      const result: SharedIdPayload = {
+        ...baseInfo,
+        status: "error",
+        account: null,
+        error: message,
+      };
+      this.cache.memoryCache.set(cacheKey, result, 30);
+      return result;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  async getSharedIds(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+
+      const rows = await this.db.db
+        .prepare(
+          `
+          SELECT id, name, fetch_url, remote_account_id
+          FROM shared_ids
+          WHERE status = 1
+          ORDER BY id DESC
+        `
+        )
+        .all<SharedIdRow>();
+
+      const list = rows.results ?? [];
+      const items = await Promise.all(list.map((row) => this.fetchSharedIdAccount(row)));
+
+      return successResponse({
+        items,
+        count: items.length,
+      });
+    } catch (error) {
+      return errorResponse(toErrorMessage(error), 500);
+    }
+  }
+
   async startTwoFactorSetup(request: Request) {
     try {
       const authResult = await this.validateUser(request);
@@ -865,9 +993,9 @@ export class UserAPI {
         return errorResponse(authResult.message, 401);
       }
       const userId = authResult.user.id;
-      const body = await request.json();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
       const code =
-        typeof body?.code === "string" ? body.code.trim() : "";
+        typeof body.code === "string" ? body.code.trim() : "";
       if (!code) {
         return errorResponse("请输入验证码", 400);
       }
@@ -940,9 +1068,9 @@ export class UserAPI {
         return errorResponse(authResult.message, 401);
       }
       const userId = authResult.user.id;
-      const body = await request.json();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
       const code =
-        typeof body?.code === "string" ? body.code.trim() : "";
+        typeof body.code === "string" ? body.code.trim() : "";
       if (!code) {
         return errorResponse("请输入验证码", 400);
       }
@@ -989,11 +1117,11 @@ export class UserAPI {
         return errorResponse(authResult.message, 401);
       }
       const userId = authResult.user.id;
-      const body = await request.json();
+      const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
       const password =
-        typeof body?.password === "string" ? body.password : "";
+        typeof body.password === "string" ? body.password : "";
       const code =
-        typeof body?.code === "string" ? body.code.trim() : "";
+        typeof body.code === "string" ? body.code.trim() : "";
 
       if (!password || !code) {
         return errorResponse("请输入密码和验证码", 400);
