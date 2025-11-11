@@ -39,7 +39,7 @@ import { computed, ref } from "vue";
 import { ElMessage } from "element-plus";
 
 interface Props {
-  modelValue: boolean;
+  modelValue?: boolean;
   dialogTitle?: string;
   declineMessage?: string;
   hideCheckbox?: boolean;

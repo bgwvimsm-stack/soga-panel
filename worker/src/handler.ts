@@ -65,6 +65,8 @@ export async function handleRequest(
     "POST /api/auth/github": () => authAPI.githubOAuthLogin(request),
     "POST /api/auth/register": () => authAPI.register(request),
     "POST /api/auth/logout": () => authAPI.logout(request),
+    "POST /api/auth/oauth/complete": () =>
+      authAPI.completePendingOAuthRegistration(request),
     "POST /api/auth/send-email-code": () => authAPI.sendEmailCode(request),
     "POST /api/auth/password-reset/request": () =>
       authAPI.requestPasswordReset(request),

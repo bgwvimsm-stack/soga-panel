@@ -201,7 +201,6 @@
 
   <TermsAgreement
     ref="oauthTermsRef"
-    v-model="oauthTermsAccepted"
     hide-checkbox
     decline-message="不同意将无法注册账号"
     @accepted="handleOAuthTermsAccepted"
@@ -229,7 +228,8 @@ import {
   loginWithGoogle,
   loginWithGithub,
   getRegisterConfig,
-  verifyTwoFactor
+  verifyTwoFactor,
+  completePendingOAuthRegistration
 } from "@/api/auth";
 import { setToken } from "@/utils/auth-soga";
 import { useUserStore } from "@/store/user";
@@ -270,11 +270,10 @@ const googleLoginEnabled = computed(() => Boolean(googleClientId.trim()));
 const googleLoading = ref(false);
 const githubLoginEnabled = computed(() => Boolean(githubClientId.trim()));
 const githubLoading = ref(false);
-const oauthTermsAccepted = ref(false);
 const oauthTermsRef = ref<InstanceType<typeof TermsAgreement>>();
-const pendingOAuthPayload = ref<OAuthLoginPayload | null>(null);
-const pendingOAuthProvider = ref<string>("");
-const oauthTermsHint = "首次使用第三方登录注册账号前需要同意服务条款";
+const pendingOAuthToken = ref("");
+const pendingOAuthProvider = ref("第三方");
+const oauthTermsHint = "首次使用第三方登录注册账号前需要先阅读并同意服务条款";
 const showPasswordDialog = ref(false);
 const generatedPassword = ref("");
 const passwordEmailSent = ref(false);
@@ -408,35 +407,35 @@ const submitTwoFactor = async () => {
 };
 
 const requestOAuthAgreement = (
-  payload: OAuthLoginPayload,
-  providerLabel: string
+  providerLabel: string,
+  pendingToken: string,
 ) => {
-  pendingOAuthPayload.value = payload;
+  pendingOAuthToken.value = pendingToken;
   pendingOAuthProvider.value = providerLabel;
-  oauthTermsAccepted.value = false;
   oauthTermsRef.value?.openDialog();
   ElMessage.warning(oauthTermsHint);
 };
 
-const handleOAuthTermsAccepted = () => {
-  const payload = pendingOAuthPayload.value;
-  const provider = pendingOAuthProvider.value;
-  pendingOAuthPayload.value = null;
-  pendingOAuthProvider.value = "";
-  oauthTermsAccepted.value = true;
-
-  if (payload) {
-    finalizeOAuthLogin(provider || payload.provider || "第三方", payload);
+const handleOAuthTermsAccepted = async () => {
+  if (!pendingOAuthToken.value) return;
+  try {
+    const { data } = await completePendingOAuthRegistration({
+      pendingToken: pendingOAuthToken.value
+    });
+    const providerLabel = pendingOAuthProvider.value || "第三方";
+    pendingOAuthToken.value = "";
+    pendingOAuthProvider.value = "第三方";
+    handleOAuthLoginSuccess(providerLabel, data as OAuthLoginPayload);
+  } catch (error) {
+    console.error("完成 OAuth 注册失败:", error);
+    ElMessage.error((error as any)?.message || "完成注册失败，请稍后重试");
   }
-
-  oauthTermsAccepted.value = false;
 };
 
 const handleOAuthTermsDeclined = () => {
-  pendingOAuthPayload.value = null;
-  pendingOAuthProvider.value = "";
+  pendingOAuthToken.value = "";
+  pendingOAuthProvider.value = "第三方";
   ElMessage.warning("不同意服务条款无法自动注册账号");
-  oauthTermsAccepted.value = false;
 };
 
 const googleButtonConfig = {
@@ -505,20 +504,26 @@ type OAuthLoginPayload = LoginResponse & {
   isNewUser?: boolean;
   tempPassword?: string | null;
   passwordEmailSent?: boolean;
+  pendingTermsToken?: string;
 };
 
 const handleOAuthLoginSuccess = (
   providerLabel: string,
   payload: OAuthLoginPayload
 ) => {
-  if (requiresTwoFactor(payload)) {
-    localStorage.removeItem(trustTokenStorageKey);
-    openTwoFactorDialog(payload, providerLabel);
+  const pendingToken =
+    payload.pendingTermsToken || (payload as any)?.pending_terms_token;
+  if (pendingToken) {
+    requestOAuthAgreement(
+      providerLabel,
+      pendingToken
+    );
     return;
   }
 
-  if (payload.isNewUser && !oauthTermsAccepted.value) {
-    requestOAuthAgreement(payload, providerLabel);
+  if (requiresTwoFactor(payload)) {
+    localStorage.removeItem(trustTokenStorageKey);
+    openTwoFactorDialog(payload, providerLabel);
     return;
   }
 

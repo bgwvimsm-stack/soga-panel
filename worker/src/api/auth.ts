@@ -81,6 +81,17 @@ type TwoFactorChallengePayload = {
   meta?: Record<string, unknown> | null;
 };
 
+type PendingOAuthRegistration = {
+  provider: "google" | "github";
+  email: string;
+  providerId: string;
+  usernameCandidates: string[];
+  fallbackUsernameSeed: string;
+  remember: boolean;
+  clientIP: string;
+  userAgent: string;
+};
+
 const EMAIL_REGEX =
   /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
@@ -612,6 +623,32 @@ export class AuthAPI {
     }
   }
 
+  private async cachePendingOAuthRegistration(
+    data: PendingOAuthRegistration
+  ): Promise<string> {
+    const token = generateRandomString(48);
+    const cacheKey = `oauth_pending_${token}`;
+    await this.cache.set(cacheKey, JSON.stringify(data), 600);
+    return token;
+  }
+
+  private async consumePendingOAuthRegistration(
+    token: string
+  ): Promise<PendingOAuthRegistration | null> {
+    const cacheKey = `oauth_pending_${token}`;
+    const raw = await this.cache.get(cacheKey);
+    if (!raw || typeof raw !== "string") {
+      return null;
+    }
+    await this.cache.delete(cacheKey);
+    try {
+      return JSON.parse(raw) as PendingOAuthRegistration;
+    } catch (error) {
+      this.logger.error("解析 OAuth 待注册数据失败", error, { token });
+      return null;
+    }
+  }
+
   isGmailAlias(email: string) {
     const [local = "", domain = ""] = email.split("@");
     const normalizedDomain = domain.toLowerCase();
@@ -626,6 +663,142 @@ export class AuthAPI {
       return true;
     }
     return local.includes(".");
+  }
+
+  private async getDefaultUserProvisioning() {
+    const configRows = await this.db.db
+      .prepare(
+        "SELECT * FROM system_configs WHERE key IN ('default_traffic', 'default_expire_days', 'default_account_expire_days', 'default_class')"
+      )
+      .all<ConfigRow>();
+
+    const config = new Map<string, string>();
+    for (const item of configRows.results ?? []) {
+      if (item?.key) {
+        config.set(item.key, item.value ?? "");
+      }
+    }
+
+    const toPositiveInt = (value: unknown, fallback: number) => {
+      const parsed =
+        typeof value === "number"
+          ? value
+          : typeof value === "string"
+          ? Number.parseInt(value, 10)
+          : Number.NaN;
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+    };
+
+    const transferEnable = toPositiveInt(
+      config.get("default_traffic"),
+      10737418240
+    );
+    const accountExpireDays = toPositiveInt(
+      config.get("default_account_expire_days"),
+      3650
+    );
+    const classExpireDays = toPositiveInt(
+      config.get("default_expire_days"),
+      30
+    );
+    const defaultClass = toPositiveInt(config.get("default_class"), 1);
+
+    const withOffset = (days: number) =>
+      new Date(
+        Date.now() + 8 * 60 * 60 * 1000 + days * 24 * 60 * 60 * 1000
+      )
+        .toISOString()
+        .replace("Z", "+08:00");
+
+    const accountExpireTime = withOffset(accountExpireDays);
+    const classExpireTime = withOffset(classExpireDays);
+
+    return {
+      transferEnable,
+      accountExpireTime,
+      classExpireTime,
+      defaultClass,
+    };
+  }
+
+  private async createOAuthUserFromPending(
+    pending: PendingOAuthRegistration
+  ): Promise<{
+    user: AuthUserRow;
+    tempPassword: string;
+    passwordEmailSent: boolean;
+  }> {
+    const tempPassword = generateRandomString(16);
+    const hashedPassword = await hashPassword(tempPassword);
+    const uuid = generateUUID();
+    const proxyPassword = generateRandomString(16);
+    const subscriptionToken = generateRandomString(32);
+
+    const defaults = await this.getDefaultUserProvisioning();
+
+    const username = await this.generateUniqueUsername(
+      pending.usernameCandidates,
+      pending.fallbackUsernameSeed
+    );
+
+    const identifierColumn =
+      pending.provider === "google" ? "google_sub" : "github_id";
+
+    const insertStmt = this.db.db.prepare(`
+      INSERT INTO users (
+        email, username, password_hash, uuid, passwd, token,
+        ${identifierColumn}, oauth_provider, first_oauth_login_at, last_oauth_login_at,
+        transfer_enable, expire_time, class, class_expire_time, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'), ?, ?, ?, ?, 1)
+    `);
+
+    const insertResult = await insertStmt
+      .bind(
+        pending.email,
+        username,
+        hashedPassword,
+        uuid,
+        proxyPassword,
+        subscriptionToken,
+        pending.providerId,
+        pending.provider,
+        defaults.transferEnable,
+        defaults.accountExpireTime,
+        defaults.defaultClass,
+        defaults.classExpireTime
+      )
+      .run();
+
+    const userId = insertResult.meta.last_row_id;
+    const user = await this.db.db
+      .prepare("SELECT * FROM users WHERE id = ?")
+      .bind(userId)
+      .first<AuthUserRow | null>();
+
+    if (!user) {
+      throw new Error("无法创建或加载用户信息");
+    }
+
+    const siteConfigs = await this.configManager.getSiteConfigs();
+    const siteName = siteConfigs.site_name || "Soga Panel";
+    const siteUrl = siteConfigs.site_url || "";
+
+    const providerLabel = pending.provider === "google" ? "Google" : "GitHub";
+    const passwordEmailSent = await this.sendOAuthWelcomeEmail(
+      providerLabel,
+      pending.email,
+      tempPassword,
+      siteName,
+      siteUrl
+    );
+
+    await this.cache.deleteByPrefix("user_");
+
+    return {
+      user,
+      tempPassword,
+      passwordEmailSent,
+    };
   }
 
   async getVerificationSettings(purpose = PURPOSE_REGISTER) {
@@ -1646,56 +1819,6 @@ export class AuthAPI {
       let passwordEmailSent = false;
 
       if (!user) {
-        isNewUser = true;
-        tempPassword = generateRandomString(16);
-        const hashedPassword = await hashPassword(tempPassword);
-        const uuid = generateUUID();
-        const proxyPassword = generateRandomString(16);
-        const subscriptionToken = generateRandomString(32);
-
-        const configRows = await this.db.db
-          .prepare(
-            "SELECT * FROM system_configs WHERE key IN ('default_traffic', 'default_expire_days', 'default_account_expire_days', 'default_class')"
-          )
-          .all<ConfigRow>();
-
-        const config: Record<string, string> = {};
-        for (const item of configRows.results ?? []) {
-          if (item?.key) {
-            config[item.key] = item.value ?? "";
-          }
-        }
-
-        const toPositiveInt = (value: unknown, fallback: number) => {
-          const num = typeof value === "number"
-            ? value
-            : typeof value === "string"
-            ? Number.parseInt(value, 10)
-            : Number.NaN;
-          return Number.isFinite(num) && num > 0 ? num : fallback;
-        };
-
-        const transferEnable = toPositiveInt(
-          config.default_traffic,
-          10737418240
-        );
-        const accountExpireDays = toPositiveInt(
-          config.default_account_expire_days,
-          3650
-        );
-        const classExpireDays = toPositiveInt(config.default_expire_days, 30);
-        const defaultClass = toPositiveInt(config.default_class, 1);
-
-        const withOffset = (days: number) =>
-          new Date(
-            Date.now() + 8 * 60 * 60 * 1000 + days * 24 * 60 * 60 * 1000
-          )
-            .toISOString()
-            .replace("Z", "+08:00");
-
-        const accountExpireTime = withOffset(accountExpireDays);
-        const classExpireTime = withOffset(classExpireDays);
-
         const emailLocal = email.split("@")[0] || "";
         const usernameCandidates = [
           tokenInfo.given_name,
@@ -1706,55 +1829,30 @@ export class AuthAPI {
           (name): name is string => !!name && name.trim().length > 0
         );
 
-        const username = await this.generateUniqueUsername(
-          usernameCandidates,
-          emailLocal || googleSub.slice(-6)
-        );
-
-        const insertStmt = this.db.db.prepare(`
-          INSERT INTO users (
-            email, username, password_hash, uuid, passwd, token,
-            google_sub, oauth_provider, first_oauth_login_at, last_oauth_login_at,
-            transfer_enable, expire_time, class, class_expire_time, status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'), ?, ?, ?, ?, 1)
-        `);
-
-        const insertResult = await insertStmt
-          .bind(
-            email,
-            username,
-            hashedPassword,
-            uuid,
-            proxyPassword,
-            subscriptionToken,
-            googleSub,
-            "google",
-            transferEnable,
-            accountExpireTime,
-            defaultClass,
-            classExpireTime
-          )
-          .run();
-
-        const userId = insertResult.meta.last_row_id;
-        user = await this.db.db
-          .prepare("SELECT * FROM users WHERE id = ?")
-          .bind(userId)
-          .first();
-
-        const siteConfigs = await this.configManager.getSiteConfigs();
-        const siteName = siteConfigs.site_name || "Soga Panel";
-        const siteUrl = siteConfigs.site_url || "";
-
-        passwordEmailSent = await this.sendOAuthWelcomeEmail(
-          "Google",
+        const pendingToken = await this.cachePendingOAuthRegistration({
+          provider: "google",
           email,
-          tempPassword,
-          siteName,
-          siteUrl
-        );
+          providerId: googleSub,
+          usernameCandidates,
+          fallbackUsernameSeed: emailLocal || googleSub.slice(-6),
+          remember,
+          clientIP,
+          userAgent,
+        });
 
-        await this.cache.deleteByPrefix("user_");
+        return successResponse({
+          need_terms_agreement: true,
+          pending_terms_token: pendingToken,
+          provider: "google",
+          profile: {
+            email,
+            username:
+              usernameCandidates[0] ||
+              emailLocal ||
+              `google_${googleSub.slice(-6)}`,
+            avatar: tokenInfo.picture || "",
+          },
+        });
       } else {
         await this.cache.deleteByPrefix(`user_${user.id}`);
       }
@@ -2019,60 +2117,6 @@ export class AuthAPI {
       let passwordEmailSent = false;
 
       if (!user) {
-        isNewUser = true;
-        tempPassword = generateRandomString(16);
-        const hashedPassword = await hashPassword(tempPassword);
-        const uuid = generateUUID();
-        const proxyPassword = generateRandomString(16);
-        const subscriptionToken = generateRandomString(32);
-
-        const configRows = await this.db.db
-          .prepare(
-            "SELECT * FROM system_configs WHERE key IN ('default_traffic', 'default_expire_days', 'default_account_expire_days', 'default_class')"
-          )
-          .all<ConfigRow>();
-
-        const config = new Map<string, string>();
-        for (const item of configRows.results ?? []) {
-          if (item?.key) {
-            config.set(item.key, item.value ?? "");
-          }
-        }
-
-        const toPositiveInt = (value: unknown, fallback: number) => {
-          const parsed =
-            typeof value === "number"
-              ? value
-              : typeof value === "string"
-              ? Number.parseInt(value, 10)
-              : Number.NaN;
-          return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-        };
-
-        const transferEnable = toPositiveInt(
-          config.get("default_traffic"),
-          10737418240
-        );
-        const accountExpireDays = toPositiveInt(
-          config.get("default_account_expire_days"),
-          3650
-        );
-        const classExpireDays = toPositiveInt(
-          config.get("default_expire_days"),
-          30
-        );
-        const defaultClass = toPositiveInt(config.get("default_class"), 1);
-
-        const withOffset = (days: number) =>
-          new Date(
-            Date.now() + 8 * 60 * 60 * 1000 + days * 24 * 60 * 60 * 1000
-          )
-            .toISOString()
-            .replace("Z", "+08:00");
-
-        const accountExpireTime = withOffset(accountExpireDays);
-        const classExpireTime = withOffset(classExpireDays);
-
         const emailLocal = normalizedEmail.split("@")[0] || "";
         const usernameCandidates = [
           githubUser?.login,
@@ -2081,55 +2125,30 @@ export class AuthAPI {
           `github_${githubId.slice(-6)}`,
         ].filter((item): item is string => !!item && item.trim().length > 0);
 
-        const username = await this.generateUniqueUsername(
+        const pendingToken = await this.cachePendingOAuthRegistration({
+          provider: "github",
+          email: normalizedEmail,
+          providerId: githubId,
           usernameCandidates,
-          emailLocal || githubId.slice(-6)
-        );
+          fallbackUsernameSeed: emailLocal || githubId.slice(-6),
+          remember,
+          clientIP,
+          userAgent,
+        });
 
-        const insertStmt = this.db.db.prepare(`
-          INSERT INTO users (
-            email, username, password_hash, uuid, passwd, token,
-            oauth_provider, first_oauth_login_at, last_oauth_login_at,
-            github_id, transfer_enable, expire_time, class, class_expire_time, status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'), ?, ?, ?, ?, ?, 1)
-        `);
-
-        const insertResult = await insertStmt
-          .bind(
-            normalizedEmail,
-            username,
-            hashedPassword,
-            uuid,
-            proxyPassword,
-            subscriptionToken,
-            "github",
-            githubId,
-            transferEnable,
-            accountExpireTime,
-            defaultClass,
-            classExpireTime
-          )
-          .run();
-
-        const userId = insertResult.meta.last_row_id;
-        user = await this.db.db
-          .prepare("SELECT * FROM users WHERE id = ?")
-          .bind(userId)
-          .first();
-
-        const siteConfigs = await this.configManager.getSiteConfigs();
-        const siteName = siteConfigs.site_name || "Soga Panel";
-        const siteUrl = siteConfigs.site_url || "";
-
-        passwordEmailSent = await this.sendOAuthWelcomeEmail(
-          "GitHub",
-          normalizedEmail,
-          tempPassword,
-          siteName,
-          siteUrl
-        );
-
-        await this.cache.deleteByPrefix("user_");
+        return successResponse({
+          need_terms_agreement: true,
+          pending_terms_token: pendingToken,
+          provider: "github",
+          profile: {
+            email: normalizedEmail,
+            username:
+              usernameCandidates[0] ||
+              emailLocal ||
+              `github_${githubId.slice(-6)}`,
+            avatar: githubUser?.avatar_url || "",
+          },
+        });
       } else {
         const now = "datetime('now', '+8 hours')";
         await this.db.db
@@ -2454,6 +2473,146 @@ export class AuthAPI {
     }
   }
 
+  async completePendingOAuthRegistration(request) {
+    try {
+      let body: any = {};
+      try {
+        body = await request.json();
+      } catch (error) {
+        this.logger.warn("解析 OAuth 完成请求失败", error);
+      }
+
+      const pendingToken = ensureString(
+        body?.pendingToken || body?.pending_token
+      );
+      if (!pendingToken) {
+        return errorResponse("缺少注册会话标识", 400);
+      }
+
+      const pending = await this.consumePendingOAuthRegistration(pendingToken);
+      if (!pending) {
+        return errorResponse("注册会话已过期，请重新登录并同意条款", 410);
+      }
+
+      const identifierField =
+        pending.provider === "google" ? "google_sub" : "github_id";
+
+      let user: AuthUserRow | null = await this.db.db
+        .prepare(`SELECT * FROM users WHERE ${identifierField} = ?`)
+        .bind(pending.providerId)
+        .first<AuthUserRow | null>();
+
+      if (!user) {
+        const existingByEmail = await this.db.db
+          .prepare("SELECT * FROM users WHERE email = ?")
+          .bind(pending.email)
+          .first<AuthUserRow | null>();
+
+        if (
+          existingByEmail &&
+          existingByEmail[identifierField] &&
+          ensureString(existingByEmail[identifierField]) !== pending.providerId
+        ) {
+          return errorResponse(
+            "该邮箱已绑定其他第三方账号，请使用原账号登录",
+            409
+          );
+        }
+
+        user = existingByEmail;
+      }
+
+      let isNewUser = false;
+      let tempPassword: string | null = null;
+      let passwordEmailSent = false;
+
+      if (!user) {
+        const creationResult = await this.createOAuthUserFromPending(pending);
+        user = creationResult.user;
+        tempPassword = creationResult.tempPassword;
+        passwordEmailSent = creationResult.passwordEmailSent;
+        isNewUser = true;
+      } else {
+        await this.cache.deleteByPrefix(`user_${user.id}`);
+      }
+
+      if (!user) {
+        return errorResponse("无法创建或加载用户信息", 500);
+      }
+
+      await this.db.db
+        .prepare(
+          `
+        UPDATE users
+        SET ${identifierField} = ?,
+            oauth_provider = ?,
+            first_oauth_login_at = COALESCE(first_oauth_login_at, datetime('now', '+8 hours')),
+            last_oauth_login_at = datetime('now', '+8 hours'),
+            updated_at = datetime('now', '+8 hours')
+        WHERE id = ?
+      `
+        )
+        .bind(pending.providerId, pending.provider, user.id)
+        .run();
+
+      const refreshedUser = await this.db.db
+        .prepare("SELECT * FROM users WHERE id = ?")
+        .bind(user.id)
+        .first<AuthUserRow | null>();
+
+      if (!refreshedUser) {
+        return errorResponse("无法加载用户信息", 500);
+      }
+
+      user = refreshedUser;
+
+      if (await this.shouldRequireTwoFactor(user, "")) {
+        const challengeId = await this.createTwoFactorChallenge({
+          userId: user.id,
+          remember: pending.remember,
+          loginMethod: `${pending.provider}_oauth`,
+          clientIP: pending.clientIP,
+          userAgent: pending.userAgent,
+          meta: {
+            isNewUser,
+            tempPassword,
+            passwordEmailSent,
+            provider: pending.provider,
+          },
+        });
+        return successResponse({
+          need_2fa: true,
+          challenge_id: challengeId,
+          two_factor_enabled: true,
+          isNewUser,
+          tempPassword,
+          passwordEmailSent,
+          provider: pending.provider,
+        });
+      }
+
+      return this.finalizeLogin(
+        user,
+        pending.remember,
+        `${pending.provider}_oauth`,
+        pending.clientIP,
+        pending.userAgent,
+        {
+          isNewUser,
+          tempPassword,
+          passwordEmailSent,
+          provider: pending.provider,
+        }
+      );
+    } catch (error) {
+      this.logger.error("完成 OAuth 注册失败", error);
+      return errorResponse(
+        error instanceof Error ? error.message : "完成注册失败",
+        500
+      );
+    }
+  }
+
   async logout(request) {
     try {
       const authHeader = request.headers.get("Authorization");
@@ -2467,4 +2626,5 @@ export class AuthAPI {
       return errorResponse(error.message, 500);
     }
   }
+
 }

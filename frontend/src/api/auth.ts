@@ -37,6 +37,12 @@ export const loginWithGithub = (
   return http.post("/auth/github", data);
 };
 
+export const completePendingOAuthRegistration = (data: {
+  pendingToken: string;
+}): Promise<ApiResponse<LoginResponse>> => {
+  return http.post("/auth/oauth/complete", data);
+};
+
 /**
  * 用户注册
  */
