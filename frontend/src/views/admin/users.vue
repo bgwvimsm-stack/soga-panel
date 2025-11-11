@@ -694,7 +694,7 @@ const loadUsers = async () => {
     }
 
     const { data } = await getUsers(params);
-    users.value = data?.data || [];
+    users.value = data?.users || [];
     pagerConfig.total = data?.total || 0;
   } catch (error) {
     console.error('加载用户列表失败:', error);

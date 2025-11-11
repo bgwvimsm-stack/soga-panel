@@ -78,6 +78,15 @@
         </el-form-item>
       </el-form>
 
+      <TermsAgreement
+        v-if="configLoaded"
+        ref="termsRef"
+        v-model="termsAccepted"
+        class="auth-terms"
+        @accepted="handleTermsAccepted"
+        @declined="handleTermsDeclined"
+      />
+
       <el-button
         v-if="configLoaded"
         type="primary"
@@ -115,6 +124,7 @@ import {
 import { setToken } from "@/utils/auth-soga";
 import { useUserStore } from "@/store/user";
 import { useSiteStore } from "@/store/site";
+import TermsAgreement from "@/components/auth/TermsAgreement.vue";
 
 const router = useRouter();
 const userStore = useUserStore();
@@ -127,6 +137,10 @@ const sendingCode = ref(false);
 const codeCountdown = ref(0);
 const showVerification = ref(false);
 const configLoaded = ref(false);
+const termsAccepted = ref(false);
+type PendingAction = (() => void) | null;
+const pendingAgreementAction = ref<PendingAction>(null);
+const termsRef = ref<InstanceType<typeof TermsAgreement>>();
 let countdownTimer: number | null = null;
 
 const registerForm = reactive({
@@ -234,6 +248,13 @@ const handleSendCode = async () => {
 const handleRegister = async () => {
   if (!registerFormRef.value) return;
 
+  if (!termsAccepted.value) {
+    pendingAgreementAction.value = handleRegister;
+    termsRef.value?.openDialog();
+    ElMessage.warning("注册账号前需要先同意服务条款");
+    return;
+  }
+
   const valid = await registerFormRef.value.validate().catch(() => false);
   if (!valid) return;
 
@@ -260,6 +281,18 @@ const handleRegister = async () => {
 
 const goToLogin = () => {
   router.push("/auth/login");
+};
+
+const handleTermsAccepted = () => {
+  if (pendingAgreementAction.value) {
+    const action = pendingAgreementAction.value;
+    pendingAgreementAction.value = null;
+    action();
+  }
+};
+
+const handleTermsDeclined = () => {
+  pendingAgreementAction.value = null;
 };
 
 onMounted(async () => {
@@ -390,6 +423,10 @@ onBeforeUnmount(() => {
   background: linear-gradient(135deg, #5a6cea 0%, #7c3aed 100%);
   border: none;
   margin-top: 6px;
+}
+
+.auth-terms {
+  margin-top: 4px;
 }
 
 .auth-footer {

@@ -102,6 +102,10 @@ export interface LoginResponse {
   trust_token?: string;
   trust_token_expires_at?: string;
   provider?: string;
+  needTermsAgreement?: boolean;
+  need_terms_agreement?: boolean;
+  pendingTermsToken?: string;
+  pending_terms_token?: string;
 }
 
 // 注册请求

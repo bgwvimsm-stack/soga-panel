@@ -96,11 +96,22 @@ export interface UpdateUserRequest {
   money?: number;
 }
 
+export interface UserListResponse {
+  users: User[];
+  total: number;
+  pagination?: {
+    total: number;
+    page: number;
+    limit: number;
+    pages?: number;
+  };
+}
+
 export const getUsers = (params?: PaginationParams & {
   status?: number;
   class?: number;
   search?: string;
-}): Promise<ApiResponse<PaginationResponse<User>>> => {
+}): Promise<ApiResponse<UserListResponse>> => {
   return http.get("/admin/users", { params });
 };
 
