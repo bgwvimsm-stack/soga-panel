@@ -62,7 +62,10 @@
           <span>第三方登录</span>
         </div>
         <div class="third-icons">
-          <div class="third-icon google" @click="handleGoogleClick">
+          <div
+            class="third-icon google"
+            @click="handleGoogleClick"
+          >
             <span class="icon-wrapper">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -99,7 +102,10 @@
               <el-icon><Loading /></el-icon>
             </div>
           </div>
-          <div class="third-icon github" @click="handleGithubClick">
+          <div
+            class="third-icon github"
+            @click="handleGithubClick"
+          >
             <span class="icon-wrapper">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -192,6 +198,15 @@
       </el-button>
     </template>
   </el-dialog>
+
+  <TermsAgreement
+    ref="oauthTermsRef"
+    v-model="oauthTermsAccepted"
+    hide-checkbox
+    decline-message="不同意将无法注册账号"
+    @accepted="handleOAuthTermsAccepted"
+    @declined="handleOAuthTermsDeclined"
+  />
 </template>
 
 <script setup lang="ts">
@@ -220,6 +235,7 @@ import { setToken } from "@/utils/auth-soga";
 import { useUserStore } from "@/store/user";
 import { useSiteStore } from "@/store/site";
 import type { LoginRequest, LoginResponse } from "@/api/types";
+import TermsAgreement from "@/components/auth/TermsAgreement.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -254,6 +270,11 @@ const googleLoginEnabled = computed(() => Boolean(googleClientId.trim()));
 const googleLoading = ref(false);
 const githubLoginEnabled = computed(() => Boolean(githubClientId.trim()));
 const githubLoading = ref(false);
+const oauthTermsAccepted = ref(false);
+const oauthTermsRef = ref<InstanceType<typeof TermsAgreement>>();
+const pendingOAuthPayload = ref<OAuthLoginPayload | null>(null);
+const pendingOAuthProvider = ref<string>("");
+const oauthTermsHint = "首次使用第三方登录注册账号前需要同意服务条款";
 const showPasswordDialog = ref(false);
 const generatedPassword = ref("");
 const passwordEmailSent = ref(false);
@@ -386,6 +407,38 @@ const submitTwoFactor = async () => {
   }
 };
 
+const requestOAuthAgreement = (
+  payload: OAuthLoginPayload,
+  providerLabel: string
+) => {
+  pendingOAuthPayload.value = payload;
+  pendingOAuthProvider.value = providerLabel;
+  oauthTermsAccepted.value = false;
+  oauthTermsRef.value?.openDialog();
+  ElMessage.warning(oauthTermsHint);
+};
+
+const handleOAuthTermsAccepted = () => {
+  const payload = pendingOAuthPayload.value;
+  const provider = pendingOAuthProvider.value;
+  pendingOAuthPayload.value = null;
+  pendingOAuthProvider.value = "";
+  oauthTermsAccepted.value = true;
+
+  if (payload) {
+    finalizeOAuthLogin(provider || payload.provider || "第三方", payload);
+  }
+
+  oauthTermsAccepted.value = false;
+};
+
+const handleOAuthTermsDeclined = () => {
+  pendingOAuthPayload.value = null;
+  pendingOAuthProvider.value = "";
+  ElMessage.warning("不同意服务条款无法自动注册账号");
+  oauthTermsAccepted.value = false;
+};
+
 const googleButtonConfig = {
   type: "icon",
   theme: "outline",
@@ -396,6 +449,7 @@ const googleButtonConfig = {
 const handleGoogleClick = () => {
   if (!googleLoginEnabled.value) {
     ElMessage.warning("暂未配置 Google 登录，请联系管理员");
+    return;
   }
 };
 
@@ -426,7 +480,10 @@ const handleGithubClick = () => {
     ElMessage.warning("暂未配置 GitHub 登录，请联系管理员");
     return;
   }
+  startGithubOAuth();
+};
 
+const startGithubOAuth = () => {
   const state = createOAuthState(12);
   sessionStorage.setItem(githubStateStorageKey, state);
   sessionStorage.setItem(
@@ -460,8 +517,73 @@ const handleOAuthLoginSuccess = (
     return;
   }
 
+  if (payload.isNewUser && !oauthTermsAccepted.value) {
+    requestOAuthAgreement(payload, providerLabel);
+    return;
+  }
+
+  finalizeOAuthLogin(providerLabel, payload);
+};
+
+const finalizeOAuthLogin = (
+  providerLabel: string,
+  payload: OAuthLoginPayload
+) => {
   completeLogin(payload, providerLabel);
   handleOAuthPostLogin(providerLabel, payload);
+};
+
+const performGoogleLogin = async (credential: string) => {
+  if (!credential) return;
+  if (googleLoading.value) return;
+  googleLoading.value = true;
+
+  try {
+    const storedTrustToken = localStorage.getItem(trustTokenStorageKey) || "";
+    const { data } = await loginWithGoogle({
+      idToken: credential,
+      remember: rememberLogin.value,
+      twoFactorTrustToken: storedTrustToken || undefined
+    });
+    handleOAuthLoginSuccess("Google", data as OAuthLoginPayload);
+  } catch (error) {
+    console.error("Google 登录失败:", error);
+    ElMessage.error((error as any)?.message || "Google 登录失败，请稍后重试");
+  } finally {
+    googleLoading.value = false;
+  }
+};
+
+const performGithubLogin = async ({
+  code,
+  state,
+  remember
+}: {
+  code: string;
+  state: string;
+  remember: boolean;
+}) => {
+  githubLoading.value = true;
+  try {
+    const redirectUri = `${window.location.origin}/auth/login`;
+    const storedTrustToken = localStorage.getItem(trustTokenStorageKey) || "";
+    const { data } = await loginWithGithub({
+      code,
+      redirectUri,
+      state,
+      remember,
+      twoFactorTrustToken: storedTrustToken || undefined
+    });
+    handleOAuthLoginSuccess(
+      (data as any)?.provider || "GitHub",
+      data as OAuthLoginPayload
+    );
+  } catch (error) {
+    console.error("GitHub 登录失败:", error);
+    ElMessage.error((error as any)?.message || "GitHub 登录失败，请稍后重试");
+  } finally {
+    githubLoading.value = false;
+  }
 };
 
 const handleLogin = async () => {
@@ -523,23 +645,7 @@ const handleGoogleCredential = async (
     return;
   }
 
-  if (googleLoading.value) return;
-  googleLoading.value = true;
-
-  try {
-    const storedTrustToken = localStorage.getItem(trustTokenStorageKey) || "";
-    const { data } = await loginWithGoogle({
-      idToken: credential,
-      remember: rememberLogin.value,
-      twoFactorTrustToken: storedTrustToken || undefined,
-    });
-    handleOAuthLoginSuccess("Google", data as OAuthLoginPayload);
-  } catch (error) {
-    console.error("Google 登录失败:", error);
-    ElMessage.error((error as any)?.message || "Google 登录失败，请稍后重试");
-  } finally {
-    googleLoading.value = false;
-  }
+  await performGoogleLogin(credential);
 };
 
 const handlePasswordDialogClose = () => {
@@ -598,27 +704,13 @@ const processGithubCallback = async () => {
     return;
   }
 
-  githubLoading.value = true;
-  try {
-    const redirectUri = `${window.location.origin}/auth/login`;
-    const storedTrustToken = localStorage.getItem(trustTokenStorageKey) || "";
-    const { data } = await loginWithGithub({
-      code,
-      redirectUri,
-      state: returnedState,
-      remember: rememberFlag,
-      twoFactorTrustToken: storedTrustToken || undefined,
-    });
-    handleOAuthLoginSuccess(
-      (data as any)?.provider || "GitHub",
-      data as OAuthLoginPayload
-    );
-  } catch (error) {
-    console.error("GitHub 登录失败:", error);
-    ElMessage.error((error as any)?.message || "GitHub 登录失败，请稍后重试");
-  } finally {
-    githubLoading.value = false;
-  }
+  const githubPayload = {
+    code,
+    state: returnedState,
+    remember: rememberFlag
+  };
+
+  await performGithubLogin(githubPayload);
 };
 
 const loadAuthConfig = async () => {
