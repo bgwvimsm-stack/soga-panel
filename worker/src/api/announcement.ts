@@ -127,11 +127,13 @@ export class AnnouncementAPI {
       }));
       
       return success({
-        announcements: formattedAnnouncements,
-        total: total,
+        data: formattedAnnouncements,
+        total,
+        page,
+        limit: safeLimit,
         pagination: {
-          total: total,
-          page: page,
+          total,
+          page,
           limit: safeLimit,
           pages: total > 0 ? Math.ceil(total / safeLimit) : 0,
         }

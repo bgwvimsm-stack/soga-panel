@@ -224,3 +224,50 @@ export interface AuditStats {
   warnedLogs: number;
   todayLogs: number;
 }
+
+// 工单系统
+export type TicketStatus = "open" | "answered" | "closed";
+
+export interface TicketSummary {
+  id: number;
+  title: string;
+  status: TicketStatus;
+  last_reply_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  user?: {
+    id: number;
+    username?: string | null;
+    email?: string | null;
+  };
+}
+
+export interface TicketDetail extends TicketSummary {
+  content: string;
+}
+
+export interface TicketReply {
+  id: number;
+  content: string;
+  created_at: string;
+  author: {
+    id: number;
+    role: "user" | "admin";
+    username?: string | null;
+    email?: string | null;
+  };
+}
+
+export interface TicketListResult {
+  items: TicketSummary[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+  };
+}
+
+export interface TicketDetailResult {
+  ticket: TicketDetail;
+  replies: TicketReply[];
+}

@@ -11,6 +11,7 @@ import { TrafficAPI } from "./api/traffic";
 import { WalletAPI } from "./api/wallet";
 import { StoreAPI } from "./api/store";
 import { PaymentAPI } from "./api/pay/PaymentAPI";
+import { TicketAPI } from "./api/ticket";
 import { errorResponse, successResponse } from "./utils/response";
 import { DatabaseService } from "./services/database";
 import { validateSubscriptionDomain } from "./middleware/subscriptionAuth";
@@ -42,6 +43,7 @@ export async function handleRequest(
   const walletAPI = new WalletAPI(env);
   const storeAPI = new StoreAPI(env);
   const paymentAPI = new PaymentAPI(env);
+  const ticketAPI = new TicketAPI(env);
 
   // 路由映射
   const routes: Record<string, () => Promise<Response> | Response> = {
@@ -96,6 +98,12 @@ export async function handleRequest(
       userAPI.regenerateTwoFactorBackupCodes(request),
     "POST /api/user/two-factor/disable": () => userAPI.disableTwoFactor(request),
     "GET /api/user/shared-ids": () => userAPI.getSharedIds(request),
+
+    // 工单 API（用户）
+    "GET /api/user/tickets": () => ticketAPI.listUserTickets(request),
+    "POST /api/user/tickets": () => ticketAPI.createTicket(request),
+    "GET /api/user/tickets/:id": () => ticketAPI.getUserTicketDetail(request),
+    "POST /api/user/tickets/:id/replies": () => ticketAPI.replyTicketAsUser(request),
     
     // 用户审计功能 API
     "GET /api/user/audit-rules": () => userAPI.getAuditRules(request),
@@ -255,6 +263,12 @@ export async function handleRequest(
     "GET /api/admin/recharge-records": () => adminAPI.getRechargeRecords(request),
     "GET /api/admin/purchase-records": () => adminAPI.getPurchaseRecords(request),
     "DELETE /api/admin/pending-records": () => adminAPI.deletePendingRecords(request),
+
+    // 工单 API（管理员）
+    "GET /api/admin/tickets": () => ticketAPI.listAdminTickets(request),
+    "GET /api/admin/tickets/:id": () => ticketAPI.getAdminTicketDetail(request),
+    "POST /api/admin/tickets/:id/replies": () => ticketAPI.replyTicketAsAdmin(request),
+    "POST /api/admin/tickets/:id/status": () => ticketAPI.updateTicketStatus(request),
   };
 
   // 处理路由

@@ -38,7 +38,8 @@ router.beforeEach((to, from, next) => {
     const allowedPagesForDisabledUser = [
       '/dashboard', '/user/dashboard', 
       '/announcements', '/user/announcements',
-      '/profile', '/user/profile'
+      '/profile', '/user/profile',
+      '/user/tickets'
     ];
     
     // 检查用户是否被禁用
