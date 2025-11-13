@@ -98,6 +98,7 @@ const isUserAdmin = computed(() => userStore.isAdmin());
 const userRoutes: MenuRoute[] = [
   { path: '/user/dashboard', name: 'dashboard', icon: 'Odometer', title: '仪表板' },
   { path: '/user/announcements', name: 'announcements', icon: 'Bell', title: '公告详情' },
+  { path: '/user/tickets', name: 'tickets', icon: 'Tickets', title: '工单中心' },
   { path: '/user/wallet', name: 'wallet', icon: 'Wallet', title: '我的钱包' },
   { path: '/user/store', name: 'store', icon: 'ShoppingBag', title: '套餐商店' },
   { path: '/user/nodes', name: 'nodes', icon: 'Connection', title: '节点列表' },
@@ -113,6 +114,7 @@ const userRoutes: MenuRoute[] = [
 const adminRoutes: MenuRoute[] = [
   { path: '/admin/dashboard', name: 'admin-dashboard', icon: 'DataAnalysis', title: '管理概览' },
   { path: '/admin/announcements', name: 'admin-announcements', icon: 'ChatDotRound', title: '公告管理' },
+  { path: '/admin/tickets', name: 'admin-tickets', icon: 'ChatDotRound', title: '工单管理' },
   { path: '/admin/packages', name: 'admin-packages', icon: 'GoodsFilled', title: '套餐管理' },
   { path: '/admin/recharge-records', name: 'admin-recharge-records', icon: 'Money', title: '充值记录' },
   { path: '/admin/purchase-records', name: 'admin-purchase-records', icon: 'ShoppingCart', title: '购买记录' },
@@ -132,7 +134,8 @@ const adminRoutes: MenuRoute[] = [
 const allowedRoutesForDisabledUser = [
   '/user/dashboard',
   '/user/announcements',
-  '/user/profile'
+  '/user/profile',
+  '/user/tickets'
 ];
 
 // 当前显示的菜单路由

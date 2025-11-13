@@ -118,6 +118,15 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: "tickets",
+        name: "UserTickets",
+        component: () => import("@/views/user/tickets.vue"),
+        meta: {
+          title: "工单中心",
+          requiresAuth: true
+        }
+      },
+      {
         path: "profile",
         name: "Profile",
         component: () => import("@/views/user/profile.vue"),
@@ -209,6 +218,16 @@ export const routes: RouteRecordRaw[] = [
         component: () => import("@/views/admin/announcements.vue"),
         meta: {
           title: "公告管理",
+          requiresAuth: true,
+          requiresAdmin: true
+        }
+      },
+      {
+        path: "tickets",
+        name: "AdminTickets",
+        component: () => import("@/views/admin/tickets.vue"),
+        meta: {
+          title: "工单管理",
           requiresAuth: true,
           requiresAdmin: true
         }

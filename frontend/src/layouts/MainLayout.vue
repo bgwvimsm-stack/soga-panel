@@ -117,7 +117,9 @@ const getPageTitle = () => {
     '/admin/whitelist': '审计白名单',
     '/admin/statistics': '系统统计',
     '/admin/system-configs': '系统配置',
-    '/admin/shared-ids': '苹果账号管理'
+    '/admin/shared-ids': '苹果账号管理',
+    '/user/tickets': '工单中心',
+    '/admin/tickets': '工单管理'
   };
 
   return titleMap[route.path] || '控制台';
