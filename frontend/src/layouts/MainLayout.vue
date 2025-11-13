@@ -16,6 +16,28 @@
             <h3>{{ getPageTitle() }}</h3>
           </div>
           <div class="header-right">
+            <el-popover
+              placement="bottom-end"
+              width="260"
+              trigger="click"
+              v-model:visible="notificationPopoverVisible"
+              class="notification-popover"
+            >
+              <div class="notification-content">
+                <div class="notification-title">{{ notificationTitle }}</div>
+                <p class="notification-desc">{{ notificationDescription }}</p>
+                <el-button type="primary" link @click="goToTickets" :disabled="notificationCount === 0">
+                  {{ isAdminNotification ? '前往工单管理' : '前往工单中心' }}
+                </el-button>
+              </div>
+              <template #reference>
+                <el-badge :value="notificationCount" :hidden="notificationCount === 0" class="notification-badge">
+                  <el-button class="notification-btn" circle>
+                    <el-icon><Bell /></el-icon>
+                  </el-button>
+                </el-badge>
+              </template>
+            </el-popover>
             <el-dropdown @command="handleUserCommand">
               <span class="user-dropdown">
                 <el-icon><UserFilled /></el-icon>
@@ -46,17 +68,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, nextTick } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter, useRoute } from "vue-router";
 import { ElMessage } from "element-plus";
-import { UserFilled, ArrowDown, Menu } from "@element-plus/icons-vue";
+import { UserFilled, ArrowDown, Menu, Bell } from "@element-plus/icons-vue";
 import { useUserStore } from "@/store/user";
+import { useNotificationStore } from "@/store/notification";
 import Sidebar from "@/components/Sidebar/index.vue";
 import Breadcrumb from "@/components/Breadcrumb.vue";
 
 const router = useRouter();
 const route = useRoute();
 const userStore = useUserStore();
+const notificationStore = useNotificationStore();
+const notificationPopoverVisible = ref(false);
 
 // CSS已经处理移动端滚动，不再需要JavaScript修复
 const fixMobileScrollbar = () => {
@@ -82,12 +107,60 @@ onMounted(() => {
       fixMobileScrollbar();
     }, 100);
   });
+
+  if (userStore.user?.id) {
+    refreshNotifications();
+  }
 });
 
 // 判断是否为管理员页面
 const isAdminPage = computed(() => {
   return route.path.startsWith('/admin/');
 });
+
+const isAdminNotification = computed(() => userStore.isAdmin() && isAdminPage.value);
+
+const notificationCount = computed(() => {
+  if (isAdminNotification.value) {
+    return notificationStore.adminPendingTickets;
+  }
+  return notificationStore.userUnreadTickets;
+});
+
+const notificationTitle = computed(() => (isAdminNotification.value ? '待办工单' : '工单通知'));
+
+const notificationDescription = computed(() => {
+  if (isAdminNotification.value) {
+    return notificationCount.value > 0
+      ? `有 ${notificationCount.value} 条工单等待处理`
+      : "暂无待处理工单";
+  }
+  return notificationCount.value > 0
+    ? `有 ${notificationCount.value} 条工单等待您回复`
+    : "暂无待处理工单";
+});
+
+const refreshNotifications = (options: { user?: boolean; admin?: boolean } = {}) => {
+  if (!userStore.user?.id) {
+    notificationStore.reset();
+    return;
+  }
+  if (options.user !== false) {
+    notificationStore.refreshUserTicketUnread();
+  }
+  if (userStore.isAdmin() && options.admin !== false) {
+    notificationStore.refreshAdminTicketPending();
+  }
+};
+
+const goToTickets = () => {
+  notificationPopoverVisible.value = false;
+  if (isAdminNotification.value) {
+    router.push('/admin/tickets');
+  } else {
+    router.push('/user/tickets');
+  }
+};
 
 // 判断是否为仪表板页面（管理员或用户仪表板都不显示面包屑）
 const isDashboard = computed(() => {
@@ -138,11 +211,35 @@ const handleUserCommand = (command: string) => {
       break;
     case 'logout':
       userStore.clearUser();
+      notificationStore.reset();
       ElMessage.success('已退出登录');
       router.push('/login');
       break;
   }
 };
+
+watch(
+  () => userStore.user?.id,
+  (newVal) => {
+    if (newVal) {
+      refreshNotifications();
+    } else {
+      notificationStore.reset();
+    }
+  }
+);
+
+watch(
+  () => route.fullPath,
+  () => {
+    if (!userStore.user?.id) return;
+    if (isAdminNotification.value) {
+      notificationStore.refreshAdminTicketPending();
+    } else {
+      notificationStore.refreshUserTicketUnread();
+    }
+  }
+);
 </script>
 
 <style scoped lang="scss">
@@ -198,6 +295,26 @@ const handleUserCommand = (command: string) => {
   }
 
   .header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+
+    .notification-btn {
+      border: none;
+      background-color: transparent;
+      color: #606266;
+      padding: 6px;
+
+      &:hover {
+        color: #409eff;
+        background-color: rgba(64, 158, 255, 0.1);
+      }
+
+      .el-icon {
+        font-size: 18px;
+      }
+    }
+
     .user-dropdown {
       display: flex;
       align-items: center;
@@ -212,6 +329,23 @@ const handleUserCommand = (command: string) => {
         margin: 0 5px;
       }
     }
+  }
+}
+
+.notification-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  .notification-title {
+    font-weight: 600;
+    color: #303133;
+  }
+
+  .notification-desc {
+    margin: 0;
+    color: #606266;
+    font-size: 13px;
   }
 }
 

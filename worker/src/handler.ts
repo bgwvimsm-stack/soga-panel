@@ -104,6 +104,8 @@ export async function handleRequest(
     "POST /api/user/tickets": () => ticketAPI.createTicket(request),
     "GET /api/user/tickets/:id": () => ticketAPI.getUserTicketDetail(request),
     "POST /api/user/tickets/:id/replies": () => ticketAPI.replyTicketAsUser(request),
+    "GET /api/user/tickets/unread-count": () => ticketAPI.getUserUnreadCount(request),
+    "POST /api/user/tickets/:id/close": () => ticketAPI.closeTicketByUser(request),
     
     // 用户审计功能 API
     "GET /api/user/audit-rules": () => userAPI.getAuditRules(request),
@@ -269,6 +271,7 @@ export async function handleRequest(
     "GET /api/admin/tickets/:id": () => ticketAPI.getAdminTicketDetail(request),
     "POST /api/admin/tickets/:id/replies": () => ticketAPI.replyTicketAsAdmin(request),
     "POST /api/admin/tickets/:id/status": () => ticketAPI.updateTicketStatus(request),
+    "GET /api/admin/tickets/pending-count": () => ticketAPI.getAdminPendingCount(request),
   };
 
   // 处理路由
