@@ -97,7 +97,7 @@
     <el-drawer
       v-model="detailVisible"
       title="工单详情"
-      size="600px"
+      :size="drawerSize"
       :destroy-on-close="true"
     >
       <div v-if="detailLoading" class="drawer-loading">
@@ -236,6 +236,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
+import { useWindowSize } from "@vueuse/core";
 import { ElMessage } from "element-plus";
 import { ChatLineRound, ArrowRight } from "@element-plus/icons-vue";
 import dayjs from "dayjs";
@@ -267,6 +268,7 @@ const filters = reactive<{ status: TicketStatus | "" }>({
 });
 const userStore = useUserStore();
 const notificationStore = useNotificationStore();
+const { width } = useWindowSize();
 
 const pagerConfig = reactive({
   total: 0,
@@ -325,6 +327,7 @@ const createPreviewHtml = computed(() => renderMarkdown(createForm.content));
 const detailContentHtml = computed(() => renderMarkdown(activeTicket.value?.content));
 const userReplyPreviewHtml = computed(() => renderMarkdown(userReplyForm.content));
 const canUserReply = computed(() => (activeTicket.value?.status || "") !== "closed");
+const drawerSize = computed(() => (width.value <= 768 ? "100%" : "600px"));
 
 const loadTickets = async () => {
   loading.value = true;
@@ -534,6 +537,12 @@ onMounted(() => {
 }
 
 .ticket-detail {
+  padding: 20px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(45, 140, 240, 0.08);
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
   .detail-header {
     display: flex;
     justify-content: space-between;
@@ -548,6 +557,38 @@ onMounted(() => {
   .detail-meta {
     color: #909399;
     margin-bottom: 12px;
+  }
+}
+
+:deep(.el-drawer__body) {
+  background: #f5f7fb;
+  padding: 24px;
+}
+
+@media (max-width: 768px) {
+  .tickets-page {
+    padding: 8px;
+  }
+
+  .ticket-detail {
+    padding: 12px;
+    border-radius: 8px;
+    max-height: calc(100vh - 110px);
+
+    .detail-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+  }
+
+  :deep(.el-drawer__body) {
+    padding: 12px;
+  }
+
+  .markdown-editor {
+    display: flex;
+    flex-direction: column;
   }
 }
 
