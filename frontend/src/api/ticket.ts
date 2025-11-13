@@ -52,3 +52,15 @@ export function updateTicketStatus(ticketId: number, payload: TicketStatusPayloa
 export function replyUserTicket(ticketId: number, payload: { content: string }) {
   return http.post(`/user/tickets/${ticketId}/replies`, payload);
 }
+
+export function fetchUserTicketUnreadCount() {
+  return http.get<{ count: number }>("/user/tickets/unread-count");
+}
+
+export function fetchAdminTicketPendingCount() {
+  return http.get<{ count: number }>("/admin/tickets/pending-count");
+}
+
+export function closeUserTicket(ticketId: number) {
+  return http.post(`/user/tickets/${ticketId}/close`);
+}

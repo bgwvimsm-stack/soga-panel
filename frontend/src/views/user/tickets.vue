@@ -67,6 +67,28 @@
           <template #createdAt="{ row }">
             {{ formatDate(row.created_at) }}
           </template>
+          <template #actions="{ row }">
+            <el-popconfirm
+              title="确认关闭该工单？"
+              confirm-button-text="确认"
+              cancel-button-text="取消"
+              :hide-after="0"
+              @confirm="handleCloseTicket(row)"
+              v-if="row.status !== 'closed'"
+            >
+              <template #reference>
+                <el-button type="primary" size="small" class="action-btn">关闭</el-button>
+              </template>
+            </el-popconfirm>
+            <el-button
+              v-else
+              size="small"
+              disabled
+              class="action-btn disabled"
+            >
+              已关闭
+            </el-button>
+          </template>
         </vxe-grid>
       </template>
     </VxeTableBar>
@@ -223,9 +245,11 @@ import {
   fetchUserTicketDetail,
   fetchUserTickets,
   replyUserTicket,
+  closeUserTicket,
 } from "@/api/ticket";
 import { renderMarkdown } from "@/utils/markdown";
 import { useUserStore } from "@/store/user";
+import { useNotificationStore } from "@/store/notification";
 import { VxeTableBar } from "@/components/ReVxeTableBar";
 
 const tickets = ref<TicketSummary[]>([]);
@@ -242,6 +266,7 @@ const filters = reactive<{ status: TicketStatus | "" }>({
   status: "",
 });
 const userStore = useUserStore();
+const notificationStore = useNotificationStore();
 
 const pagerConfig = reactive({
   total: 0,
@@ -268,14 +293,15 @@ const columns = [
   { field: "title", title: "标题", minWidth: 220, visible: true, slots: { default: "title" } },
   { field: "status", title: "状态", width: 120, align: "center", visible: true, slots: { default: "status" } },
   { field: "last_reply_at", title: "最新回复", width: 200, align: "center", visible: true, slots: { default: "lastReply" } },
-  { field: "created_at", title: "创建时间", width: 200, align: "center", visible: true, slots: { default: "createdAt" } }
+  { field: "created_at", title: "创建时间", width: 200, align: "center", visible: true, slots: { default: "createdAt" } },
+  { field: "actions", title: "操作", width: 140, align: "center", fixed: "right", visible: true, slots: { default: "actions" } }
 ];
 
 const statusMeta: Record<
   TicketStatus,
   { label: string; type: "info" | "success" | "warning" | "danger" }
 > = {
-  open: { label: "待处理", type: "warning" },
+  open: { label: "待回复", type: "warning" },
   answered: { label: "已回复", type: "success" },
   closed: { label: "已关闭", type: "info" },
 };
@@ -330,6 +356,7 @@ const openTicketDetail = async (ticket: TicketSummary) => {
     const { data } = await fetchUserTicketDetail(ticket.id);
     activeTicket.value = data.ticket;
     ticketReplies.value = data.replies;
+    notificationStore.refreshUserTicketUnread();
   } catch (error: any) {
     ElMessage.error(error?.message || "加载工单详情失败");
     detailVisible.value = false;
@@ -398,10 +425,26 @@ const submitUserReply = async () => {
     userReplyForm.content = "";
     ElMessage.success("回复已发送");
     loadTickets();
+    notificationStore.refreshUserTicketUnread();
   } catch (error: any) {
     ElMessage.error(error?.message || "回复失败");
   } finally {
     userReplyLoading.value = false;
+  }
+};
+
+const handleCloseTicket = async (ticket: TicketSummary) => {
+  if (ticket.status === "closed") return;
+  try {
+    await closeUserTicket(ticket.id);
+    ElMessage.success("工单已关闭");
+    if (activeTicket.value?.id === ticket.id) {
+      activeTicket.value.status = "closed";
+    }
+    loadTickets();
+    notificationStore.refreshUserTicketUnread();
+  } catch (error: any) {
+    ElMessage.error(error?.message || "关闭失败");
   }
 };
 
@@ -472,6 +515,16 @@ onMounted(() => {
 
     &:hover {
       text-decoration: underline;
+    }
+  }
+
+  .action-btn {
+    width: 72px;
+    justify-content: center;
+    &.disabled {
+      background-color: #dcdfe6;
+      border-color: #dcdfe6;
+      color: #909399;
     }
   }
 }

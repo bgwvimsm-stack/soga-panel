@@ -238,6 +238,7 @@ import {
   updateTicketStatus,
 } from "@/api/ticket";
 import { renderMarkdown } from "@/utils/markdown";
+import { useNotificationStore } from "@/store/notification";
 import { VxeTableBar } from "@/components/ReVxeTableBar";
 
 const tickets = ref<TicketSummary[]>([]);
@@ -284,6 +285,7 @@ const columns = [
 ];
 const statusSelection = ref<TicketStatus>("open");
 const replyStatus = ref<TicketStatus>("answered");
+const notificationStore = useNotificationStore();
 
 const replyForm = reactive({
   content: "",
@@ -320,6 +322,7 @@ const loadTickets = async () => {
     pagerConfig.total = data.pagination.total;
     pagerConfig.currentPage = data.pagination.page;
     pagerConfig.pageSize = data.pagination.pageSize;
+    notificationStore.refreshAdminTicketPending();
   } catch (error: any) {
     ElMessage.error(error?.message || "加载工单失败");
   } finally {

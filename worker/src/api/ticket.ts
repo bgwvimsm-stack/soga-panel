@@ -597,4 +597,84 @@ export class TicketAPI {
       return errorResponse("更新工单状态失败", 500);
     }
   }
+
+  async getUserUnreadCount(request: Request) {
+    try {
+      const auth = await this.requireUser(request);
+      if (isAuthFailure(auth)) {
+        return errorResponse(auth.message, 401);
+      }
+
+      const row = await this.db.db
+        .prepare("SELECT COUNT(1) AS total FROM tickets WHERE user_id = ? AND status = 'answered'")
+        .bind(auth.user.id)
+        .first<{ total: number } | null>();
+
+      return successResponse({ count: row?.total ?? 0 });
+    } catch (error) {
+      console.error("getUserUnreadCount error", error);
+      return errorResponse("获取未读工单数量失败", 500);
+    }
+  }
+
+  async getAdminPendingCount(request: Request) {
+    try {
+      const auth = await this.requireAdmin(request);
+      if (isAuthFailure(auth)) {
+        return errorResponse(auth.message, 401);
+      }
+
+      const row = await this.db.db
+        .prepare("SELECT COUNT(1) AS total FROM tickets WHERE status = 'open'")
+        .first<{ total: number } | null>();
+
+      return successResponse({ count: row?.total ?? 0 });
+    } catch (error) {
+      console.error("getAdminPendingCount error", error);
+      return errorResponse("获取待回复工单数量失败", 500);
+    }
+  }
+
+  async closeTicketByUser(request: Request) {
+    try {
+      const auth = await this.requireUser(request);
+      if (isAuthFailure(auth)) {
+        return errorResponse(auth.message, 401);
+      }
+
+      const ticketId = this.extractTicketId(request);
+      if (!ticketId) {
+        return errorResponse("无效的工单ID", 400);
+      }
+
+      const ticket = await this.db.db
+        .prepare("SELECT id, status FROM tickets WHERE id = ? AND user_id = ?")
+        .bind(ticketId, auth.user.id)
+        .first<{ id: number; status: TicketStatus } | null>();
+
+      if (!ticket) {
+        return errorResponse("工单不存在或无权操作", 404);
+      }
+
+      if (ticket.status === "closed") {
+        return successResponse({ status: ticket.status }, "工单已关闭");
+      }
+
+      await this.db.db
+        .prepare(
+          `
+            UPDATE tickets
+            SET status = 'closed', updated_at = datetime('now', '+8 hours')
+            WHERE id = ?
+          `
+        )
+        .bind(ticketId)
+        .run();
+
+      return successResponse({ status: "closed" }, "工单已关闭");
+    } catch (error: unknown) {
+      console.error("closeTicketByUser error", error);
+      return errorResponse("关闭工单失败", 500);
+    }
+  }
 }
