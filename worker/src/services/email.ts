@@ -1,5 +1,7 @@
 import { Resend } from "resend";
 import { WorkerMailer, type WorkerMailerOptions } from "worker-mailer";
+import type { Env } from "../types";
+import { createSystemConfigManager, type SystemConfigManager } from "../utils/systemConfig";
 import { getLogger, Logger } from "../utils/logger";
 
 export interface EmailMessage {
@@ -15,11 +17,12 @@ export type EmailProvider = "resend" | "smtp" | "sendgrid" | "none";
 export class EmailService {
   private provider: EmailProvider;
   private fromEmail: string;
-  private readonly env: Record<string, unknown>;
+  private readonly env: Env;
   private readonly logger: Logger;
+  private readonly configManager: SystemConfigManager;
   private resendClient: Resend | null = null;
 
-  constructor(env: Record<string, unknown>) {
+  constructor(env: Env) {
     this.env = env;
     const provider = (this.getEnv("MAIL_PROVIDER") || "none").toLowerCase();
     if (provider === "resend" || provider === "smtp" || provider === "sendgrid") {
@@ -29,6 +32,7 @@ export class EmailService {
     }
     this.fromEmail = this.getEnv("MAIL_FROM") || "";
     this.logger = getLogger(this.env);
+    this.configManager = createSystemConfigManager(env);
   }
 
   private getEnv(key: string): string | undefined {
@@ -38,8 +42,16 @@ export class EmailService {
       : undefined;
   }
 
-  private getFromName(defaultName?: string) {
-    return defaultName || this.getEnv("SITE_NAME") || "Soga Panel";
+  private async getFromName(defaultName?: string) {
+    if (defaultName) {
+      return defaultName;
+    }
+
+    const siteName = await this.configManager.getSystemConfig(
+      "site_name",
+      this.getEnv("SITE_NAME") || "Soga Panel"
+    );
+    return siteName || "Soga Panel";
   }
 
   async sendEmail(message: EmailMessage) {
@@ -53,7 +65,7 @@ export class EmailService {
 
     const payload = {
       ...message,
-      fromName: this.getFromName(message.fromName),
+      fromName: await this.getFromName(message.fromName),
     };
 
     if (this.provider === "smtp") {
