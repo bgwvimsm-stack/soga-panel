@@ -144,6 +144,66 @@ export const exportUsersCSV = (userIds?: number[]): Promise<string> => {
     .then((response) => response.data);
 };
 
+// 优惠券管理API
+export interface Coupon {
+  id: number;
+  name: string;
+  code: string;
+  discount_type: "amount" | "percentage";
+  discount_value: number;
+  start_at: number;
+  end_at: number;
+  max_usage?: number | null;
+  per_user_limit?: number | null;
+  total_used?: number;
+  remaining_usage?: number | null;
+  status: number;
+  description?: string | null;
+  package_count?: number;
+}
+
+export interface CouponPayload {
+  name: string;
+  code?: string;
+  discount_type: "amount" | "percentage";
+  discount_value: number;
+  start_at: number;
+  end_at: number;
+  max_usage?: number | null;
+  per_user_limit?: number | null;
+  package_ids?: number[];
+  status?: number;
+  description?: string;
+}
+
+export const getCoupons = (params?: {
+  page?: number;
+  limit?: number;
+  status?: number | string;
+  keyword?: string;
+}): Promise<ApiResponse<{
+  coupons: Coupon[];
+  pagination: PaginationParams & { total: number; totalPages: number };
+}>> => {
+  return http.get("/admin/coupons", { params });
+};
+
+export const getCouponDetail = (id: number): Promise<ApiResponse<Coupon & { package_ids: number[] }>> => {
+  return http.get(`/admin/coupons/${id}`);
+};
+
+export const createCoupon = (data: CouponPayload): Promise<ApiResponse<Coupon>> => {
+  return http.post("/admin/coupons", data);
+};
+
+export const updateCoupon = (id: number, data: Partial<CouponPayload>): Promise<ApiResponse<{ id: number }>> => {
+  return http.put(`/admin/coupons/${id}`, data);
+};
+
+export const deleteCoupon = (id: number): Promise<ApiResponse<{ id: number }>> => {
+  return http.delete(`/admin/coupons/${id}`);
+};
+
 // 节点管理API
 export interface Node {
   id: number;

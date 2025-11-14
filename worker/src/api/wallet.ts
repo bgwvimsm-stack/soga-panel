@@ -5,12 +5,14 @@ import type { Logger } from "../utils/logger";
 import type { SystemConfigManager } from "../utils/systemConfig";
 import type { PaymentProvider } from "./pay/types";
 import { DatabaseService } from "../services/database";
+import { CouponService } from "../services/couponService";
 import { validateUserAuth } from "../middleware/auth";
 import { errorResponse, successResponse } from "../utils/response";
 import { getLogger } from "../utils/logger";
 import { createSystemConfigManager } from "../utils/systemConfig";
 import { PaymentProviderFactory } from "./pay/PaymentProviderFactory";
 import { ensureNumber, ensureString } from "../utils/d1";
+import { fixMoneyPrecision } from "../utils/money";
 
 type AuthenticatedUser = {
   id: number;
@@ -103,11 +105,14 @@ type PackageRow = {
 };
 
 type PurchaseRecordRow = {
+  id?: number;
   trade_no: string;
   package_id: number;
   status: number;
   package_price?: number | string | null;
   purchase_type?: string | null;
+  discount_amount?: number | string | null;
+  coupon_id?: number | string | null;
 };
 
 type WalletStatsRow = {
@@ -131,10 +136,12 @@ export class WalletAPI {
   private readonly logger: Logger;
   private readonly configManager: SystemConfigManager;
   private readonly paymentProvider: PaymentProvider | null;
+  private readonly couponService: CouponService;
 
   constructor(env: Env) {
     this.env = env;
     this.db = new DatabaseService(env.DB);
+    this.couponService = new CouponService(env.DB);
     this.logger = getLogger(env);
     this.configManager = createSystemConfigManager(env);
 
@@ -515,17 +522,22 @@ export class WalletAPI {
                 if (!userInfo) {
                   this.logger.warn("用户信息不存在，无法完成套餐扣款", { user_id: rechargeRecord.user_id });
                 } else {
-                  const packagePrice = ensureNumber(purchaseRecord.package_price ?? packageInfo.price);
+                  const basePrice = ensureNumber(purchaseRecord.package_price ?? packageInfo.price);
+                  const discountAmount =
+                    purchaseRecord.discount_amount != null
+                      ? ensureNumber(purchaseRecord.discount_amount)
+                      : 0;
+                  const finalPrice = fixMoneyPrecision(Math.max(basePrice - discountAmount, 0));
                   const userMoney = ensureNumber(userInfo.money);
 
-                  if (userMoney >= packagePrice) {
+                  if (userMoney + 1e-6 >= finalPrice) {
                     const deductResult = await this.db.db
                       .prepare(`
                       UPDATE users
                       SET money = money - ?, updated_at = datetime('now', '+8 hours')
                       WHERE id = ?
                     `)
-                      .bind(packagePrice, rechargeRecord.user_id)
+                      .bind(finalPrice, rechargeRecord.user_id)
                       .run();
 
                     if (deductResult.success) {
@@ -577,13 +589,34 @@ export class WalletAPI {
                           .bind(outTradeNo)
                           .run();
 
+                        const couponId =
+                          purchaseRecord.coupon_id !== null && purchaseRecord.coupon_id !== undefined
+                            ? ensureNumber(purchaseRecord.coupon_id)
+                            : 0;
+                        if (couponId) {
+                          const consumeResult = await this.couponService.consumeCouponUsage(
+                            couponId,
+                            rechargeRecord.user_id,
+                            ensureNumber(purchaseRecord.id ?? 0),
+                            outTradeNo
+                          );
+                          if (!consumeResult.success) {
+                            this.logger.error("优惠码计数失败", {
+                              coupon_id: couponId,
+                              trade_no: outTradeNo,
+                              message: consumeResult.message
+                            });
+                          }
+                        }
+
                         this.logger.info("智能补差额套餐购买成功", {
                           out_trade_no: outTradeNo,
                           user_id: rechargeRecord.user_id,
                           package_id: purchaseRecord.package_id,
                           package_name: packageInfo.name,
                           topup_amount: rechargeRecord.amount,
-                          package_price: packagePrice
+                          package_price: finalPrice,
+                          discount_amount: discountAmount
                         });
                       }
                     }

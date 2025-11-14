@@ -3,6 +3,7 @@
 import type { Env } from "../../types";
 import type { D1Database } from "@cloudflare/workers-types";
 import { DatabaseService } from "../../services/database";
+import { CouponService } from "../../services/couponService";
 import { errorResponse, successResponse } from "../../utils/response";
 import { getLogger, type Logger } from "../../utils/logger";
 import { PaymentProviderFactory } from "./PaymentProviderFactory";
@@ -19,6 +20,7 @@ interface RechargeRecordRow {
 }
 
 interface PurchaseRecordRow {
+  id?: number;
   trade_no: string;
   status: number;
   user_id: number;
@@ -26,6 +28,9 @@ interface PurchaseRecordRow {
   price?: number;
   amount?: number;
   package_price?: number;
+  discount_amount?: number | string | null;
+  coupon_id?: number | string | null;
+  coupon_code?: string | null;
   purchase_type?: string;
   created_at?: string;
   paid_at?: string;
@@ -69,11 +74,13 @@ export class PaymentAPI {
   private readonly logger: Logger;
   private readonly currentProvider: string;
   private readonly paymentProvider: PaymentProvider | null;
+  private readonly couponService: CouponService;
 
   constructor(env: Env) {
     this.env = env;
     this.dbRaw = env.DB as D1Database;
     this.db = new DatabaseService(this.dbRaw);
+    this.couponService = new CouponService(this.dbRaw);
     this.logger = getLogger(env);
 
     this.currentProvider = ensureString(env.PAYMENT_PROVIDER) || "epay";
@@ -503,11 +510,15 @@ export class PaymentAPI {
 
       if (currentBalance > 0) {
         // 计算需要扣除的余额（套餐价格 - 在线支付金额）
-        const packagePrice = ensureNumber(
-          purchaseRecord.package_price ?? purchaseRecord.price,
-          paidAmount
+        const basePrice = ensureNumber(
+          purchaseRecord.package_price ?? purchaseRecord.price ?? paidAmount
         );
-        const balanceToDeduct = Math.max(Number((packagePrice - paidAmount).toFixed(2)), 0);
+        const discountAmount =
+          purchaseRecord.discount_amount != null
+            ? ensureNumber(purchaseRecord.discount_amount)
+            : 0;
+        const finalPrice = Math.max(basePrice - discountAmount, 0);
+        const balanceToDeduct = Math.max(Number((finalPrice - paidAmount).toFixed(2)), 0);
 
         if (balanceToDeduct > 0 && currentBalance + 1e-6 >= balanceToDeduct) {
           // 扣除用户余额
@@ -528,7 +539,7 @@ export class PaymentAPI {
               user_id: purchaseRecord.user_id,
               balance_deducted: balanceToDeduct,
               online_payment: paidAmount,
-              total_package_price: packagePrice
+              total_package_price: finalPrice
             });
           } else {
             this.logger.error("扣除用户余额失败", {
@@ -545,6 +556,7 @@ export class PaymentAPI {
     // 激活套餐
     try {
       await this.activatePackage(purchaseRecord);
+      await this.handleCouponUsage(purchaseRecord);
     } catch (error) {
       this.logger.error("激活套餐失败", {
         trade_no: purchaseRecord.trade_no,
@@ -623,6 +635,41 @@ export class PaymentAPI {
     } catch (error) {
       this.logger.error("激活套餐失败", error);
       throw error;
+    }
+  }
+
+  private async handleCouponUsage(purchaseRecord: PurchaseRecordRow) {
+    const couponIdRaw = purchaseRecord.coupon_id;
+    if (couponIdRaw === null || couponIdRaw === undefined) {
+      return;
+    }
+
+    const couponId = ensureNumber(couponIdRaw);
+    if (!couponId) {
+      return;
+    }
+
+    try {
+      const consumeResult = await this.couponService.consumeCouponUsage(
+        couponId,
+        purchaseRecord.user_id,
+        ensureNumber(purchaseRecord.id ?? 0),
+        ensureString(purchaseRecord.trade_no)
+      );
+
+      if (!consumeResult.success) {
+        this.logger.error("优惠码使用计数失败", {
+          coupon_id: couponId,
+          trade_no: purchaseRecord.trade_no,
+          message: consumeResult.message
+        });
+      }
+    } catch (error) {
+      this.logger.error("优惠码扣减失败", {
+        coupon_id: couponId,
+        trade_no: purchaseRecord.trade_no,
+        error: (error as Error).message
+      });
     }
   }
 

@@ -245,6 +245,7 @@ export async function handleRequest(
     // 商店相关 API
     "GET /api/packages": () => storeAPI.getPackages(request),
     "GET /api/packages/:id": () => storeAPI.getPackageDetail(request),
+    "POST /api/packages/coupon/preview": () => storeAPI.previewCoupon(request),
     "POST /api/packages/purchase": () => storeAPI.purchasePackage(request),
     "GET /api/packages/purchase-records": () => storeAPI.getPurchaseRecords(request),
 
@@ -261,6 +262,11 @@ export async function handleRequest(
     "POST /api/admin/packages": () => adminAPI.createPackage(request),
     "PUT /api/admin/packages/:id": () => adminAPI.updatePackage(request),
     "DELETE /api/admin/packages/:id": () => adminAPI.deletePackage(request),
+    "GET /api/admin/coupons": () => adminAPI.getCoupons(request),
+    "POST /api/admin/coupons": () => adminAPI.createCoupon(request),
+    "GET /api/admin/coupons/:id": () => adminAPI.getCouponDetail(request),
+    "PUT /api/admin/coupons/:id": () => adminAPI.updateCoupon(request),
+    "DELETE /api/admin/coupons/:id": () => adminAPI.deleteCoupon(request),
     "GET /api/admin/package-stats": () => adminAPI.getPackageStats(request),
     "GET /api/admin/recharge-records": () => adminAPI.getRechargeRecords(request),
     "GET /api/admin/purchase-records": () => adminAPI.getPurchaseRecords(request),

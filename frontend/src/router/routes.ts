@@ -333,6 +333,16 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: "coupons",
+        name: "AdminCoupons",
+        component: () => import("@/views/admin/coupons.vue"),
+        meta: {
+          title: "优惠券管理",
+          requiresAuth: true,
+          requiresAdmin: true
+        }
+      },
+      {
         path: "recharge-records",
         name: "AdminRechargeRecords",
         component: () => import("@/views/admin/recharge-records.vue"),

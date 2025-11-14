@@ -478,6 +478,55 @@ CREATE TABLE IF NOT EXISTS packages (
     updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
 );
 
+-- 优惠券表
+-- 字段说明：
+-- code: 唯一优惠码
+-- discount_type: off_amount/ off_percentage
+-- discount_value: 优惠值（金额或百分比，百分比传 1-100）
+-- start_at / end_at: Unix 时间戳（秒）
+-- max_usage / per_user_limit: NULL 表示不限制
+-- total_used: 已使用次数，配合 max_usage 控制剩余名额
+CREATE TABLE IF NOT EXISTS coupons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    code TEXT NOT NULL UNIQUE,
+    discount_type TEXT NOT NULL CHECK(discount_type IN ('amount', 'percentage')),
+    discount_value DECIMAL(10,2) NOT NULL,
+    start_at INTEGER NOT NULL,
+    end_at INTEGER NOT NULL,
+    max_usage INTEGER,
+    per_user_limit INTEGER,
+    total_used INTEGER NOT NULL DEFAULT 0,
+    status INTEGER NOT NULL DEFAULT 1,
+    description TEXT,
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
+);
+
+-- 优惠券适用套餐表
+CREATE TABLE IF NOT EXISTS coupon_packages (
+    coupon_id INTEGER NOT NULL,
+    package_id INTEGER NOT NULL,
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    PRIMARY KEY (coupon_id, package_id),
+    FOREIGN KEY (coupon_id) REFERENCES coupons (id) ON DELETE CASCADE,
+    FOREIGN KEY (package_id) REFERENCES packages (id) ON DELETE CASCADE
+);
+
+-- 优惠券使用记录表
+CREATE TABLE IF NOT EXISTS coupon_usages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    coupon_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    order_id INTEGER,
+    order_trade_no TEXT,
+    used_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    FOREIGN KEY (coupon_id) REFERENCES coupons (id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_coupon_usages_coupon ON coupon_usages (coupon_id);
+CREATE INDEX IF NOT EXISTS idx_coupon_usages_coupon_user ON coupon_usages (coupon_id, user_id);
+
 -- 充值记录表
 -- 字段说明：
 -- id: 充值记录唯一标识ID（主键）
@@ -519,6 +568,9 @@ CREATE TABLE IF NOT EXISTS package_purchase_records (
     package_id INTEGER NOT NULL,
     price DECIMAL(10,2) NOT NULL,
     package_price DECIMAL(10,2),
+    coupon_id INTEGER,
+    coupon_code TEXT,
+    discount_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
     purchase_type TEXT NOT NULL DEFAULT 'balance',
     trade_no TEXT UNIQUE NOT NULL,
     status INTEGER DEFAULT 0,
@@ -526,7 +578,8 @@ CREATE TABLE IF NOT EXISTS package_purchase_records (
     paid_at DATETIME,
     expires_at DATETIME,
     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
-    FOREIGN KEY (package_id) REFERENCES packages (id) ON DELETE CASCADE
+    FOREIGN KEY (package_id) REFERENCES packages (id) ON DELETE CASCADE,
+    FOREIGN KEY (coupon_id) REFERENCES coupons (id) ON DELETE SET NULL
 );
 
 -- =============================================
