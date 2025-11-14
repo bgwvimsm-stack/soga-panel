@@ -4,11 +4,13 @@ import type { Env } from "../types";
 import type { Logger } from "../utils/logger";
 import type { SystemConfigManager } from "../utils/systemConfig";
 import { DatabaseService } from "../services/database";
+import { CouponService } from "../services/couponService";
 import { validateUserAuth } from "../middleware/auth";
 import { errorResponse, successResponse } from "../utils/response";
 import { getLogger } from "../utils/logger";
 import { createSystemConfigManager } from "../utils/systemConfig";
 import { ensureNumber, ensureString, ensureDate, getChanges, toRunResult } from "../utils/d1";
+import { fixMoneyPrecision } from "../utils/money";
 import type { PaymentCreateResult } from "./pay/types";
 
 type PackageRow = {
@@ -50,6 +52,10 @@ type PurchaseRecordListRow = {
   id: number;
   price: number | string;
   package_price: number | string | null;
+  discount_amount?: number | string | null;
+  coupon_code?: string | null;
+  coupon_id?: number | string | null;
+  final_price?: number | string | null;
   purchase_type: string | null;
   trade_no: string;
   status: number;
@@ -85,6 +91,7 @@ type PurchaseRequestBody = {
   package_id: number;
   purchase_type?: string;
   payment_method?: string;
+  coupon_code?: string;
 };
 
 type NormalizedPackageRow = Omit<
@@ -129,12 +136,14 @@ export class StoreAPI {
   private readonly db: DatabaseService;
   private readonly logger: Logger;
   private readonly configManager: SystemConfigManager;
+  private readonly couponService: CouponService;
 
   constructor(env: Env) {
     this.env = env;
     this.db = new DatabaseService(env.DB);
     this.logger = getLogger(env);
     this.configManager = createSystemConfigManager(env);
+    this.couponService = new CouponService(this.db.db);
   }
 
   // 获取套餐列表
@@ -281,7 +290,6 @@ export class StoreAPI {
   // 购买套餐
   async purchasePackage(request: Request) {
     try {
-      // 验证用户身份
       const authResult = await validateUserAuth(request, this.env);
       if (!authResult.success) {
         return errorResponse(authResult.message, 401);
@@ -301,11 +309,11 @@ export class StoreAPI {
 
       const purchaseTypeRaw = body.purchase_type ?? "balance";
       const paymentMethodRaw = body.payment_method ?? "alipay";
+      const couponCodeInput = ensureString(body.coupon_code ?? "").trim();
 
       const purchase_type = ensureString(purchaseTypeRaw) || "balance";
       const payment_method = ensureString(paymentMethodRaw) || "alipay";
 
-      // 获取套餐信息
       const packageInfo = await this.db.db
         .prepare("SELECT * FROM packages WHERE id = ? AND status = 1")
         .bind(packageIdRaw)
@@ -317,7 +325,6 @@ export class StoreAPI {
 
       const normalizedPackage = normalizePackageRow(packageInfo);
 
-      // 获取用户信息
       const userInfo = await this.db.db
         .prepare("SELECT money, class, class_expire_time FROM users WHERE id = ?")
         .bind(userId)
@@ -329,149 +336,204 @@ export class StoreAPI {
 
       const normalizePaymentMethod = (method: string) => {
         const lower = method.toLowerCase();
-        if (lower === 'wechat' || lower === 'wxpay') return 'wxpay';
-        if (lower === 'alipay') return 'alipay';
-        if (lower === 'qqpay') return 'qqpay';
+        if (lower === "wechat" || lower === "wxpay") return "wxpay";
+        if (lower === "alipay") return "alipay";
+        if (lower === "qqpay") return "qqpay";
         return lower;
       };
 
-      // 如果是余额支付，检查余额是否足够
       const userBalance = ensureNumber(userInfo.money);
-      const packagePrice = normalizedPackage.price;
-      let actualPurchaseType = purchase_type;
-      let paymentAmount = packagePrice; // 默认支付完整套餐价格
+      const originalPrice = normalizedPackage.price;
+      let finalPrice = originalPrice;
+      let discountAmount = 0;
+      let appliedCouponId: number | null = null;
+      let appliedCouponCode: string | null = null;
 
-      if (purchase_type === 'balance') {
-        if (userBalance < packagePrice) {
-          // 余额不足，自动切换到智能补差额支付
-          actualPurchaseType = 'smart_topup';
-          paymentAmount = Math.round((packagePrice - userBalance) * 100) / 100; // 只支付差额部分，修复浮点数精度
+      if (couponCodeInput) {
+        try {
+          const couponResult = await this.couponService.validateCouponForPurchase({
+            code: couponCodeInput,
+            packageId: ensureNumber(packageIdRaw),
+            packagePrice: originalPrice,
+            userId,
+          });
+
+          finalPrice = couponResult.finalPrice;
+          discountAmount = couponResult.discountAmount;
+          appliedCouponId = couponResult.coupon.id;
+          appliedCouponCode = couponResult.coupon.code;
+        } catch (couponError) {
+          const message =
+            couponError instanceof Error ? couponError.message : "优惠码验证失败";
+          return errorResponse(message, 400);
         }
-      } else if (purchase_type === 'direct') {
-        // 如果用户主动选择在线支付
-        // 只有当余额大于0且小于套餐价格时才使用智能补差额
-        // 余额为0时直接使用在线支付
-        if (userBalance > 0 && userBalance < packagePrice) {
-          actualPurchaseType = 'smart_topup';
-          paymentAmount = Math.round((packagePrice - userBalance) * 100) / 100; // 只支付差额部分，修复浮点数精度
+      }
+
+      finalPrice = fixMoneyPrecision(Math.max(finalPrice, 0));
+      discountAmount = fixMoneyPrecision(Math.min(Math.max(discountAmount, 0), originalPrice));
+
+      let actualPurchaseType = purchase_type;
+      let paymentAmount = finalPrice;
+
+      if (finalPrice <= 0) {
+        actualPurchaseType = "balance";
+        paymentAmount = 0;
+      } else if (purchase_type === "balance") {
+        if (userBalance < finalPrice) {
+          actualPurchaseType = "smart_topup";
+          paymentAmount = fixMoneyPrecision(Math.max(finalPrice - userBalance, 0));
         } else {
-          // 余额为0或余额足够但用户选择在线支付，保持 direct 类型
-          actualPurchaseType = 'direct';
-          paymentAmount = packagePrice;
+          paymentAmount = finalPrice;
         }
+      } else if (purchase_type === "direct") {
+        if (userBalance > 0 && userBalance < finalPrice) {
+          actualPurchaseType = "smart_topup";
+          paymentAmount = fixMoneyPrecision(Math.max(finalPrice - userBalance, 0));
+        } else {
+          actualPurchaseType = "direct";
+          paymentAmount = finalPrice;
+        }
+      } else if (purchase_type === "smart_topup") {
+        actualPurchaseType = "smart_topup";
+        paymentAmount = fixMoneyPrecision(Math.max(finalPrice - userBalance, 0));
       }
 
       const normalizedPaymentMethod = normalizePaymentMethod(payment_method);
-      let storedPurchaseType = 'balance';
-      if (actualPurchaseType === 'smart_topup') {
+      let storedPurchaseType = "balance";
+      if (actualPurchaseType === "smart_topup") {
         storedPurchaseType = `balance_${normalizedPaymentMethod}`;
-      } else if (actualPurchaseType === 'direct') {
+      } else if (actualPurchaseType === "direct") {
         storedPurchaseType = normalizedPaymentMethod;
       }
 
-      // 生成交易号 - 简化格式：时间戳后8位 + 4位随机字符
-      const trade_no = `${Date.now().toString().slice(-8)}${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+      const trade_no = `${Date.now().toString().slice(-8)}${Math.random()
+        .toString(36)
+        .substr(2, 4)
+        .toUpperCase()}`;
 
-      // 开始事务处理
-      if (actualPurchaseType === 'balance') {
-        // 余额支付，直接完成交易
-
-        // 1. 扣除用户余额
+      if (actualPurchaseType === "balance") {
+        const deduction = fixMoneyPrecision(finalPrice);
         const deductResult = toRunResult(
           await this.db.db
-          .prepare(`
+            .prepare(`
             UPDATE users
             SET money = money - ?, updated_at = datetime('now', '+8 hours')
             WHERE id = ? AND money >= ?
           `)
-          .bind(normalizedPackage.price, userId, normalizedPackage.price)
-          .run()
+            .bind(deduction, userId, deduction)
+            .run()
         );
 
         if (!deductResult.success || getChanges(deductResult) === 0) {
           return errorResponse("余额扣除失败，请重试", 500);
         }
 
-        // 2. 创建购买记录
         const purchaseResult = await this.db.db
           .prepare(`
             INSERT INTO package_purchase_records
-            (user_id, package_id, price, package_price, purchase_type, trade_no, status, paid_at)
-            VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now', '+8 hours'))
+            (user_id, package_id, price, package_price, coupon_id, coupon_code, discount_amount, purchase_type, trade_no, status, paid_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now', '+8 hours'))
           `)
-          .bind(userId, packageIdRaw, normalizedPackage.price, normalizedPackage.price, storedPurchaseType, trade_no)
+          .bind(
+            userId,
+            packageIdRaw,
+            deduction,
+            normalizedPackage.price,
+            appliedCouponId,
+            appliedCouponCode,
+            discountAmount,
+            storedPurchaseType,
+            trade_no
+          )
           .run();
 
         if (!purchaseResult.success) {
-          // 回滚余额
           await this.db.db
             .prepare(`
               UPDATE users
               SET money = money + ?, updated_at = datetime('now', '+8 hours')
               WHERE id = ?
             `)
-            .bind(packageInfo.price, userId)
+            .bind(deduction, userId)
             .run();
 
           return errorResponse("创建购买记录失败", 500);
         }
 
-        // 3. 更新用户等级和流量
-        const result = await this.updateUserAfterPackagePurchase(userId, normalizedPackage);
+        const purchaseRecordId = ensureNumber(purchaseResult.meta?.last_row_id ?? 0);
+        const updateResult = await this.updateUserAfterPackagePurchase(userId, normalizedPackage);
 
-        const updateUserResult = result;
-
-        if (!updateUserResult.success) {
+        if (!updateResult.success) {
           this.logger.error("更新用户等级失败", {
             user_id: userId,
             package_id: packageIdRaw,
-            trade_no
+            trade_no,
           });
-          // 这里不回滚，因为支付已经完成，需要人工处理
         }
 
-        this.logger.info("套餐购买成功", {
-          user_id: userId,
-          user_email: user.email,
-          package_id: packageIdRaw,
-          package_name: normalizedPackage.name,
-          price: normalizedPackage.price,
-          trade_no,
-          purchase_type
-        });
+        if (appliedCouponId) {
+          const consumeResult = await this.couponService.consumeCouponUsage(
+            appliedCouponId,
+            userId,
+            purchaseRecordId,
+            trade_no
+          );
+          if (!consumeResult.success) {
+            this.logger.error("优惠码使用计数失败", {
+              coupon_id: appliedCouponId,
+              trade_no,
+              reason: consumeResult.message,
+            });
+          }
+        }
 
-        return successResponse({
-          trade_no,
-          package_name: normalizedPackage.name,
-          price: normalizedPackage.price,
-          purchase_type: storedPurchaseType,
-          status: 1,
-          status_text: '购买成功',
-          validity_days: packageInfo.validity_days,
-          new_expire_time: result.newExpireTime
-        }, "套餐购买成功");
-
-      } else if (actualPurchaseType === 'smart_topup') {
-        // 智能补差额支付
-        const purchaseResult = await this.db.db
+        return successResponse(
+          {
+            trade_no,
+            package_name: normalizedPackage.name,
+            price: deduction,
+            original_price: normalizedPackage.price,
+            discount_amount: discountAmount,
+            coupon_code: appliedCouponCode,
+            purchase_type: storedPurchaseType,
+            status: 1,
+            status_text: "购买成功",
+            validity_days: packageInfo.validity_days,
+            new_expire_time: updateResult.newExpireTime,
+          },
+          "套餐购买成功"
+        );
+      } else if (actualPurchaseType === "smart_topup") {
+        const orderResult = await this.db.db
           .prepare(`
             INSERT INTO package_purchase_records
-            (user_id, package_id, price, package_price, purchase_type, trade_no, status)
-            VALUES (?, ?, ?, ?, ?, ?, 0)
+            (user_id, package_id, price, package_price, coupon_id, coupon_code, discount_amount, purchase_type, trade_no, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
           `)
-          .bind(userId, packageIdRaw, paymentAmount, normalizedPackage.price, storedPurchaseType, trade_no)
+          .bind(
+            userId,
+            packageIdRaw,
+            paymentAmount,
+            normalizedPackage.price,
+            appliedCouponId,
+            appliedCouponCode,
+            discountAmount,
+            storedPurchaseType,
+            trade_no
+          )
           .run();
 
-        if (!purchaseResult.success) {
+        if (!orderResult.success) {
           return errorResponse("创建购买订单失败", 500);
         }
 
-        // 直接调用支付API生成支付链接，只支付差额（无需HTTP请求）
         const { PaymentAPI } = await import("./pay/PaymentAPI");
         const paymentAPI = new PaymentAPI(this.env);
-
-        // 直接调用支付API方法，传递支付方式和request对象（用于提取返回URL）
-        const paymentData = await paymentAPI.createPaymentDirect(trade_no, { payment_method }, request) as PaymentDirectResult;
+        const paymentData = (await paymentAPI.createPaymentDirect(
+          trade_no,
+          { payment_method },
+          request
+        )) as PaymentDirectResult;
 
         if (paymentData.code !== 0) {
           return errorResponse(paymentData.message || "创建支付订单失败", 500);
@@ -482,39 +544,54 @@ export class StoreAPI {
           return errorResponse("支付订单创建失败，缺少支付链接", 500);
         }
 
-        return successResponse({
-          trade_no,
-          package_name: normalizedPackage.name,
-          price: packagePrice,
-          payment_amount: paymentAmount, // 实际支付金额（差额）
-          user_balance: userBalance, // 当前余额
-          purchase_type: storedPurchaseType,
-          status: 0,
-          status_text: '待支付差额',
-          payment_url: payUrl
-        }, `需要补差额 ¥${paymentAmount.toFixed(2)}，正在跳转到支付页面`);
-
+        return successResponse(
+          {
+            trade_no,
+            package_name: normalizedPackage.name,
+            price: normalizedPackage.price,
+            final_price: finalPrice,
+            discount_amount: discountAmount,
+            coupon_code: appliedCouponCode,
+            payment_amount: paymentAmount,
+            user_balance: userBalance,
+            purchase_type: storedPurchaseType,
+            status: 0,
+            status_text: "待支付差额",
+            payment_url: payUrl,
+          },
+          `需要补差额 ¥${paymentAmount.toFixed(2)}，正在跳转到支付页面`
+        );
       } else {
-        // 完整在线支付
-        const purchaseResult = await this.db.db
+        const orderResult = await this.db.db
           .prepare(`
             INSERT INTO package_purchase_records
-            (user_id, package_id, price, package_price, purchase_type, trade_no, status)
-            VALUES (?, ?, ?, ?, ?, ?, 0)
+            (user_id, package_id, price, package_price, coupon_id, coupon_code, discount_amount, purchase_type, trade_no, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
           `)
-          .bind(userId, packageIdRaw, normalizedPackage.price, normalizedPackage.price, storedPurchaseType, trade_no)
+          .bind(
+            userId,
+            packageIdRaw,
+            finalPrice,
+            normalizedPackage.price,
+            appliedCouponId,
+            appliedCouponCode,
+            discountAmount,
+            storedPurchaseType,
+            trade_no
+          )
           .run();
 
-        if (!purchaseResult.success) {
+        if (!orderResult.success) {
           return errorResponse("创建购买订单失败", 500);
         }
 
-        // 直接调用支付API生成支付链接（无需HTTP请求）
         const { PaymentAPI } = await import("./pay/PaymentAPI");
         const paymentAPI = new PaymentAPI(this.env);
-
-        // 直接调用支付API方法，传递支付方式和request对象（用于提取返回URL）
-        const paymentData = await paymentAPI.createPaymentDirect(trade_no, { payment_method }, request) as PaymentDirectResult;
+        const paymentData = (await paymentAPI.createPaymentDirect(
+          trade_no,
+          { payment_method },
+          request
+        )) as PaymentDirectResult;
 
         if (paymentData.code !== 0) {
           return errorResponse(paymentData.message || "创建支付订单失败", 500);
@@ -525,21 +602,85 @@ export class StoreAPI {
           return errorResponse("支付订单创建失败，缺少支付链接", 500);
         }
 
-        return successResponse({
-          trade_no,
-          package_name: normalizedPackage.name,
-          price: packagePrice,
-          purchase_type: storedPurchaseType,
-          status: 0,
-          status_text: '待支付',
-          payment_url: payUrl
-        }, "购买订单创建成功，请完成支付");
+        return successResponse(
+          {
+            trade_no,
+            package_name: normalizedPackage.name,
+            price: normalizedPackage.price,
+            final_price: finalPrice,
+            discount_amount: discountAmount,
+            coupon_code: appliedCouponCode,
+            purchase_type: storedPurchaseType,
+            status: 0,
+            status_text: "待支付",
+            payment_url: payUrl,
+          },
+          "购买订单创建成功，请完成支付"
+        );
       }
-
     } catch (error) {
       this.logger.error("购买套餐失败", error);
       const message = error instanceof Error ? error.message : String(error);
       return errorResponse(`购买套餐失败: ${message}`, 500);
+    }
+  }
+
+  async previewCoupon(request: Request) {
+    try {
+      const authResult = await validateUserAuth(request, this.env);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+
+      const user = authResult.user as AuthenticatedUser;
+      const body = (await request.json()) as {
+        package_id?: number | string;
+        coupon_code?: string;
+      };
+      const packageId = ensureNumber(body.package_id);
+      const couponCode = ensureString(body.coupon_code ?? "").trim();
+
+      if (!packageId || !couponCode) {
+        return errorResponse("缺少套餐或优惠码信息", 400);
+      }
+
+      const packageInfo = await this.db.db
+        .prepare("SELECT * FROM packages WHERE id = ? AND status = 1")
+        .bind(packageId)
+        .first<PackageRow>();
+
+      if (!packageInfo) {
+        return errorResponse("套餐不存在或已下架", 404);
+      }
+
+      const normalizedPackage = normalizePackageRow(packageInfo);
+      const couponResult = await this.couponService.validateCouponForPurchase({
+        code: couponCode,
+        packageId,
+        packagePrice: normalizedPackage.price,
+        userId: ensureNumber(user.id),
+      });
+
+      return successResponse({
+        original_price: normalizedPackage.price,
+        final_price: couponResult.finalPrice,
+        discount_amount: couponResult.discountAmount,
+        coupon: {
+          id: couponResult.coupon.id,
+          name: couponResult.coupon.name,
+          code: couponResult.coupon.code,
+          discount_type: couponResult.coupon.discount_type,
+          discount_value: couponResult.coupon.discount_value,
+          start_at: couponResult.coupon.start_at,
+          end_at: couponResult.coupon.end_at,
+          max_usage: couponResult.coupon.max_usage,
+          per_user_limit: couponResult.coupon.per_user_limit,
+          total_used: couponResult.coupon.total_used,
+        },
+      }, "优惠码可用");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return errorResponse(message, 400);
     }
   }
 
@@ -577,6 +718,8 @@ export class StoreAPI {
             ppr.id,
             ppr.price,
             ppr.package_price,
+            ppr.discount_amount,
+            ppr.coupon_code,
             ppr.purchase_type,
             ppr.trade_no,
             ppr.status,
@@ -618,12 +761,18 @@ export class StoreAPI {
       const formattedRecords = (records.results ?? []).map(record => {
         const price = ensureNumber(record.price);
         const packagePrice = record.package_price != null ? ensureNumber(record.package_price) : null;
+        const discountAmount = record.discount_amount != null ? ensureNumber(record.discount_amount) : 0;
         const purchaseType = ensureString(record.purchase_type);
         const trafficQuota = record.traffic_quota != null ? ensureNumber(record.traffic_quota) : null;
+        const finalPrice = packagePrice !== null
+          ? fixMoneyPrecision(Math.max(packagePrice - discountAmount, 0))
+          : price;
         return {
           ...record,
           price,
           package_price: packagePrice,
+          discount_amount: discountAmount,
+          final_price: finalPrice,
           status_text: statusMap[record.status as keyof typeof statusMap] || '未知状态',
           purchase_type_text: formatPurchaseTypeText(purchaseType),
           traffic_quota_gb: trafficQuota

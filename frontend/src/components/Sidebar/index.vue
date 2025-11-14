@@ -116,6 +116,7 @@ const adminRoutes: MenuRoute[] = [
   { path: '/admin/announcements', name: 'admin-announcements', icon: 'ChatDotRound', title: '公告管理' },
   { path: '/admin/tickets', name: 'admin-tickets', icon: 'ChatDotRound', title: '工单管理' },
   { path: '/admin/packages', name: 'admin-packages', icon: 'GoodsFilled', title: '套餐管理' },
+  { path: '/admin/coupons', name: 'admin-coupons', icon: 'Tickets', title: '优惠券管理' },
   { path: '/admin/recharge-records', name: 'admin-recharge-records', icon: 'Money', title: '充值记录' },
   { path: '/admin/purchase-records', name: 'admin-purchase-records', icon: 'ShoppingCart', title: '购买记录' },
   { path: '/admin/nodes', name: 'admin-nodes', icon: 'Switch', title: '节点列表' },

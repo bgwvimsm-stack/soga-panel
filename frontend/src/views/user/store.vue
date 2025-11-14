@@ -121,24 +121,77 @@
                 <span>设备限制:</span>
                 <span>{{ selectedPackage.device_limit_text }}</span>
               </div>
+              <div class="detail-row" v-if="discountAmountDisplay > 0">
+                <span>优惠金额:</span>
+                <span class="price-text">-¥{{ discountAmountDisplay.toFixed(2) }}</span>
+              </div>
+              <div class="detail-row final-price-row">
+                <span>应付金额:</span>
+                <span class="price-text">¥{{ finalPriceDisplay.toFixed(2) }}</span>
+              </div>
             </div>
           </div>
 
+          <div class="coupon-section">
+            <div class="coupon-input-row">
+              <span class="coupon-label">优惠码</span>
+              <el-input
+                v-model="couponCode"
+                class="coupon-input"
+                placeholder="请输入优惠码"
+                clearable
+                @clear="clearCoupon"
+              >
+                <template #append>
+                  <el-button :loading="couponVerifying" @click="applyCoupon">
+                    {{ couponInfo ? '重新验证' : '校验' }}
+                  </el-button>
+                </template>
+              </el-input>
+              <el-button
+                v-if="couponInfo"
+                link
+                type="primary"
+                @click="clearCoupon"
+              >
+                移除
+              </el-button>
+            </div>
+            <p v-if="couponError" class="coupon-error">{{ couponError }}</p>
+          </div>
+
           <!-- 当前余额 - 仅在余额大于等于0.01时显示 -->
-          <div class="balance-info" v-if="userBalance >= 0.01 && selectedPackage">
+          <div class="balance-info" v-if="selectedPackage">
             <el-alert
               :title="`当前余额: ¥${userBalance.toFixed(2)}`"
-              :type="userBalance >= selectedPackage.price ? 'success' : 'warning'"
+              :type="userBalance >= finalPriceDisplay ? 'success' : 'warning'"
               :closable="false"
               show-icon
             >
               <template #default>
-                <span v-if="userBalance >= selectedPackage.price">
-                  余额充足，可以直接购买
-                </span>
-                <span v-else>
-                  余额不足，购买套餐还需支付 ¥{{ (selectedPackage.price - userBalance).toFixed(2) }}
-                </span>
+                <div class="balance-message">
+                  <div class="balance-tip">
+                    <template v-if="finalPriceDisplay <= 0">
+                      优惠后无需支付，系统将直接发放套餐
+                    </template>
+                    <template v-else-if="userBalance >= finalPriceDisplay">
+                      <span v-if="discountAmountDisplay > 0">
+                        优惠 ¥{{ discountAmountDisplay.toFixed(2) }}，应付 ¥{{ finalPriceDisplay.toFixed(2) }}，余额充足，可以直接购买
+                      </span>
+                      <span v-else>
+                        余额充足，可以直接购买
+                      </span>
+                    </template>
+                    <template v-else>
+                      <span v-if="discountAmountDisplay > 0">
+                        优惠 ¥{{ discountAmountDisplay.toFixed(2) }}，应付 ¥{{ finalPriceDisplay.toFixed(2) }}，余额不足，还需支付 ¥{{ (finalPriceDisplay - userBalance).toFixed(2) }}
+                      </span>
+                      <span v-else>
+                        余额不足，还需支付 ¥{{ (finalPriceDisplay - userBalance).toFixed(2) }}
+                      </span>
+                    </template>
+                  </div>
+                </div>
               </template>
             </el-alert>
           </div>
@@ -239,10 +292,53 @@ const purchaseForm = reactive({
   purchase_type: 'balance'
 });
 
+const couponCode = ref('');
+const couponInfo = ref<any>(null);
+const couponError = ref('');
+const couponVerifying = ref(false);
+
+const resetCouponState = () => {
+  couponCode.value = '';
+  couponInfo.value = null;
+  couponError.value = '';
+};
+
+const finalPrice = computed(() => {
+  if (!selectedPackage.value) return 0;
+  if (couponInfo.value?.final_price !== undefined) {
+    return Number(couponInfo.value.final_price);
+  }
+  return Number(selectedPackage.value.price);
+});
+
+const discountAmountValue = computed(() => {
+  if (!couponInfo.value) return 0;
+  return Number(couponInfo.value.discount_amount || 0);
+});
+
+const finalPriceDisplay = computed(() => Number(finalPrice.value || 0));
+const discountAmountDisplay = computed(() => Number(discountAmountValue.value || 0));
+
 // 获取等级类型
 const getLevelType = (level: number) => {
   const types = ['', 'success', 'primary', 'warning', 'danger', 'info'];
   return types[level] || '';
+};
+
+const syncPurchaseType = () => {
+  if (!selectedPackage.value) {
+    purchaseForm.purchase_type = 'balance';
+    return;
+  }
+  if (finalPriceDisplay.value <= 0) {
+    purchaseForm.purchase_type = 'balance';
+    return;
+  }
+  if (userBalance.value >= finalPriceDisplay.value) {
+    purchaseForm.purchase_type = 'balance';
+  } else if (purchaseForm.purchase_type === 'balance') {
+    purchaseForm.purchase_type = 'alipay';
+  }
 };
 
 // 加载用户余额
@@ -252,7 +348,9 @@ const loadUserBalance = async () => {
     if (response.code === 0) {
       // 确保余额是数字类型
       userBalance.value = Number(response.data.money) || 0;
-      console.log('用户余额:', userBalance.value, '类型:', typeof userBalance.value);
+      if (showPurchaseDialogVisible.value) {
+        syncPurchaseType();
+      }
     }
   } catch (error) {
     console.error('加载用户余额失败:', error);
@@ -289,14 +387,53 @@ const loadPackages = async () => {
 const showPurchaseDialog = async (pkg: any) => {
   selectedPackage.value = pkg;
   purchaseForm.package_id = pkg.id;
+  resetCouponState();
 
   // 先加载最新余额
   await loadUserBalance();
 
   // 根据最新余额设置支付方式(余额需>=0.01才认为有余额)
   purchaseForm.purchase_type = (userBalance.value >= 0.01 && userBalance.value >= pkg.price) ? 'balance' : 'alipay';
+  syncPurchaseType();
 
   showPurchaseDialogVisible.value = true;
+};
+
+const applyCoupon = async () => {
+  if (!purchaseForm.package_id) {
+    couponError.value = '请先选择套餐';
+    return;
+  }
+  if (!couponCode.value.trim()) {
+    couponError.value = '请输入优惠码';
+    return;
+  }
+  couponVerifying.value = true;
+  try {
+    const response = await http.post('/packages/coupon/preview', {
+      package_id: purchaseForm.package_id,
+      coupon_code: couponCode.value.trim()
+    });
+    if (response.code === 0) {
+      couponInfo.value = response.data;
+      couponError.value = '';
+      ElMessage.success('优惠码已应用');
+      syncPurchaseType();
+    } else {
+      couponInfo.value = null;
+      couponError.value = response.message || '优惠码无效';
+    }
+  } catch (error: any) {
+    couponInfo.value = null;
+    couponError.value = error.response?.data?.message || '优惠码校验失败';
+  } finally {
+    couponVerifying.value = false;
+  }
+};
+
+const clearCoupon = () => {
+  resetCouponState();
+  syncPurchaseType();
 };
 
 // 确认购买
@@ -320,6 +457,10 @@ const confirmPurchase = async () => {
       package_id: purchaseForm.package_id
     };
 
+    if (couponCode.value.trim()) {
+      requestData.coupon_code = couponCode.value.trim();
+    }
+
     // 根据 purchase_type 判断支付类型
     if (purchaseForm.purchase_type === 'balance') {
       // 余额支付
@@ -339,6 +480,7 @@ const confirmPurchase = async () => {
         // 余额支付，直接成功
         ElMessage.success('套餐购买成功！');
         showPurchaseDialogVisible.value = false;
+        resetCouponState();
 
         // 刷新余额
         loadUserBalance();
@@ -355,6 +497,7 @@ const confirmPurchase = async () => {
           ElMessage.success('订单创建成功，正在跳转到支付页面...');
         }
         showPurchaseDialogVisible.value = false;
+        resetCouponState();
 
         // 跳转到支付页面
         window.open(data.payment_url, '_blank');
@@ -551,6 +694,10 @@ onMounted(() => {
   border-radius: 8px;
 }
 
+.final-price-row .price-text {
+  color: #67c23a;
+}
+
 .purchase-package-info h3 {
   margin: 0 0 12px 0;
   color: #303133;
@@ -574,6 +721,49 @@ onMounted(() => {
   color: #f56c6c;
 }
 
+.coupon-section {
+  margin-bottom: 20px;
+}
+
+.coupon-input-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.coupon-label {
+  color: #606266;
+  font-weight: 500;
+  min-width: 56px;
+}
+
+.coupon-input {
+  max-width: 220px;
+}
+
+.coupon-error {
+  color: #f56c6c;
+  font-size: 13px;
+  margin-top: 8px;
+  margin-left: 56px;
+}
+
+.balance-message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.balance-text {
+  font-weight: 600;
+  color: #303133;
+}
+
+.balance-tip {
+  color: #606266;
+  font-size: 13px;
+}
+
 .balance-info {
   margin-bottom: 20px;
 }
@@ -592,7 +782,8 @@ onMounted(() => {
 }
 .payment-method .el-radio-group {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: flex-start;
   text-align: left;

@@ -16,6 +16,7 @@ import {
 } from "../utils/crypto";
 import { createSystemConfigManager } from "../utils/systemConfig";
 import { getChanges, toRunResult, ensureNumber, ensureString, ensureDate, getLastRowId } from "../utils/d1";
+import { fixMoneyPrecision } from "../utils/money";
 
 interface AdminAuthResult {
   success: boolean;
@@ -243,6 +244,9 @@ interface PurchaseRecordRow {
   package_id: number | null;
   price: number | string;
   package_price: number | string | null;
+  discount_amount?: number | string | null;
+  coupon_code?: string | null;
+  coupon_id?: number | string | null;
   purchase_type: string | null;
   trade_no: string | null;
   status: number | null;
@@ -254,6 +258,35 @@ interface PurchaseRecordRow {
   package_name: string | null;
   traffic_quota: number | string | null;
   validity_days: number | string | null;
+}
+
+interface CouponRow {
+  id: number;
+  name: string;
+  code: string;
+  discount_type: string;
+  discount_value: number | string;
+  start_at: number | string;
+  end_at: number | string;
+  max_usage?: number | string | null;
+  per_user_limit?: number | string | null;
+  total_used?: number | string | null;
+  status: number | string | null;
+  description?: string | null;
+}
+
+interface CouponRequestBody {
+  name: string;
+  code?: string;
+  discount_type: "amount" | "percentage";
+  discount_value: number;
+  start_at: number | string;
+  end_at: number | string;
+  max_usage?: number | null;
+  per_user_limit?: number | null;
+  package_ids?: number[];
+  status?: number;
+  description?: string;
 }
 
 interface PackageStatsRow {
@@ -357,6 +390,74 @@ export class AdminAPI {
       .bind(id)
       .first<SharedIdRow>();
     return this.mapSharedIdRow(row);
+  }
+
+  private normalizeTimestampValue(value: unknown, field: string): number {
+    if (value === undefined || value === null) {
+      throw new Error(`${field} 不能为空`);
+    }
+    let timestamp = Number(value);
+    if (!Number.isFinite(timestamp)) {
+      throw new Error(`${field} 格式不正确`);
+    }
+    if (timestamp > 1e12) {
+      timestamp = Math.floor(timestamp / 1000);
+    } else {
+      timestamp = Math.floor(timestamp);
+    }
+    return timestamp;
+  }
+
+  private sanitizePackageIds(packageIds?: unknown): number[] {
+    if (!Array.isArray(packageIds)) {
+      return [];
+    }
+    const normalized = packageIds
+      .map(id => Number(id))
+      .filter(id => Number.isFinite(id) && id > 0);
+    return Array.from(new Set(normalized));
+  }
+
+  private async replaceCouponPackages(couponId: number, packageIds: number[]) {
+    await this.db.db
+      .prepare("DELETE FROM coupon_packages WHERE coupon_id = ?")
+      .bind(couponId)
+      .run();
+
+    if (packageIds.length === 0) {
+      return;
+    }
+
+    for (const pkgId of packageIds) {
+      await this.db.db
+        .prepare(
+          `
+          INSERT OR IGNORE INTO coupon_packages (coupon_id, package_id)
+          VALUES (?, ?)
+        `
+        )
+        .bind(couponId, pkgId)
+        .run();
+    }
+  }
+
+  private generateCouponCode(): string {
+    return generateRandomString(10).toUpperCase();
+  }
+
+  private async ensureCouponCodeUnique(code: string, excludeId?: number) {
+    const row = await this.db.db
+      .prepare(
+        excludeId
+          ? "SELECT id FROM coupons WHERE code = ? AND id != ?"
+          : "SELECT id FROM coupons WHERE code = ?"
+      )
+      .bind(code, ...(excludeId ? [excludeId] : []))
+      .first<{ id: number }>();
+
+    if (row) {
+      throw new Error("优惠码已存在，请重新输入");
+    }
   }
 
   // ... 其他现有方法保持不变 ...
@@ -4777,6 +4878,453 @@ export class AdminAPI {
     }
   }
 
+  // ===== 优惠券管理 =====
+
+  async getCoupons(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10));
+      const limitParam = Number.parseInt(url.searchParams.get("limit") ?? "20", 10);
+      const limit = Math.min(Math.max(limitParam, 1), 100);
+      const status = url.searchParams.get("status");
+      const keyword = url.searchParams.get("keyword") || url.searchParams.get("search") || "";
+      const offset = (page - 1) * limit;
+
+      let whereClause = "WHERE 1=1";
+      const params: Array<string | number> = [];
+
+      if (status !== null && status !== "") {
+        whereClause += " AND c.status = ?";
+        params.push(Number(status));
+      }
+
+      if (keyword) {
+        whereClause += " AND (c.name LIKE ? OR c.code LIKE ?)";
+        params.push(`%${keyword}%`, `%${keyword}%`);
+      }
+
+      const totalRow = await this.db.db
+        .prepare(`SELECT COUNT(*) as total FROM coupons c ${whereClause}`)
+        .bind(...params)
+        .first<{ total: number | string | null }>();
+
+      const total = ensureNumber(totalRow?.total ?? 0);
+
+      const listResult = await this.db.db
+        .prepare(
+          `
+          SELECT
+            c.*,
+            (
+              SELECT COUNT(*)
+              FROM coupon_packages cp
+              WHERE cp.coupon_id = c.id
+            ) as package_count
+          FROM coupons c
+          ${whereClause}
+          ORDER BY c.id DESC
+          LIMIT ? OFFSET ?
+        `
+        )
+        .bind(...params, limit, offset)
+        .all<(CouponRow & { package_count: number | string | null })>();
+
+      const coupons = (listResult.results ?? []).map(row => {
+        const discountValue = ensureNumber(row.discount_value);
+        const maxUsage =
+          row.max_usage !== undefined && row.max_usage !== null
+            ? ensureNumber(row.max_usage)
+            : null;
+        const perUserLimit =
+          row.per_user_limit !== undefined && row.per_user_limit !== null
+            ? ensureNumber(row.per_user_limit)
+            : null;
+        const totalUsed = ensureNumber(row.total_used ?? 0);
+        return {
+          ...row,
+          discount_value: discountValue,
+          max_usage: maxUsage,
+          per_user_limit: perUserLimit,
+          total_used: totalUsed,
+          remaining_usage:
+            maxUsage === null ? null : Math.max(maxUsage - totalUsed, 0),
+          package_count: ensureNumber((row as any).package_count ?? 0),
+        };
+      });
+
+      return successResponse({
+        coupons,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  async createCoupon(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const body = (await request.json()) as CouponRequestBody;
+      const name = ensureString(body.name).trim();
+      if (!name) {
+        return errorResponse("请输入优惠券名称", 400);
+      }
+
+      const discountType = body.discount_type === "percentage" ? "percentage" : "amount";
+      let discountValue = Number(body.discount_value);
+      if (!Number.isFinite(discountValue) || discountValue <= 0) {
+        return errorResponse("优惠值必须大于0", 400);
+      }
+
+      if (discountType === "amount") {
+        discountValue = fixMoneyPrecision(discountValue);
+      } else if (discountValue > 100) {
+        return errorResponse("折扣比例不能大于100%", 400);
+      }
+
+      const startAt = this.normalizeTimestampValue(body.start_at, "开始时间");
+      const endAt = this.normalizeTimestampValue(body.end_at, "结束时间");
+      if (endAt <= startAt) {
+        return errorResponse("结束时间必须大于开始时间", 400);
+      }
+
+      const codeInput = ensureString(body.code ?? "").trim();
+      const code = (codeInput || this.generateCouponCode()).toUpperCase();
+      await this.ensureCouponCodeUnique(code);
+
+      const normalizeLimit = (value: unknown, field: string) => {
+        if (value === undefined || value === null || value === "") {
+          return null;
+        }
+        const parsed = Math.floor(Number(value));
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          throw new Error(`${field} 必须为正整数`);
+        }
+        return parsed;
+      };
+
+      const maxUsage = normalizeLimit(body.max_usage, "最大使用次数");
+      const perUserLimit = normalizeLimit(body.per_user_limit, "每用户使用次数");
+      const status = body.status !== undefined ? Number(body.status) : 1;
+      const description = body.description ? ensureString(body.description) : null;
+      const packageIds = this.sanitizePackageIds(body.package_ids);
+
+      const insertResult = toRunResult(
+        await this.db.db
+          .prepare(
+            `
+            INSERT INTO coupons
+            (name, code, discount_type, discount_value, start_at, end_at, max_usage, per_user_limit, status, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+          )
+          .bind(
+            name,
+            code,
+            discountType,
+            discountValue,
+            startAt,
+            endAt,
+            maxUsage,
+            perUserLimit,
+            status,
+            description
+          )
+          .run()
+      );
+
+      if (getChanges(insertResult) === 0) {
+        return errorResponse("创建优惠券失败", 500);
+      }
+
+      const couponId = ensureNumber(insertResult.meta?.last_row_id ?? 0);
+      await this.replaceCouponPackages(couponId, packageIds);
+
+      return successResponse({
+        id: couponId,
+        name,
+        code,
+        discount_type: discountType,
+        discount_value: discountValue,
+        start_at: startAt,
+        end_at: endAt,
+        max_usage: maxUsage,
+        per_user_limit: perUserLimit,
+        status,
+        description,
+        package_ids: packageIds,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return errorResponse(err.message, 400);
+    }
+  }
+
+  async getCouponDetail(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const couponIdStr = url.pathname.split("/").pop();
+      const couponId = couponIdStr ? Number(couponIdStr) : NaN;
+      if (!Number.isFinite(couponId)) {
+        return errorResponse("无效的优惠券ID", 400);
+      }
+
+      const coupon = await this.db.db
+        .prepare("SELECT * FROM coupons WHERE id = ?")
+        .bind(couponId)
+        .first<CouponRow>();
+
+      if (!coupon) {
+        return errorResponse("优惠券不存在", 404);
+      }
+
+      const packagesResult = await this.db.db
+        .prepare("SELECT package_id FROM coupon_packages WHERE coupon_id = ?")
+        .bind(couponId)
+        .all<{ package_id: number | string }>();
+
+      const packageIds =
+        packagesResult.results?.map(item => ensureNumber(item.package_id)) ?? [];
+      const maxUsage =
+        coupon.max_usage !== null && coupon.max_usage !== undefined
+          ? ensureNumber(coupon.max_usage)
+          : null;
+      const totalUsed = ensureNumber(coupon.total_used ?? 0);
+
+      return successResponse({
+        ...coupon,
+        discount_value: ensureNumber(coupon.discount_value),
+        max_usage: maxUsage,
+        per_user_limit:
+          coupon.per_user_limit !== null && coupon.per_user_limit !== undefined
+            ? ensureNumber(coupon.per_user_limit)
+            : null,
+        total_used: totalUsed,
+        remaining_usage:
+          maxUsage === null ? null : Math.max(maxUsage - totalUsed, 0),
+        package_ids: packageIds,
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  async updateCoupon(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const couponIdStr = url.pathname.split("/").pop();
+      const couponId = couponIdStr ? Number(couponIdStr) : NaN;
+      if (!Number.isFinite(couponId)) {
+        return errorResponse("无效的优惠券ID", 400);
+      }
+
+      const existing = await this.db.db
+        .prepare("SELECT * FROM coupons WHERE id = ?")
+        .bind(couponId)
+        .first<CouponRow>();
+
+      if (!existing) {
+        return errorResponse("优惠券不存在", 404);
+      }
+
+      const body = (await request.json()) as Partial<CouponRequestBody>;
+
+      const updateFields: string[] = [];
+      const updateValues: unknown[] = [];
+
+      if (body.name !== undefined) {
+        const newName = ensureString(body.name).trim();
+        if (!newName) {
+          return errorResponse("优惠券名称不能为空", 400);
+        }
+        updateFields.push("name = ?");
+        updateValues.push(newName);
+      }
+
+      if (body.code !== undefined) {
+        const newCode = ensureString(body.code).trim().toUpperCase();
+        if (!newCode) {
+          return errorResponse("优惠码不能为空", 400);
+        }
+        await this.ensureCouponCodeUnique(newCode, couponId);
+        updateFields.push("code = ?");
+        updateValues.push(newCode);
+      }
+
+      if (body.discount_type !== undefined) {
+        const newType = body.discount_type === "percentage" ? "percentage" : "amount";
+        updateFields.push("discount_type = ?");
+        updateValues.push(newType);
+      }
+
+      if (body.discount_value !== undefined) {
+        let newValue = Number(body.discount_value);
+        if (!Number.isFinite(newValue) || newValue <= 0) {
+          return errorResponse("优惠值必须大于0", 400);
+        }
+        const type =
+          body.discount_type ??
+          (existing.discount_type as "amount" | "percentage");
+
+        if (type === "amount") {
+          newValue = fixMoneyPrecision(newValue);
+        } else if (newValue > 100) {
+          return errorResponse("折扣比例不能大于100%", 400);
+        }
+
+        updateFields.push("discount_value = ?");
+        updateValues.push(newValue);
+      }
+
+      if (body.start_at !== undefined) {
+        const startAt = this.normalizeTimestampValue(body.start_at, "开始时间");
+        updateFields.push("start_at = ?");
+        updateValues.push(startAt);
+      }
+
+      if (body.end_at !== undefined) {
+        const endAt = this.normalizeTimestampValue(body.end_at, "结束时间");
+        updateFields.push("end_at = ?");
+        updateValues.push(endAt);
+      }
+
+      if (body.max_usage !== undefined) {
+        const rawMaxUsage = body.max_usage as number | string | null | undefined;
+        const value =
+          rawMaxUsage === null ||
+          rawMaxUsage === undefined ||
+          (typeof rawMaxUsage === "string" && rawMaxUsage.trim() === "")
+            ? null
+            : Math.floor(Number(rawMaxUsage));
+        if (value !== null && (!Number.isFinite(value) || value <= 0)) {
+          return errorResponse("最大使用次数必须为正整数", 400);
+        }
+        updateFields.push("max_usage = ?");
+        updateValues.push(value);
+      }
+
+      if (body.per_user_limit !== undefined) {
+        const rawPerUserLimit = body.per_user_limit as number | string | null | undefined;
+        const value =
+          rawPerUserLimit === null ||
+          rawPerUserLimit === undefined ||
+          (typeof rawPerUserLimit === "string" && rawPerUserLimit.trim() === "")
+            ? null
+            : Math.floor(Number(rawPerUserLimit));
+        if (value !== null && (!Number.isFinite(value) || value <= 0)) {
+          return errorResponse("每用户使用次数必须为正整数", 400);
+        }
+        updateFields.push("per_user_limit = ?");
+        updateValues.push(value);
+      }
+
+      if (body.status !== undefined) {
+        updateFields.push("status = ?");
+        updateValues.push(Number(body.status));
+      }
+
+      if (body.description !== undefined) {
+        const desc = body.description ? ensureString(body.description) : null;
+        updateFields.push("description = ?");
+        updateValues.push(desc);
+      }
+
+      if (updateFields.length === 0 && body.package_ids === undefined) {
+        return errorResponse("没有需要更新的内容", 400);
+      }
+
+      if (updateFields.length > 0) {
+        updateFields.push("updated_at = datetime('now', '+8 hours')");
+        updateValues.push(couponId);
+
+        const updateResult = toRunResult(
+          await this.db.db
+            .prepare(
+              `
+              UPDATE coupons
+              SET ${updateFields.join(", ")}
+              WHERE id = ?
+            `
+            )
+            .bind(...updateValues)
+            .run()
+        );
+
+        if (getChanges(updateResult) === 0) {
+          return errorResponse("更新优惠券失败", 500);
+        }
+      }
+
+      if (body.package_ids !== undefined) {
+        const packageIds = this.sanitizePackageIds(body.package_ids);
+        await this.replaceCouponPackages(couponId, packageIds);
+      }
+
+      return successResponse({ id: couponId, message: "优惠券更新成功" });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return errorResponse(err.message, 400);
+    }
+  }
+
+  async deleteCoupon(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const couponIdStr = url.pathname.split("/").pop();
+      const couponId = couponIdStr ? Number(couponIdStr) : NaN;
+      if (!Number.isFinite(couponId)) {
+        return errorResponse("无效的优惠券ID", 400);
+      }
+
+      const deleteResult = toRunResult(
+        await this.db.db
+          .prepare("DELETE FROM coupons WHERE id = ?")
+          .bind(couponId)
+          .run()
+      );
+
+      if (getChanges(deleteResult) === 0) {
+        return errorResponse("优惠券不存在", 404);
+      }
+
+      return successResponse({ id: couponId, message: "优惠券已删除" });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return errorResponse(err.message, 500);
+    }
+  }
+
   /**
    * 获取充值记录
    * GET /api/admin/recharge-records
@@ -4940,6 +5488,8 @@ export class AdminAPI {
             ppr.package_id,
             ppr.price,
             ppr.package_price,
+            ppr.discount_amount,
+            ppr.coupon_code,
             ppr.purchase_type,
             ppr.trade_no,
             ppr.status,
@@ -4987,11 +5537,17 @@ export class AdminAPI {
         const packagePriceValue = packagePriceRaw !== undefined && packagePriceRaw !== null
           ? (typeof packagePriceRaw === 'string' ? Number(packagePriceRaw) : ensureNumber(packagePriceRaw))
           : null;
+        const discountAmount = record.discount_amount != null ? ensureNumber(record.discount_amount) : 0;
+        const finalPrice = packagePriceValue !== null
+          ? fixMoneyPrecision(Math.max(packagePriceValue - discountAmount, 0))
+          : priceValue;
 
         return {
           ...record,
           price: priceValue,
           package_price: packagePriceValue,
+          discount_amount: discountAmount,
+          final_price: finalPrice,
           status: statusValue,
           status_text: statusMap[statusValue] ?? '未知状态',
           purchase_type_text: normalizePurchaseType(record.purchase_type)

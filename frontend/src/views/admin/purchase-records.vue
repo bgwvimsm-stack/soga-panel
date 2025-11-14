@@ -65,9 +65,21 @@
                 {{ getMixedPaymentDisplay(row) }}
               </span>
               <span v-else>
-                ¥{{ formatAmountValue(Number(row.price || 0)) }}
+                ¥{{ formatAmountValue(getFinalPriceValue(row)) }}
               </span>
             </span>
+          </template>
+
+          <template #discount_amount="{ row }">
+            <span v-if="getDiscountAmountValue(row) > 0" class="discount-text">
+              ¥{{ formatAmountValue(getDiscountAmountValue(row)) }}
+            </span>
+            <span v-else>-</span>
+          </template>
+
+          <template #coupon_code="{ row }">
+            <span v-if="row.coupon_code" class="coupon-tag">{{ row.coupon_code }}</span>
+            <span v-else>-</span>
           </template>
 
           <!-- 流量配额 -->
@@ -154,10 +166,12 @@ const getTableHeight = computed(() => {
 const columns = [
   { field: 'id', title: 'ID', width: 80, visible: true },
   { field: 'user_id', title: '用户ID', width: 100, visible: true },
-  { field: 'email', title: '用户邮箱', minWidth: 180, visible: true },
+  { field: 'email', title: '用户邮箱', minWidth: 180, visible: false },
   { field: 'package_id', title: '套餐ID', width: 100, visible: true },
   { field: 'package_name', title: '套餐名称', minWidth: 150, visible: true },
   { field: 'price', title: '购买金额', width: 180, visible: true, slots: { default: 'price' } },
+  { field: 'discount_amount', title: '优惠金额', width: 120, visible: true, slots: { default: 'discount_amount' } },
+  { field: 'coupon_code', title: '优惠码', width: 160, visible: true, slots: { default: 'coupon_code' } },
   { field: 'traffic_quota', title: '流量配额', width: 100, visible: true, slots: { default: 'traffic_quota' } },
   { field: 'validity_days', title: '有效期', width: 100, visible: true, slots: { default: 'validity_days' } },
   { field: 'purchase_type', title: '支付方式', width: 120, visible: true, slots: { default: 'purchase_type' } },
@@ -193,10 +207,43 @@ const getPurchaseTypeText = (row: any) => {
   return getMixedPaymentMethodLabel(type) || type;
 };
 
+const getDiscountAmountValue = (row: any) => {
+  const raw = Number(row?.discount_amount ?? 0);
+  return Number.isFinite(raw) ? raw : 0;
+};
+
+const getOriginalPriceValue = (row: any) => {
+  if (row?.package_price != null && Number.isFinite(Number(row.package_price))) {
+    return Number(row.package_price);
+  }
+  if (row?.final_price != null && Number.isFinite(Number(row.final_price))) {
+    const discount = getDiscountAmountValue(row);
+    return Number(row.final_price) + discount;
+  }
+  const base = Number(row?.price || 0);
+  const discount = getDiscountAmountValue(row);
+  return discount > 0 ? base + discount : base;
+};
+
+const getFinalPriceValue = (row: any) => {
+  if (row?.final_price != null && Number.isFinite(Number(row.final_price))) {
+    return Number(row.final_price);
+  }
+  const original = getOriginalPriceValue(row);
+  const discount = getDiscountAmountValue(row);
+  if (discount > 0) {
+    return Math.max(original - discount, 0);
+  }
+  if (row?.price != null && Number.isFinite(Number(row.price))) {
+    return Number(row.price);
+  }
+  return original;
+};
+
 const isMixedPaymentRow = (row: any) => {
   if (!row) return false;
   const type = String(row.purchase_type || '').toLowerCase();
-  const totalPrice = Number(row.package_price != null ? row.package_price : row.total_price != null ? row.total_price : row.price || 0);
+  const totalPrice = getFinalPriceValue(row);
   const paidOnline = Number(row.price || 0);
   const diff = Number((totalPrice - paidOnline).toFixed(2));
   return type === 'smart_topup' || type.startsWith('balance_') || diff > 0;
@@ -219,10 +266,8 @@ const getMixedPaymentMethodLabel = (type: string) => {
 const getMixedPaymentDisplay = (row: any) => {
   if (!row) return '';
   const paymentType = row?.purchase_type ? String(row.purchase_type) : '';
-  const totalPriceRaw = row?.package_price != null ? Number(row.package_price) : Number(row?.total_price ?? row?.price ?? 0);
-  const paidOnlineRaw = Number(row?.price || 0);
-  const totalPrice = Number.isFinite(totalPriceRaw) ? totalPriceRaw : 0;
-  const paidOnline = Number.isFinite(paidOnlineRaw) ? paidOnlineRaw : 0;
+  const totalPrice = getFinalPriceValue(row);
+  const paidOnline = Number(row?.price || 0);
   const balancePart = Math.max(Number((totalPrice - paidOnline).toFixed(2)), 0);
   const methodLabel = getMixedPaymentMethodLabel(paymentType);
   return `余额 ${formatAmountValue(balancePart)} + ${methodLabel} ${formatAmountValue(paidOnline)}`;
@@ -308,14 +353,31 @@ onMounted(() => {
     }
   }
 
-  .amount-chip {
+.amount-chip {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    justify-content: center;
+    text-align: center;
     font-weight: 600;
     font-size: 14px;
     color: #303133;
     white-space: nowrap;
+  }
+
+  .discount-text {
+    color: #67c23a;
+    font-weight: 600;
+  }
+
+  .coupon-tag {
+    display: inline-flex;
+    padding: 2px 10px;
+    border-radius: 12px;
+    background: rgba(103, 194, 58, 0.1);
+    color: #67c23a;
+    border: 1px solid rgba(103, 194, 58, 0.4);
+    font-size: 12px;
+    font-family: 'Monaco', 'Menlo', monospace;
   }
 
   .payment-chip {
