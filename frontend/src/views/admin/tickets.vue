@@ -2,7 +2,7 @@
   <div class="admin-tickets-page">
     <div class="page-header">
       <div>
-        <h1>🎫 工单管理</h1>
+        <h1>工单管理</h1>
         <p class="subtitle">集中查看所有用户工单，并由管理员以 Markdown 形式回复。</p>
       </div>
       <div class="page-actions">

@@ -2,7 +2,7 @@
   <div class="tickets-page">
     <div class="page-header">
       <div>
-        <h1>🧾 工单中心</h1>
+        <h1>工单中心</h1>
         <p class="subtitle">有问题请随时提交工单，管理员会以 Markdown 形式回复。</p>
       </div>
       <div class="page-actions">
