@@ -47,6 +47,10 @@
         </el-button>
       </div>
 
+      <div v-if="turnstileEnabled" class="turnstile-container">
+        <div ref="turnstileEl" class="cf-turnstile-placeholder"></div>
+      </div>
+
       <el-button
         type="primary"
         size="large"
@@ -247,6 +251,8 @@ const appTitle = computed(() => siteStore.siteName || "Soga Panel");
 const loading = ref(false);
 const rememberLogin = ref(false);
 const forgotPasswordVisible = ref(false);
+const turnstileEl = ref<HTMLElement | null>(null);
+const turnstileToken = ref("");
 
 const loginForm = reactive<LoginRequest>({
   email: "",
@@ -265,11 +271,15 @@ const loginRules: FormRules = {
 };
 
 const googleClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || "").toString();
+const turnstileSiteKey = (import.meta.env.VITE_TURNSTILE_SITE_KEY || "").toString();
 const githubClientId = (import.meta.env.VITE_GITHUB_CLIENT_ID || "").toString();
 const googleLoginEnabled = computed(() => Boolean(googleClientId.trim()));
 const googleLoading = ref(false);
 const githubLoginEnabled = computed(() => Boolean(githubClientId.trim()));
 const githubLoading = ref(false);
+const turnstileEnabled = computed(() =>
+  Boolean((import.meta.env.VITE_TURNSTILE_SITE_KEY || "").toString().trim())
+);
 const oauthTermsRef = ref<InstanceType<typeof TermsAgreement>>();
 const pendingOAuthToken = ref("");
 const pendingOAuthProvider = ref("第三方");
@@ -597,6 +607,11 @@ const handleLogin = async () => {
   const valid = await loginFormRef.value.validate().catch(() => false);
   if (!valid) return;
 
+  if (turnstileEnabled.value && !turnstileToken.value) {
+    ElMessage.warning("请先完成人机验证");
+    return;
+  }
+
   loading.value = true;
 
   try {
@@ -605,6 +620,7 @@ const handleLogin = async () => {
       email: loginForm.email,
       password: loginForm.password,
       remember: rememberLogin.value,
+      turnstileToken: turnstileToken.value || undefined,
       twoFactorTrustToken: storedTrustToken || undefined,
     });
 
@@ -731,6 +747,47 @@ const loadAuthConfig = async () => {
 onMounted(() => {
   loadAuthConfig();
   processGithubCallback();
+  if (turnstileEnabled.value && typeof window !== "undefined") {
+    const scriptId = "cf-turnstile-script";
+    const existingScript = document.getElementById(scriptId);
+    const renderTurnstile = () => {
+      if (!window.turnstile || !turnstileEl.value) return;
+      window.turnstile.render(turnstileEl.value, {
+        sitekey: turnstileSiteKey,
+        callback(token: string) {
+          turnstileToken.value = token;
+        },
+        "error-callback"() {
+          turnstileToken.value = "";
+        },
+        "expired-callback"() {
+          turnstileToken.value = "";
+        }
+      });
+    };
+
+    if (window.turnstile) {
+      renderTurnstile();
+    } else if (!existingScript) {
+      const script = document.createElement("script");
+      script.id = scriptId;
+      script.src =
+        "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      script.onload = () => {
+        renderTurnstile();
+      };
+      script.onerror = () => {
+        console.error("Turnstile 脚本加载失败");
+      };
+      document.head.appendChild(script);
+    } else {
+      existingScript.addEventListener("load", () => renderTurnstile(), {
+        once: true
+      });
+    }
+  }
 });
 
 const copyGeneratedPassword = async () => {
@@ -895,6 +952,16 @@ const copyGeneratedPassword = async () => {
   display: flex;
   justify-content: center;
   gap: 22px;
+}
+
+.turnstile-container {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.cf-turnstile-placeholder {
+  min-height: 65px;
 }
 
 .third-icon {

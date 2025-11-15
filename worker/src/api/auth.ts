@@ -1519,6 +1519,12 @@ export class AuthAPI {
         typeof body.twoFactorTrustToken === "string"
           ? body.twoFactorTrustToken.trim()
           : "";
+      const turnstileToken =
+        typeof body.turnstileToken === "string"
+          ? body.turnstileToken.trim()
+          : typeof body["cf-turnstile-response"] === "string"
+          ? body["cf-turnstile-response"].trim()
+          : "";
 
       if (!email || !password) {
         return errorResponse("请填写邮箱和密码", 400);
@@ -1530,6 +1536,58 @@ export class AuthAPI {
                       request.headers.get("X-Real-IP") || 
                       "unknown";
       const userAgent = request.headers.get("User-Agent") || "";
+
+      // Turnstile 人机验证（如已配置）
+      const turnstileSecret =
+        (this.env.TURNSTILE_SECRET_KEY as string | undefined) || "";
+      const turnstileEnabled =
+        typeof turnstileSecret === "string" && turnstileSecret.trim().length > 0;
+
+      if (turnstileEnabled) {
+        if (!turnstileToken) {
+          return errorResponse("请完成人机验证后再登录", 400);
+        }
+        try {
+          const formData = new FormData();
+          formData.append("secret", turnstileSecret);
+          formData.append("response", turnstileToken);
+          if (clientIP && clientIP !== "unknown") {
+            formData.append("remoteip", clientIP);
+          }
+
+          const resp = await fetch(
+            "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+            {
+              method: "POST",
+              body: formData,
+            }
+          );
+
+          if (!resp.ok) {
+            this.logger.error("Turnstile 验证请求失败", {
+              status: resp.status,
+              statusText: resp.statusText,
+            });
+            return errorResponse("人机验证失败，请稍后重试", 400);
+          }
+
+          const verifyResult = (await resp.json()) as {
+            success?: boolean;
+            "error-codes"?: string[];
+          };
+
+          if (!verifyResult.success) {
+            this.logger.warn("Turnstile 验证未通过", {
+              errorCodes: verifyResult["error-codes"] || [],
+              clientIP,
+            });
+            return errorResponse("人机验证未通过，请重试", 400);
+          }
+        } catch (error) {
+          this.logger.error("Turnstile 验证异常", error);
+          return errorResponse("人机验证异常，请稍后重试", 400);
+        }
+      }
 
       // 查找用户
       const user = await this.db.db
