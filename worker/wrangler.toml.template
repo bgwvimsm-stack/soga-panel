@@ -38,6 +38,9 @@ GOOGLE_CLIENT_SECRET = "ABCDEFG123456"
 GITHUB_CLIENT_ID = "ABCDEFG123456"
 GITHUB_CLIENT_SECRET = "ABCDEFG123456"
 
+# Cloudflare Turnstile
+# TURNSTILE_SECRET_KEY = "0x4AAAAAACA-AABBCC"
+
 # ------------------------------------------------------------------------
 # 支付系统配置
 # 支付提供方（当前支持 epay）

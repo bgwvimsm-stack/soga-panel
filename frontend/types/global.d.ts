@@ -28,6 +28,18 @@ declare global {
   interface Window {
     // Global vue app instance
     __APP__: App<Element>;
+    turnstile?: {
+      render: (
+        container: HTMLElement,
+        options: {
+          sitekey: string;
+          callback?: (token: string) => void;
+          "error-callback"?: () => void;
+          "expired-callback"?: () => void;
+        }
+      ) => unknown;
+      reset?: (widgetId?: string) => void;
+    };
     webkitCancelAnimationFrame: (handle: number) => void;
     mozCancelAnimationFrame: (handle: number) => void;
     oCancelAnimationFrame: (handle: number) => void;
@@ -71,6 +83,7 @@ declare global {
     VITE_HIDE_HOME: string;
     VITE_COMPRESSION: ViteCompression;
     VITE_GOOGLE_CLIENT_ID?: string;
+     VITE_TURNSTILE_SITE_KEY?: string;
     SITE_NAME?: string;
     VITE_SITE_NAME?: string;
     VITE_FORCE_SITE_NAME?: string;

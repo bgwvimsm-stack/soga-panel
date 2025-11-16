@@ -84,6 +84,7 @@ export interface LoginRequest {
   password: string;
   remember?: boolean;
   twoFactorTrustToken?: string;
+  turnstileToken?: string;
 }
 
 // 登录响应
