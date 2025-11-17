@@ -231,6 +231,17 @@ export const createRechargeOrder = (data: {
   return http.post("/user/recharge", data);
 };
 
+/**
+ * 礼品卡兑换
+ */
+export const redeemGiftCard = (code: string): Promise<ApiResponse<{
+  code: string;
+  card_type: string;
+  message?: string;
+}>> => {
+  return http.post("/wallet/gift-card/redeem", { code });
+};
+
 export const startTwoFactorSetup = (): Promise<ApiResponse<{
   secret: string;
   otp_auth_url: string;

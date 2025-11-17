@@ -333,6 +333,16 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: "gift-cards",
+        name: "AdminGiftCards",
+        component: () => import("@/views/admin/gift-cards.vue"),
+        meta: {
+          title: "礼品卡管理",
+          requiresAuth: true,
+          requiresAdmin: true
+        }
+      },
+      {
         path: "coupons",
         name: "AdminCoupons",
         component: () => import("@/views/admin/coupons.vue"),

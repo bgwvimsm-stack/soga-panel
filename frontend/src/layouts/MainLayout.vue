@@ -182,6 +182,7 @@ const getPageTitle = () => {
     '/admin/announcements': '公告管理',
     '/admin/nodes': '节点列表',
     '/admin/users': '用户列表',
+    '/admin/gift-cards': '礼品卡管理',
     '/admin/subscription-logs': '订阅记录',
     '/admin/login-logs': '登录记录',
     '/admin/online-ips': '在线IP',

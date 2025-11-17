@@ -204,6 +204,110 @@ export const deleteCoupon = (id: number): Promise<ApiResponse<{ id: number }>> =
   return http.delete(`/admin/coupons/${id}`);
 };
 
+// 礼品卡管理API
+export interface GiftCard {
+  id: number;
+  name: string;
+  code: string;
+  card_type: string;
+  status: number;
+  balance_amount?: number | null;
+  duration_days?: number | null;
+  traffic_value_gb?: number | null;
+  reset_traffic_gb?: number | null;
+  package_id?: number | null;
+  package_name?: string | null;
+  max_usage?: number | null;
+  used_count?: number | null;
+  remaining_usage?: number | null;
+  start_at?: string | null;
+  end_at?: string | null;
+  created_at?: string | null;
+  batch_name?: string | null;
+  is_expired?: boolean;
+}
+
+export interface GiftCardPayload {
+  name: string;
+  card_type: string;
+  code?: string;
+  balance_amount?: number | null;
+  duration_days?: number | null;
+  traffic_value_gb?: number | null;
+  reset_traffic_gb?: number | null;
+  package_id?: number | null;
+  start_at?: string | Date | null;
+  end_at?: string | Date | null;
+  max_usage?: number | null;
+  quantity?: number | null;
+}
+
+export interface GiftCardRedemption {
+  id: number;
+  user_id: number;
+  user_email?: string | null;
+  user_name?: string | null;
+  code: string;
+  card_type: string;
+  change_amount?: number | null;
+  duration_days?: number | null;
+  traffic_value_gb?: number | null;
+  reset_traffic_gb?: number | null;
+  package_id?: number | null;
+  trade_no?: string | null;
+  message?: string | null;
+  created_at?: string | null;
+}
+
+export const getGiftCards = (params?: {
+  page?: number;
+  limit?: number;
+  status?: number | string;
+  card_type?: string;
+  keyword?: string;
+}): Promise<ApiResponse<{
+  records: GiftCard[];
+  pagination: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}>> => {
+  return http.get('/admin/gift-cards', { params });
+};
+
+export const createGiftCard = (data: GiftCardPayload): Promise<ApiResponse<{ batch_id: number; cards: GiftCard[] }>> => {
+  return http.post('/admin/gift-cards', data);
+};
+
+export const updateGiftCard = (id: number, data: Partial<GiftCardPayload>): Promise<ApiResponse<{ id: number }>> => {
+  return http.put(`/admin/gift-cards/${id}`, data);
+};
+
+export const updateGiftCardStatus = (id: number, status: number): Promise<ApiResponse<{ id: number; status: number }>> => {
+  return http.post(`/admin/gift-cards/${id}/status`, { status });
+};
+
+export const deleteGiftCard = (id: number): Promise<ApiResponse<{ id: number }>> => {
+  return http.delete(`/admin/gift-cards/${id}`);
+};
+
+export const getGiftCardRedemptions = (id: number, params?: {
+  page?: number;
+  limit?: number;
+}): Promise<ApiResponse<{
+  records: GiftCardRedemption[];
+  pagination: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}>> => {
+  return http.get(`/admin/gift-cards/${id}/redemptions`, { params });
+};
+
 // 节点管理API
 export interface Node {
   id: number;

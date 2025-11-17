@@ -241,6 +241,7 @@ export async function handleRequest(
     "POST /api/wallet/recharge/callback": () => walletAPI.rechargeCallback(request),
     "GET /api/wallet/recharge/callback": () => walletAPI.rechargeCallback(request),
     "GET /api/wallet/stats": () => walletAPI.getWalletStats(request),
+    "POST /api/wallet/gift-card/redeem": () => walletAPI.redeemGiftCard(request),
 
     // 商店相关 API
     "GET /api/packages": () => storeAPI.getPackages(request),
@@ -267,6 +268,12 @@ export async function handleRequest(
     "GET /api/admin/coupons/:id": () => adminAPI.getCouponDetail(request),
     "PUT /api/admin/coupons/:id": () => adminAPI.updateCoupon(request),
     "DELETE /api/admin/coupons/:id": () => adminAPI.deleteCoupon(request),
+    "GET /api/admin/gift-cards": () => adminAPI.getGiftCards(request),
+    "POST /api/admin/gift-cards": () => adminAPI.createGiftCard(request),
+    "PUT /api/admin/gift-cards/:id": () => adminAPI.updateGiftCard(request),
+    "DELETE /api/admin/gift-cards/:id": () => adminAPI.deleteGiftCard(request),
+    "POST /api/admin/gift-cards/:id/status": () => adminAPI.updateGiftCardStatus(request),
+    "GET /api/admin/gift-cards/:id/redemptions": () => adminAPI.getGiftCardRedemptions(request),
     "GET /api/admin/package-stats": () => adminAPI.getPackageStats(request),
     "GET /api/admin/recharge-records": () => adminAPI.getRechargeRecords(request),
     "GET /api/admin/purchase-records": () => adminAPI.getPurchaseRecords(request),

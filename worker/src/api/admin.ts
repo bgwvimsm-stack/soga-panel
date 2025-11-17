@@ -17,6 +17,7 @@ import {
 import { createSystemConfigManager } from "../utils/systemConfig";
 import { getChanges, toRunResult, ensureNumber, ensureString, ensureDate, getLastRowId } from "../utils/d1";
 import { fixMoneyPrecision } from "../utils/money";
+import { GiftCardService, GiftCardType, CreateGiftCardPayload } from "../services/giftCardService";
 
 interface AdminAuthResult {
   success: boolean;
@@ -335,12 +336,56 @@ type SharedIdRecord = {
   updated_at?: string | null;
 };
 
+interface GiftCardListRow {
+  id: number;
+  batch_id?: number | null;
+  name: string;
+  code: string;
+  card_type: string;
+  status: number;
+  balance_amount?: number | string | null;
+  duration_days?: number | string | null;
+  traffic_value_gb?: number | string | null;
+  reset_traffic_gb?: number | string | null;
+  package_id?: number | string | null;
+  max_usage?: number | string | null;
+  used_count?: number | string | null;
+  start_at?: string | null;
+  end_at?: string | null;
+  created_at?: string | null;
+  batch_name?: string | null;
+  package_name?: string | null;
+  creator_email?: string | null;
+};
+
+interface GiftCardRedemptionRow {
+  id: number;
+  card_id: number;
+  user_id: number;
+  code: string;
+  card_type: string;
+  change_amount?: number | string | null;
+  duration_days?: number | string | null;
+  traffic_value_gb?: number | string | null;
+  reset_traffic_gb?: number | string | null;
+  package_id?: number | string | null;
+  recharge_record_id?: number | string | null;
+  purchase_record_id?: number | string | null;
+  trade_no?: string | null;
+  result_status: string;
+  message?: string | null;
+  created_at?: string | null;
+  user_email?: string | null;
+  user_name?: string | null;
+};
+
 export class AdminAPI {
   private readonly env: Env;
   private readonly db: DatabaseService;
   private readonly cache: CacheService;
   private readonly scheduler: SchedulerService;
   private readonly configManager: SystemConfigManager;
+  private readonly giftCardService: GiftCardService;
 
   constructor(env: Env) {
     this.env = env;
@@ -348,6 +393,7 @@ export class AdminAPI {
     this.cache = new CacheService(env.DB);
     this.scheduler = new SchedulerService(env);
     this.configManager = createSystemConfigManager(env);
+    this.giftCardService = new GiftCardService(this.db.db);
   }
 
   // 验证管理员权限
@@ -5325,6 +5371,352 @@ export class AdminAPI {
     }
   }
 
+  // ===== 礼品卡管理 =====
+
+  async getGiftCards(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10));
+      const limitParam = Number.parseInt(url.searchParams.get("limit") ?? "20", 10);
+      const limit = Math.min(Math.max(limitParam, 1), 100);
+      const statusParam = url.searchParams.get("status");
+      const typeParam = url.searchParams.get("card_type");
+      const keyword = url.searchParams.get("keyword")?.trim();
+      const offset = (page - 1) * limit;
+
+      let whereClause = "WHERE 1=1";
+      const params: Array<string | number> = [];
+
+      if (statusParam !== null && statusParam !== "") {
+        whereClause += " AND gc.status = ?";
+        params.push(Number(statusParam));
+      }
+
+      if (typeParam) {
+        whereClause += " AND gc.card_type = ?";
+        params.push(typeParam);
+      }
+
+      if (keyword) {
+        whereClause += " AND (UPPER(gc.code) LIKE ? OR gc.name LIKE ?)";
+        params.push(`%${keyword.toUpperCase()}%`, `%${keyword}%`);
+      }
+
+      const totalRow = await this.db.db
+        .prepare(`SELECT COUNT(*) as total FROM gift_cards gc ${whereClause}`)
+        .bind(...params)
+        .first<{ total: number | string | null }>();
+      const total = ensureNumber(totalRow?.total ?? 0);
+
+      const recordsResult = await this.db.db
+        .prepare(
+          `
+          SELECT
+            gc.*,
+            gb.name as batch_name,
+            p.name as package_name,
+            u.email as creator_email
+          FROM gift_cards gc
+          LEFT JOIN gift_card_batches gb ON gc.batch_id = gb.id
+          LEFT JOIN packages p ON gc.package_id = p.id
+          LEFT JOIN users u ON gc.created_by = u.id
+          ${whereClause}
+          ORDER BY gc.id DESC
+          LIMIT ? OFFSET ?
+        `
+        )
+        .bind(...params, limit, offset)
+        .all<GiftCardListRow>();
+
+      const records = (recordsResult.results ?? []).map(record => {
+        const maxUsage =
+          record.max_usage !== undefined && record.max_usage !== null
+            ? ensureNumber(record.max_usage)
+            : null;
+        const usedCount = ensureNumber(record.used_count ?? 0);
+        const remaining = maxUsage !== null ? Math.max(maxUsage - usedCount, 0) : null;
+        const endAt = record.end_at ? new Date(record.end_at) : null;
+        const isExpired = endAt ? endAt.getTime() < Date.now() : false;
+        return {
+          ...record,
+          max_usage: maxUsage,
+          used_count: usedCount,
+          remaining_usage: remaining,
+          is_expired: isExpired
+        };
+      });
+
+      return successResponse({
+        records,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        }
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  async createGiftCard(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const body = (await request.json()) as Partial<CreateGiftCardPayload> & { name?: string; card_type?: GiftCardType };
+      const name = ensureString(body.name).trim();
+      if (!name) {
+        return errorResponse("请输入礼品卡名称", 400);
+      }
+
+      const cardType = (body.card_type as GiftCardType) || "balance";
+      const allowedTypes: GiftCardType[] = ["balance", "duration", "traffic", "reset_traffic", "package"];
+      if (!allowedTypes.includes(cardType)) {
+        return errorResponse("无效的礼品卡类型", 400);
+      }
+
+      const validatePositive = (value?: number | string | null, label?: string) => {
+        if (value === null || value === undefined) return null;
+        const parsed = ensureNumber(value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          throw new Error(`${label || "数值"}必须大于0`);
+        }
+        return parsed;
+      };
+
+      try {
+        switch (cardType) {
+          case "balance":
+            validatePositive(body.balance_amount, "充值金额");
+            break;
+          case "duration":
+            validatePositive(body.duration_days, "订阅天数");
+            break;
+          case "traffic":
+            validatePositive(body.traffic_value_gb, "流量数值");
+            break;
+          case "package":
+            if (!body.package_id) {
+              throw new Error("请选择可兑换的套餐");
+            }
+            break;
+        }
+      } catch (validationError) {
+        const message =
+          validationError instanceof Error ? validationError.message : "礼品卡配置不合法";
+        return errorResponse(message, 400);
+      }
+
+      const result = await this.giftCardService.createGiftCards(
+        {
+          name,
+          card_type: cardType,
+          balance_amount: body.balance_amount ?? null,
+          duration_days: body.duration_days ?? null,
+          traffic_value_gb: body.traffic_value_gb ?? null,
+          reset_traffic_gb: cardType === "reset_traffic" ? null : body.reset_traffic_gb ?? null,
+          package_id: body.package_id ?? null,
+          start_at: body.start_at ?? null,
+          end_at: body.end_at ?? null,
+          max_usage: body.max_usage ?? null,
+          quantity: body.quantity ?? 1,
+          code: body.code ?? null,
+          code_prefix: body.code_prefix ?? null,
+          description: body.description ?? null
+        },
+        adminCheck.admin?.id
+      );
+
+      return successResponse({
+        batch_id: result.batchId,
+        cards: result.cards
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return errorResponse(err.message, 400);
+    }
+  }
+
+  async updateGiftCard(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const idStr = url.pathname.split("/").pop();
+      const cardId = idStr ? Number(idStr) : NaN;
+      if (!Number.isFinite(cardId)) {
+        return errorResponse("无效的礼品卡ID", 400);
+      }
+
+      const body = (await request.json()) as Partial<CreateGiftCardPayload>;
+      const updated = await this.giftCardService.updateGiftCard(cardId, body);
+      if (!updated) {
+        return errorResponse("礼品卡更新失败或无变化", 400);
+      }
+
+      return successResponse({ id: cardId, message: "礼品卡已更新" });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return errorResponse(err.message, 400);
+    }
+  }
+
+  async updateGiftCardStatus(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const parts = url.pathname.split("/");
+      const cardIdStr = parts[parts.length - 2];
+      const cardId = cardIdStr ? Number(cardIdStr) : NaN;
+      if (!Number.isFinite(cardId)) {
+        return errorResponse("无效的礼品卡ID", 400);
+      }
+
+      const body = (await request.json()) as { status?: number };
+      const status = body.status ?? 1;
+      if (![0, 1, 2].includes(status)) {
+        return errorResponse("状态值不正确", 400);
+      }
+
+      const updated = await this.giftCardService.updateGiftCardStatus(cardId, status);
+      if (!updated) {
+        return errorResponse("礼品卡状态更新失败", 400);
+      }
+
+      return successResponse({ id: cardId, status });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return errorResponse(err.message, 400);
+    }
+  }
+
+  async deleteGiftCard(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const idStr = url.pathname.split("/").pop();
+      const cardId = idStr ? Number(idStr) : NaN;
+      if (!Number.isFinite(cardId)) {
+        return errorResponse("无效的礼品卡ID", 400);
+      }
+
+      const card = await this.giftCardService.getGiftCardById(cardId);
+      if (!card) {
+        return errorResponse("礼品卡不存在", 404);
+      }
+
+      if (ensureNumber(card.used_count ?? 0) > 0) {
+        return errorResponse("已使用的礼品卡不能删除", 400);
+      }
+
+      const deleted = await this.giftCardService.deleteGiftCard(cardId);
+      if (!deleted) {
+        return errorResponse("礼品卡删除失败", 400);
+      }
+
+      return successResponse({ id: cardId, message: "礼品卡已删除" });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return errorResponse(err.message, 400);
+    }
+  }
+
+  async getGiftCardRedemptions(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const segments = url.pathname.split("/");
+      const cardIdStr = segments[segments.length - 2];
+      const cardId = cardIdStr ? Number(cardIdStr) : NaN;
+      if (!Number.isFinite(cardId)) {
+        return errorResponse("无效的礼品卡ID", 400);
+      }
+
+      const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10));
+      const limitParam = Number.parseInt(url.searchParams.get("limit") ?? "20", 10);
+      const limit = Math.min(Math.max(limitParam, 1), 100);
+      const offset = (page - 1) * limit;
+
+      const totalRow = await this.db.db
+        .prepare("SELECT COUNT(*) as total FROM gift_card_redemptions WHERE card_id = ?")
+        .bind(cardId)
+        .first<{ total: number | string | null }>();
+      const total = ensureNumber(totalRow?.total ?? 0);
+
+      const recordsResult = await this.db.db
+        .prepare(
+          `
+          SELECT gcr.*, u.email as user_email, u.username as user_name
+          FROM gift_card_redemptions gcr
+          LEFT JOIN users u ON gcr.user_id = u.id
+          WHERE gcr.card_id = ?
+          ORDER BY gcr.created_at DESC
+          LIMIT ? OFFSET ?
+        `
+        )
+        .bind(cardId, limit, offset)
+        .all<GiftCardRedemptionRow>();
+
+      const records = (recordsResult.results ?? []).map(record => ({
+        ...record,
+        change_amount:
+          record.change_amount !== undefined && record.change_amount !== null
+            ? fixMoneyPrecision(ensureNumber(record.change_amount))
+            : null,
+        duration_days:
+          record.duration_days !== undefined && record.duration_days !== null
+            ? ensureNumber(record.duration_days)
+            : null,
+        traffic_value_gb:
+          record.traffic_value_gb !== undefined && record.traffic_value_gb !== null
+            ? ensureNumber(record.traffic_value_gb)
+            : null,
+        reset_traffic_gb:
+          record.reset_traffic_gb !== undefined && record.reset_traffic_gb !== null
+            ? ensureNumber(record.reset_traffic_gb)
+            : null
+      }));
+
+      return successResponse({
+        records,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        }
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      return errorResponse(err.message, 500);
+    }
+  }
+
   /**
    * 获取充值记录
    * GET /api/admin/recharge-records
@@ -5403,9 +5795,15 @@ export class AdminAPI {
       const formattedRecords = (recordsResult.results ?? []).map(record => {
         const statusValue = ensureNumber(record.status);
         const amountValue = typeof record.amount === 'string' ? Number(record.amount) : ensureNumber(record.amount);
+        const tradeNo = ensureString(record.trade_no);
+        const displayTradeNo =
+          record.payment_method === "gift_card" && tradeNo
+            ? tradeNo.split("-")[0]
+            : tradeNo;
 
         return {
           ...record,
+          trade_no: displayTradeNo,
           amount: amountValue,
           status: statusValue,
           status_text: statusMap[statusValue] ?? '未知状态'
@@ -5526,6 +5924,7 @@ export class AdminAPI {
         if (normalized === 'alipay' || normalized.endsWith('alipay')) return '支付宝';
         if (normalized === 'wechat' || normalized === 'wxpay' || normalized.endsWith('wxpay')) return '微信';
         if (normalized === 'qqpay' || normalized.endsWith('qqpay')) return 'QQ支付';
+        if (normalized === 'gift_card') return '礼品卡';
         if (normalized === 'direct') return '在线支付';
         return type;
       };
@@ -5541,9 +5940,14 @@ export class AdminAPI {
         const finalPrice = packagePriceValue !== null
           ? fixMoneyPrecision(Math.max(packagePriceValue - discountAmount, 0))
           : priceValue;
+        const tradeNo = ensureString(record.trade_no ?? "");
+        const purchaseTypeRaw = ensureString(record.purchase_type);
+        const displayTradeNo =
+          purchaseTypeRaw === "gift_card" && tradeNo ? tradeNo.split("-")[0] : tradeNo;
 
         return {
           ...record,
+          trade_no: displayTradeNo,
           price: priceValue,
           package_price: packagePriceValue,
           discount_amount: discountAmount,

@@ -527,6 +527,122 @@ CREATE TABLE IF NOT EXISTS coupon_usages (
 CREATE INDEX IF NOT EXISTS idx_coupon_usages_coupon ON coupon_usages (coupon_id);
 CREATE INDEX IF NOT EXISTS idx_coupon_usages_coupon_user ON coupon_usages (coupon_id, user_id);
 
+-- 礼品卡批次表
+-- 字段说明：
+-- id: 批次主键
+-- name: 批次名称（用于在后台区分不同发放场景）
+-- description: 批次备注说明
+-- card_type: 批次内礼品卡的类型（balance/duration/traffic/reset_traffic/package）
+-- quantity: 本批次计划生成的卡片数量
+-- code_prefix: 批量生成卡号时使用的前缀
+-- balance_amount/duration_days/traffic_value_gb/reset_traffic_gb: 针对不同类型的默认面值
+-- package_id: 若为兑换套餐类型，对应的套餐ID
+-- max_usage: 单张礼品卡最大可被使用次数（null 表示不限制）
+-- start_at/end_at: 批次有效期（卡片默认继承）
+-- created_by: 创建该批次的管理员ID
+-- created_at: 记录创建时间（UTC+8）
+CREATE TABLE IF NOT EXISTS gift_card_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    card_type TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    code_prefix TEXT,
+    balance_amount DECIMAL(10,2),
+    duration_days INTEGER,
+    traffic_value_gb INTEGER,
+    reset_traffic_gb INTEGER,
+    package_id INTEGER,
+    max_usage INTEGER,
+    start_at DATETIME,
+    end_at DATETIME,
+    created_by INTEGER,
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    FOREIGN KEY (package_id) REFERENCES packages (id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+);
+
+-- 礼品卡表
+-- 字段说明：
+-- id: 礼品卡主键
+-- batch_id: 所属批次ID（可为空表示单独创建）
+-- name: 礼品卡名称/标题
+-- code: 唯一卡密（用户兑换凭证）
+-- card_type: 类型（balance/duration/traffic/reset_traffic/package）
+-- status: 状态（1-启用，0-禁用，2-已用完）
+-- balance_amount/duration_days/traffic_value_gb/reset_traffic_gb: 按类型对应的面值
+-- package_id: 若为套餐兑换类型，指定的套餐
+-- max_usage: 最大使用次数（null 表示不限制）
+-- used_count: 已使用次数
+-- start_at/end_at: 单张卡的生效/失效时间
+-- created_by: 创建人ID
+-- created_at/updated_at: 创建与更新时间（UTC+8）
+CREATE TABLE IF NOT EXISTS gift_cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id INTEGER,
+    name TEXT NOT NULL,
+    code TEXT UNIQUE NOT NULL,
+    card_type TEXT NOT NULL,
+    status INTEGER NOT NULL DEFAULT 1,
+    balance_amount DECIMAL(10,2),
+    duration_days INTEGER,
+    traffic_value_gb INTEGER,
+    reset_traffic_gb INTEGER,
+    package_id INTEGER,
+    max_usage INTEGER DEFAULT 1,
+    used_count INTEGER DEFAULT 0,
+    start_at DATETIME,
+    end_at DATETIME,
+    created_by INTEGER,
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    updated_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    FOREIGN KEY (batch_id) REFERENCES gift_card_batches (id) ON DELETE SET NULL,
+    FOREIGN KEY (package_id) REFERENCES packages (id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+);
+
+-- 礼品卡兑换记录表
+-- 字段说明：
+-- id: 兑换记录主键
+-- card_id: 对应的礼品卡ID
+-- user_id: 兑换该卡的用户ID
+-- code: 兑换时使用的礼品卡卡密
+-- card_type: 兑换卡的类型
+-- change_amount/duration_days/traffic_value_gb/reset_traffic_gb: 兑换产生的实际变动值
+-- package_id: 若兑换套餐时记录的套餐ID
+-- recharge_record_id/purchase_record_id: 关联的充值或套餐购买记录ID（根据类型为空）
+-- trade_no: 关联的交易号（默认为卡密）
+-- result_status: 兑换状态（success/failed）
+-- message: 兑换结果描述
+-- created_at: 兑换时间（UTC+8）
+CREATE TABLE IF NOT EXISTS gift_card_redemptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    card_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    code TEXT NOT NULL,
+    card_type TEXT NOT NULL,
+    change_amount DECIMAL(10,2),
+    duration_days INTEGER,
+    traffic_value_gb INTEGER,
+    reset_traffic_gb INTEGER,
+    package_id INTEGER,
+    recharge_record_id INTEGER,
+    purchase_record_id INTEGER,
+    trade_no TEXT,
+    result_status TEXT NOT NULL DEFAULT 'success',
+    message TEXT,
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    FOREIGN KEY (card_id) REFERENCES gift_cards (id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+    FOREIGN KEY (recharge_record_id) REFERENCES recharge_records (id) ON DELETE SET NULL,
+    FOREIGN KEY (purchase_record_id) REFERENCES package_purchase_records (id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gift_cards_status ON gift_cards (status);
+CREATE INDEX IF NOT EXISTS idx_gift_cards_type ON gift_cards (card_type);
+CREATE INDEX IF NOT EXISTS idx_gift_cards_code ON gift_cards (code);
+CREATE INDEX IF NOT EXISTS idx_gift_card_redemptions_card_id ON gift_card_redemptions (card_id);
+CREATE INDEX IF NOT EXISTS idx_gift_card_redemptions_user_id ON gift_card_redemptions (user_id);
+
 -- 充值记录表
 -- 字段说明：
 -- id: 充值记录唯一标识ID（主键）

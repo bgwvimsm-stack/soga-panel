@@ -46,8 +46,8 @@ const title = computed(() => siteStore.siteName || "Soga Panel");
   width: 100%;
   height: 56px;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.1);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: #ffffff;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -76,7 +76,7 @@ const title = computed(() => siteStore.siteName || "Soga Panel");
     transition: all 0.3s ease;
     
     &:hover {
-      background: rgba(255, 255, 255, 0.05);
+      background: rgba(15, 23, 42, 0.04);
     }
     
     .logo-icon {
@@ -98,7 +98,7 @@ const title = computed(() => siteStore.siteName || "Soga Panel");
     .sidebar-title {
       font-size: 18px;
       font-weight: 600;
-      color: var(--sidebar-text-color, #ffffff);
+      color: var(--sidebar-text-color, #1f2937);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;

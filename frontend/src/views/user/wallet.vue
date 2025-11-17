@@ -79,6 +79,10 @@
           <el-icon><Shop /></el-icon>
           购买套餐
         </el-button>
+        <el-button size="large" @click="showGiftCardDialog = true">
+          <el-icon><ChatDotRound /></el-icon>
+          礼卡兑换
+        </el-button>
       </div>
     </el-card>
 
@@ -200,6 +204,26 @@
         </div>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="showGiftCardDialog" title="礼品卡兑换" width="420px">
+      <el-form label-width="100px">
+        <el-form-item label="礼品卡卡密" required>
+          <el-input
+            v-model="giftCardForm.code"
+            placeholder="请输入或粘贴礼品卡卡密"
+            clearable
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="showGiftCardDialog = false" :disabled="giftCardRedeeming">取消</el-button>
+          <el-button type="primary" :loading="giftCardRedeeming" @click="submitGiftCardRedeem">
+            立即兑换
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -210,6 +234,7 @@ import { Wallet, CreditCard, ShoppingCart, Clock, Plus, Shop, ChatDotRound } fro
 import Alipay from '@/components/PaymentIcons/Alipay.vue';
 import Wechat from '@/components/PaymentIcons/Wechat.vue';
 import http from '@/api/http';
+import { redeemGiftCard } from '@/api/user';
 
 const rechargeTableRef = ref();
 const purchaseTableRef = ref();
@@ -217,6 +242,8 @@ const rechargeLoading = ref(false);
 const purchaseLoading = ref(false);
 const submitting = ref(false);
 const showRechargeDialog = ref(false);
+const showGiftCardDialog = ref(false);
+const giftCardRedeeming = ref(false);
 const activeTab = ref('recharge');
 const rechargeRecords = ref([]);
 const purchaseRecords = ref([]);
@@ -231,6 +258,10 @@ const balanceInfo = reactive({
 const rechargeForm = reactive({
   amount: '',
   payment_method: 'alipay'
+});
+
+const giftCardForm = reactive({
+  code: ''
 });
 
 const rechargePagerConfig = reactive({
@@ -275,7 +306,8 @@ const getPaymentMethodText = (method: string) => {
     'alipay': '支付宝',
     'wechat': '微信',
     'wxpay': '微信',
-    'balance': '余额支付'
+    'balance': '余额支付',
+    'gift_card': '礼品卡'
   };
   return methodMap[method] || method || '-';
 };
@@ -309,6 +341,7 @@ const getPurchaseTypeText = (type: string) => {
   if (normalized === 'alipay') return '支付宝';
   if (normalized === 'wechat' || normalized === 'wxpay') return '微信';
   if (normalized === 'qqpay') return 'QQ支付';
+  if (normalized === 'gift_card') return '礼品卡';
   if (normalized.startsWith('balance_')) return '混合支付';
   return normalized;
 };
@@ -388,6 +421,7 @@ const getPaymentChipClass = (type: string) => {
   if (normalized === 'wechat' || normalized === 'wxpay' || normalized.endsWith('wxpay')) return 'chip-wechat';
   if (normalized === 'qqpay' || normalized.endsWith('qqpay')) return 'chip-qq';
   if (normalized === 'smart_topup' || normalized.startsWith('balance_')) return 'chip-mixed';
+  if (normalized === 'gift_card') return 'chip-gift';
   if (normalized === 'direct') return 'chip-online';
   return 'chip-default';
 };
@@ -466,6 +500,31 @@ const handlePurchasePageChange = ({ currentPage, pageSize }) => {
   purchasePagerConfig.currentPage = currentPage;
   purchasePagerConfig.pageSize = pageSize;
   loadPurchaseRecords();
+};
+
+const submitGiftCardRedeem = async () => {
+  const code = giftCardForm.code.trim();
+  if (!code) {
+    ElMessage.warning('请输入礼品卡卡密');
+    return;
+  }
+  giftCardRedeeming.value = true;
+  try {
+    const response = await redeemGiftCard(code);
+    if (response.code === 0) {
+      ElMessage.success(response.message || '礼品卡兑换成功');
+      showGiftCardDialog.value = false;
+      giftCardForm.code = '';
+      await Promise.all([loadBalanceInfo(), loadRechargeRecords(), loadPurchaseRecords()]);
+    } else {
+      ElMessage.error(response.message || '礼品卡兑换失败');
+    }
+  } catch (error: any) {
+    console.error('礼品卡兑换失败:', error);
+    ElMessage.error(error?.message || '礼品卡兑换失败');
+  } finally {
+    giftCardRedeeming.value = false;
+  }
 };
 
 const submitRecharge = async () => {
@@ -667,6 +726,12 @@ onMounted(() => {
     color: #8a5cff;
     border-color: rgba(138, 92, 255, 0.45);
     background: rgba(138, 92, 255, 0.08);
+  }
+
+  .payment-chip.chip-gift {
+    color: #e6a23c;
+    border-color: rgba(230, 162, 60, 0.4);
+    background: rgba(230, 162, 60, 0.08);
   }
 
   .payment-chip.chip-mixed {
