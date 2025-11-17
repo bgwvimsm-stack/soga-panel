@@ -408,6 +408,18 @@ export const routes: RouteRecordRaw[] = [
       }
     ]
   },
+  {
+    path: "/403",
+    redirect: "/error/403"
+  },
+  {
+    path: "/404",
+    redirect: "/error/404"
+  },
+  {
+    path: "/500",
+    redirect: "/error/500"
+  },
   // 404页面
   {
     path: "/:pathMatch(.*)*",

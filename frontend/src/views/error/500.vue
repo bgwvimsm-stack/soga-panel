@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
-import { isAdmin } from "@/utils/auth-soga";
-import noServer500 from "@/assets/status/500.svg";
+import NoServer from "@/assets/status/500.svg?component";
 
 defineOptions({
   name: "500"
@@ -10,99 +9,69 @@ defineOptions({
 const router = useRouter();
 
 const goHome = () => {
-  router.push(isAdmin() ? "/admin/dashboard" : "/user/dashboard");
+  router.push("/");
 };
 </script>
 
 <template>
-  <div class="error-page">
-    <div class="error-container">
-      <div class="error-image">
-        <img :src="noServer500" alt="500" />
-      </div>
+  <div class="error-wrapper danger">
+    <div class="error-inner">
+      <NoServer class="error-illustration" />
       <div class="error-content">
-        <div class="error-code">500</div>
-        <div class="error-message">抱歉，服务器出错了</div>
-        <div class="error-actions">
-          <el-button type="primary" @click="goHome">
-            返回首页
-          </el-button>
-        </div>
+        <p class="error-code">500</p>
+        <p class="error-title">抱歉，服务器出错了</p>
+        <el-button type="primary" @click="goHome">返回首页</el-button>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped lang="scss">
-.error-page {
+.error-wrapper {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #ffeaa7 0%, #fab1a0 100%);
-  padding: 20px;
+  padding: 24px;
+  background: linear-gradient(135deg, #fff0f0 0%, #ffe0e0 100%);
+
+  &.danger {
+    background: linear-gradient(135deg, #fff0f0 0%, #ffe0e0 100%);
+  }
 }
 
-.error-container {
+.error-inner {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 48px;
-  max-width: 800px;
-  
-  @media (max-width: 768px) {
-    flex-direction: column;
-    gap: 32px;
-    text-align: center;
+  text-align: center;
+  gap: 24px;
+  max-width: 720px;
+
+  @media (min-width: 768px) {
+    flex-direction: row;
+    text-align: left;
+    gap: 48px;
   }
 }
 
-.error-image {
+.error-illustration {
   width: 320px;
-  height: 320px;
-  flex-shrink: 0;
-  
-  img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-  }
-  
-  @media (max-width: 768px) {
-    width: 240px;
-    height: 240px;
-  }
+  max-width: 100%;
 }
 
 .error-content {
-  color: #303133;
-  
   .error-code {
-    font-size: 72px;
-    font-weight: bold;
-    margin-bottom: 16px;
-    color: #f56c6c;
-    
-    @media (max-width: 768px) {
-      font-size: 56px;
-    }
+    font-size: 60px;
+    font-weight: 700;
+    color: #ef4444;
+    margin: 0 0 12px 0;
   }
-  
-  .error-message {
+
+  .error-title {
     font-size: 20px;
-    margin-bottom: 32px;
-    color: #606266;
-    line-height: 1.5;
-    
-    @media (max-width: 768px) {
-      font-size: 18px;
-    }
-  }
-  
-  .error-actions {
-    .el-button {
-      padding: 12px 24px;
-      font-size: 16px;
-    }
+    color: #475569;
+    margin: 0 0 24px 0;
   }
 }
 </style>
