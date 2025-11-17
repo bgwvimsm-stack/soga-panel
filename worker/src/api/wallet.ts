@@ -11,8 +11,10 @@ import { errorResponse, successResponse } from "../utils/response";
 import { getLogger } from "../utils/logger";
 import { createSystemConfigManager } from "../utils/systemConfig";
 import { PaymentProviderFactory } from "./pay/PaymentProviderFactory";
-import { ensureNumber, ensureString } from "../utils/d1";
+import { ensureNumber, ensureString, getLastRowId, toRunResult } from "../utils/d1";
 import { fixMoneyPrecision } from "../utils/money";
+import { GiftCardService, GiftCardType } from "../services/giftCardService";
+import { StoreAPI } from "./store";
 
 type AuthenticatedUser = {
   id: number;
@@ -91,6 +93,12 @@ type UserBalanceRow = {
   money: number | string;
   class: number | string;
   class_expire_time: string | null;
+  transfer_enable?: number | string | null;
+  transfer_total?: number | string | null;
+  upload_traffic?: number | string | null;
+  download_traffic?: number | string | null;
+  upload_today?: number | string | null;
+  download_today?: number | string | null;
 };
 
 type PackageRow = {
@@ -137,6 +145,8 @@ export class WalletAPI {
   private readonly configManager: SystemConfigManager;
   private readonly paymentProvider: PaymentProvider | null;
   private readonly couponService: CouponService;
+  private readonly giftCardService: GiftCardService;
+  private storeApiInstance: StoreAPI | null = null;
 
   constructor(env: Env) {
     this.env = env;
@@ -144,6 +154,7 @@ export class WalletAPI {
     this.couponService = new CouponService(env.DB);
     this.logger = getLogger(env);
     this.configManager = createSystemConfigManager(env);
+    this.giftCardService = new GiftCardService(this.db.db);
 
     let provider: PaymentProvider | null = null;
     try {
@@ -153,6 +164,24 @@ export class WalletAPI {
       this.logger.error("初始化支付提供者失败", error);
     }
     this.paymentProvider = provider;
+  }
+
+  private getStoreApi(): StoreAPI {
+    if (!this.storeApiInstance) {
+      this.storeApiInstance = new StoreAPI(this.env);
+    }
+    return this.storeApiInstance;
+  }
+
+  private buildGiftCardTradeNo(code: string, usageIndex: number) {
+    const suffix = Date.now().toString().slice(-6);
+    return `${code}-${usageIndex}-${suffix}`;
+  }
+
+  private getGiftCardDisplayTradeNo(tradeNo?: string | null) {
+    if (!tradeNo) return "-";
+    const [base] = tradeNo.split("-");
+    return base || tradeNo;
   }
 
   // 获取用户余额
@@ -244,11 +273,18 @@ export class WalletAPI {
         3: '支付失败'
       };
 
-      const formattedRecords = (recordsResult.results ?? []).map((record) => ({
-        ...record,
-        amount: ensureNumber(record.amount),
-        status_text: statusMap[record.status as keyof typeof statusMap] || '未知状态'
-      }));
+      const formattedRecords = (recordsResult.results ?? []).map((record) => {
+        const formattedTradeNo =
+          record.payment_method === "gift_card"
+            ? this.getGiftCardDisplayTradeNo(record.trade_no)
+            : record.trade_no;
+        return {
+          ...record,
+          trade_no: formattedTradeNo,
+          amount: ensureNumber(record.amount),
+          status_text: statusMap[record.status as keyof typeof statusMap] || "未知状态"
+        };
+      });
 
       return successResponse({
         records: formattedRecords,
@@ -647,6 +683,288 @@ export class WalletAPI {
       return new Response('fail');
     }
   }
+
+  // 礼品卡兑换
+  async redeemGiftCard(request: Request) {
+    try {
+      const authResult = await validateUserAuth(request, this.env);
+      if (!authResult.success) {
+        return errorResponse(authResult.message || "用户认证失败", 401);
+      }
+
+      const user = authResult.user as AuthenticatedUser;
+      const userId = ensureNumber(user.id);
+      if (userId <= 0) {
+        return errorResponse("用户信息异常", 500);
+      }
+
+      const body = (await request.json()) as { code?: string };
+      const code = ensureString(body.code).trim();
+      if (!code) {
+        return errorResponse("请输入礼品卡卡密", 400);
+      }
+
+      const card = await this.giftCardService.getGiftCardByCode(code);
+      if (!card) {
+        return errorResponse("礼品卡不存在或已失效", 404);
+      }
+
+      if (card.status !== 1) {
+        return errorResponse("礼品卡已被禁用或使用完毕", 400);
+      }
+
+      const now = new Date();
+      if (card.start_at) {
+        const startAt = new Date(card.start_at);
+        if (!Number.isNaN(startAt.getTime()) && startAt > now) {
+          return errorResponse("礼品卡尚未生效", 400);
+        }
+      }
+
+      if (card.end_at) {
+        const endAt = new Date(card.end_at);
+        if (!Number.isNaN(endAt.getTime()) && endAt < now) {
+          return errorResponse("礼品卡已过期", 400);
+        }
+      }
+
+      const maxUsage = card.max_usage != null ? ensureNumber(card.max_usage) : null;
+      const usedCount = ensureNumber(card.used_count ?? 0);
+      if (maxUsage !== null && usedCount >= maxUsage) {
+        return errorResponse("礼品卡已达到最大使用次数", 400);
+      }
+
+      const userInfo = await this.db.db
+        .prepare(`
+          SELECT
+            money,
+            class,
+            class_expire_time,
+            transfer_enable,
+            transfer_total,
+            upload_traffic,
+            download_traffic,
+            upload_today,
+            download_today
+          FROM users
+          WHERE id = ?
+        `)
+        .bind(userId)
+        .first<UserBalanceRow>();
+
+      if (!userInfo) {
+        return errorResponse("用户不存在", 404);
+      }
+
+      const usageIndex = usedCount + 1;
+      const tradeNo = this.buildGiftCardTradeNo(card.code, usageIndex);
+      let rechargeRecordId: number | null = null;
+      let purchaseRecordId: number | null = null;
+      let changeAmount: number | null = null;
+      let durationDays: number | null = null;
+      let trafficValueGb: number | null = null;
+      let resetTrafficGb: number | null = null;
+      let message = "";
+
+      const updateExpireTime = async (days: number) => {
+        const duration = Math.max(1, Math.floor(days));
+        const current = new Date();
+        let baseDate = current;
+        if (userInfo.class_expire_time) {
+          const existing = new Date(userInfo.class_expire_time);
+          if (!Number.isNaN(existing.getTime()) && existing > current) {
+            baseDate = existing;
+          }
+        }
+        baseDate.setDate(baseDate.getDate() + duration);
+        const formatted = baseDate.toISOString().replace("T", " ").slice(0, 19);
+        await this.db.db
+          .prepare(`
+            UPDATE users
+            SET class_expire_time = ?, updated_at = datetime('now', '+8 hours')
+            WHERE id = ?
+          `)
+          .bind(formatted, userId)
+          .run();
+        return formatted;
+      };
+
+      const ensurePositive = (value: number | string | null | undefined) => {
+        const parsed = ensureNumber(value);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          return 0;
+        }
+        return parsed;
+      };
+
+      if (card.card_type === "balance") {
+        const amount = ensurePositive(card.balance_amount);
+        if (amount <= 0) {
+          return errorResponse("礼品卡未配置充值金额", 400);
+        }
+        const fixedAmount = fixMoneyPrecision(amount);
+        const rechargeResult = await this.db.db
+          .prepare(`
+            INSERT INTO recharge_records
+            (user_id, amount, payment_method, trade_no, status, created_at, paid_at)
+            VALUES (?, ?, 'gift_card', ?, 1, datetime('now', '+8 hours'), datetime('now', '+8 hours'))
+          `)
+          .bind(userId, fixedAmount, tradeNo)
+          .run();
+        rechargeRecordId = getLastRowId(toRunResult(rechargeResult));
+
+        await this.db.db
+          .prepare(`
+            UPDATE users
+            SET money = money + ?, updated_at = datetime('now', '+8 hours')
+            WHERE id = ?
+          `)
+          .bind(fixedAmount, userId)
+          .run();
+
+        changeAmount = fixedAmount;
+        message = `成功充值 ¥${fixedAmount.toFixed(2)}`;
+      } else if (card.card_type === "duration") {
+        const duration = ensurePositive(card.duration_days);
+        if (duration <= 0) {
+          return errorResponse("礼品卡未设置有效期天数", 400);
+        }
+        await updateExpireTime(duration);
+        durationDays = duration;
+        message = `等级有效期延长 ${duration} 天`;
+      } else if (card.card_type === "traffic") {
+        const trafficGb = ensurePositive(card.traffic_value_gb);
+        if (trafficGb <= 0) {
+          return errorResponse("礼品卡未配置流量数值", 400);
+        }
+        const bytesToAdd = Math.round(trafficGb * 1024 * 1024 * 1024);
+        await this.db.db
+          .prepare(`
+            UPDATE users
+            SET transfer_enable = transfer_enable + ?, updated_at = datetime('now', '+8 hours')
+            WHERE id = ?
+          `)
+          .bind(bytesToAdd, userId)
+          .run();
+        trafficValueGb = trafficGb;
+        message = `已增加 ${trafficGb} GB 流量`;
+      } else if (card.card_type === "reset_traffic") {
+        await this.db.db
+          .prepare(`
+            UPDATE users
+            SET transfer_total = 0,
+                upload_traffic = 0,
+                download_traffic = 0,
+                upload_today = 0,
+                download_today = 0,
+                updated_at = datetime('now', '+8 hours')
+            WHERE id = ?
+          `)
+          .bind(userId)
+          .run();
+        message = "套餐已重置已用流量";
+      } else if (card.card_type === "package") {
+        const packageId = card.package_id ? ensureNumber(card.package_id) : 0;
+        if (!packageId) {
+          return errorResponse("礼品卡未绑定可兑换的套餐", 400);
+        }
+
+        const packageRow = await this.db.db
+          .prepare("SELECT * FROM packages WHERE id = ? AND status = 1")
+          .bind(packageId)
+          .first<PackageRow>();
+
+        if (!packageRow) {
+          return errorResponse("绑定的套餐不存在或已下架", 404);
+        }
+
+        const normalizedPackage = {
+          ...packageRow,
+          price: ensureNumber(packageRow.price),
+          traffic_quota: ensureNumber(packageRow.traffic_quota),
+          validity_days: ensureNumber(packageRow.validity_days),
+          speed_limit: ensureNumber(packageRow.speed_limit),
+          device_limit: ensureNumber(packageRow.device_limit),
+          level: ensureNumber(packageRow.level)
+        };
+
+        const purchaseResult = await this.db.db
+          .prepare(`
+            INSERT INTO package_purchase_records
+            (user_id, package_id, price, package_price, discount_amount, purchase_type, trade_no, status, created_at, paid_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now', '+8 hours'), datetime('now', '+8 hours'))
+          `)
+          .bind(
+            userId,
+            packageRow.id,
+            0,
+            normalizedPackage.price,
+            normalizedPackage.price,
+            "gift_card",
+            tradeNo
+          )
+          .run();
+
+        purchaseRecordId = getLastRowId(toRunResult(purchaseResult));
+
+        const storeAPI = this.getStoreApi();
+        await storeAPI.updateUserAfterPackagePurchase(userId, normalizedPackage as any);
+
+        durationDays = normalizedPackage.validity_days ?? null;
+        trafficValueGb = normalizedPackage.traffic_quota ?? null;
+        message = `已成功兑换套餐 ${normalizedPackage.name}`;
+      } else {
+        return errorResponse("暂不支持的礼品卡类型", 400);
+      }
+
+      await this.giftCardService.updateGiftCardUsage(card.id, usageIndex, maxUsage);
+      await this.giftCardService.recordRedemption({
+        card_id: card.id,
+        user_id: userId,
+        code: card.code,
+        card_type: card.card_type as GiftCardType,
+        change_amount: changeAmount,
+        duration_days: durationDays,
+        traffic_value_gb: trafficValueGb,
+        reset_traffic_gb: resetTrafficGb,
+        package_id: card.package_id ?? null,
+        recharge_record_id: rechargeRecordId ?? null,
+        purchase_record_id: purchaseRecordId ?? null,
+        trade_no: card.code,
+        message
+      });
+
+      this.logger.info("礼品卡兑换成功", {
+        user_id: userId,
+        user_email: user.email,
+        card_id: card.id,
+        card_code: card.code,
+        type: card.card_type
+      });
+
+      return successResponse(
+        {
+          code: card.code,
+          card_type: card.card_type,
+          change_amount: changeAmount,
+          duration_days: durationDays,
+          traffic_value_gb: trafficValueGb,
+          reset_traffic_gb: resetTrafficGb,
+          usage: {
+            used_count: usageIndex,
+            max_usage: maxUsage
+          },
+          message
+        },
+        "礼品卡兑换成功"
+      );
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error("礼品卡兑换失败", err);
+      return errorResponse(err.message || "礼品卡兑换失败", 500);
+    }
+  }
+
 
   // 获取钱包统计信息
   async getWalletStats(request: Request) {

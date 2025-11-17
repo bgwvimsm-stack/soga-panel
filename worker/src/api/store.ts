@@ -754,6 +754,7 @@ export class StoreAPI {
         if (normalized === 'smart_topup') return '混合支付';
         if (normalized === 'direct') return '在线支付';
         if (normalized === 'alipay' || normalized === 'wxpay' || normalized === 'qqpay') return '在线支付';
+        if (normalized === 'gift_card') return '礼品卡';
         if (normalized.startsWith('balance_')) return '混合支付';
         return type;
       };
@@ -767,8 +768,13 @@ export class StoreAPI {
         const finalPrice = packagePrice !== null
           ? fixMoneyPrecision(Math.max(packagePrice - discountAmount, 0))
           : price;
+        const displayTradeNo =
+          purchaseType === "gift_card" && record.trade_no
+            ? record.trade_no.split("-")[0]
+            : record.trade_no;
         return {
           ...record,
+          trade_no: displayTradeNo,
           price,
           package_price: packagePrice,
           discount_amount: discountAmount,
