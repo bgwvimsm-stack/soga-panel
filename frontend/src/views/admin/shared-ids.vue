@@ -51,11 +51,7 @@
           @page-change="handlePageChange"
         >
           <template #name="{ row }">
-            <div class="apple-name">
-              <div class="name-text">{{ row.name || '-' }}</div>
-              <el-tag v-if="row.status === 1" size="small" type="success">启用</el-tag>
-              <el-tag v-else size="small" type="info">禁用</el-tag>
-            </div>
+            <span class="name-text">{{ row.name || '-' }}</span>
           </template>
           <template #fetch_url="{ row }">
             <el-link v-if="row.fetch_url" :href="row.fetch_url" type="primary" target="_blank">
