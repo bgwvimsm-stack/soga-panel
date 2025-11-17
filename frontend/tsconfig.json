@@ -44,7 +44,8 @@
     },
     "types": [
       "node",
-      "vite/client"
+      "vite/client",
+      "unplugin-icons/types/vue"
     ]
   },
   "include": [

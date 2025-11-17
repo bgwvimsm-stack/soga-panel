@@ -396,14 +396,42 @@ onMounted(() => {
 }
 
 .welcome-section {
-  background: #3b82f6;
-  color: white;
-  padding: 30px;
+  position: relative;
+  background: linear-gradient(120deg, #dbeafe 0%, #e0f2fe 45%, #fce7f3 100%);
+  color: #0f172a;
+  padding: 36px 48px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.05);
+  overflow: hidden;
+
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(0px);
+    opacity: 0.35;
+  }
+
+  &::before {
+    width: 220px;
+    height: 220px;
+    right: -60px;
+    top: -100px;
+    background: radial-gradient(circle, rgba(147, 197, 253, 0.8) 0%, rgba(147, 197, 253, 0) 70%);
+  }
+
+  &::after {
+    width: 180px;
+    height: 180px;
+    left: -50px;
+    bottom: -90px;
+    background: radial-gradient(circle, rgba(248, 181, 218, 0.8) 0%, rgba(248, 181, 218, 0) 70%);
+  }
 
   h1 {
     margin: 0;
     font-size: 24px;
-    font-weight: 500;
+    font-weight: 600;
   }
 }
 

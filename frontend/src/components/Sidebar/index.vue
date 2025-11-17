@@ -96,40 +96,72 @@ const isUserAdmin = computed(() => userStore.isAdmin());
 
 // 菜单路由配置
 const userRoutes: MenuRoute[] = [
-  { path: '/user/dashboard', name: 'dashboard', icon: 'Odometer', title: '仪表板' },
-  { path: '/user/announcements', name: 'announcements', icon: 'Bell', title: '公告详情' },
-  { path: '/user/tickets', name: 'tickets', icon: 'Tickets', title: '工单中心' },
-  { path: '/user/wallet', name: 'wallet', icon: 'Wallet', title: '我的钱包' },
-  { path: '/user/store', name: 'store', icon: 'ShoppingBag', title: '套餐商店' },
-  { path: '/user/nodes', name: 'nodes', icon: 'Connection', title: '节点列表' },
-  { path: '/user/traffic', name: 'traffic', icon: 'TrendCharts', title: '流量统计' },
-  { path: '/user/subscription', name: 'subscription', icon: 'Link', title: '订阅管理' },
-  { path: '/user/shared-ids', name: 'shared-ids', icon: 'Key', title: '苹果账号' },
-  { path: '/user/subscription-logs', name: 'subscription-logs', icon: 'List', title: '订阅记录' },
-  { path: '/user/audit-rules', name: 'audit-rules', icon: 'Lock', title: '审计规则' },
-  { path: '/user/audit-logs', name: 'audit-logs', icon: 'Warning', title: '审计记录' },
-  { path: '/user/profile', name: 'profile', icon: 'UserFilled', title: '个人资料' }
+  { path: '/user/dashboard', name: 'dashboard', icon: 'user-dashboard', title: '仪表板' },
+  { path: '/user/announcements', name: 'announcements', icon: 'user-announcement', title: '公告详情' },
+  { path: '/user/tickets', name: 'tickets', icon: 'user-tickets', title: '工单中心' },
+  { path: '/user/wallet', name: 'wallet', icon: 'user-wallet', title: '我的钱包' },
+  { path: '/user/store', name: 'store', icon: 'user-store', title: '套餐商店' },
+  { path: '/user/nodes', name: 'nodes', icon: 'user-nodes', title: '节点列表' },
+  { path: '/user/traffic', name: 'traffic', icon: 'user-traffic', title: '流量统计' },
+  { path: '/user/subscription', name: 'subscription', icon: 'user-subscription', title: '订阅管理' },
+  { path: '/user/shared-ids', name: 'shared-ids', icon: 'user-shared-ids', title: '苹果账号' },
+  { path: '/user/subscription-logs', name: 'subscription-logs', icon: 'user-subscription-logs', title: '订阅记录' },
+  { path: '/user/audit-rules', name: 'audit-rules', icon: 'user-audit-rules', title: '审计规则' },
+  { path: '/user/audit-logs', name: 'audit-logs', icon: 'user-audit-logs', title: '审计记录' },
+  { path: '/user/profile', name: 'profile', icon: 'user-profile', title: '个人资料' }
 ];
 
 const adminRoutes: MenuRoute[] = [
-  { path: '/admin/dashboard', name: 'admin-dashboard', icon: 'DataAnalysis', title: '管理概览' },
-  { path: '/admin/announcements', name: 'admin-announcements', icon: 'ChatDotRound', title: '公告管理' },
-  { path: '/admin/tickets', name: 'admin-tickets', icon: 'ChatDotRound', title: '工单管理' },
-  { path: '/admin/packages', name: 'admin-packages', icon: 'GoodsFilled', title: '套餐管理' },
-  { path: '/admin/gift-cards', name: 'admin-gift-cards', icon: 'Present', title: '礼品卡管理' },
-  { path: '/admin/coupons', name: 'admin-coupons', icon: 'Tickets', title: '优惠券管理' },
-  { path: '/admin/recharge-records', name: 'admin-recharge-records', icon: 'Money', title: '充值记录' },
-  { path: '/admin/purchase-records', name: 'admin-purchase-records', icon: 'ShoppingCart', title: '购买记录' },
-  { path: '/admin/nodes', name: 'admin-nodes', icon: 'Switch', title: '节点列表' },
-  { path: '/admin/users', name: 'admin-users', icon: 'Avatar', title: '用户列表' },
-  { path: '/admin/subscription-logs', name: 'admin-subscription-logs', icon: 'Tickets', title: '订阅记录' },
-  { path: '/admin/login-logs', name: 'admin-login-logs', icon: 'Clock', title: '登录记录' },
-  { path: '/admin/online-ips', name: 'admin-online-ips', icon: 'LocationInformation', title: '在线IP' },
-  { path: '/admin/audit-rules', name: 'admin-audit-rules', icon: 'View', title: '审计规则' },
-  { path: '/admin/whitelist', name: 'admin-whitelist', icon: 'CircleCheckFilled', title: '审计白名单' },
-  { path: '/admin/audit-logs', name: 'admin-audit-logs', icon: 'DocumentCopy', title: '审计记录' },
-  { path: '/admin/system-configs', name: 'admin-system-configs', icon: 'Tools', title: '系统配置' },
-  { path: '/admin/shared-ids', name: 'admin-shared-ids', icon: 'CollectionTag', title: '苹果账号管理' }
+  { path: '/admin/dashboard', name: 'admin-dashboard', icon: 'admin-dashboard', title: '管理概览' },
+  { path: '/admin/announcements', name: 'admin-announcements', icon: 'admin-announcements', title: '公告管理' },
+  { path: '/admin/tickets', name: 'admin-tickets', icon: 'admin-tickets', title: '工单管理' },
+  { path: '/admin/packages', name: 'admin-packages', icon: 'admin-packages', title: '套餐管理' },
+  {
+    path: '/admin/promotions',
+    name: 'admin-promotions',
+    icon: 'admin-promotions',
+    title: '优惠礼卡',
+    children: [
+      { path: '/admin/coupons', name: 'admin-coupons', icon: 'admin-coupons', title: '优惠券管理' },
+      { path: '/admin/gift-cards', name: 'admin-gift-cards', icon: 'admin-gift-cards', title: '礼品卡管理' }
+    ]
+  },
+  {
+    path: '/admin/transactions',
+    name: 'admin-transactions',
+    icon: 'admin-transactions',
+    title: '交易记录',
+    children: [
+      { path: '/admin/recharge-records', name: 'admin-recharge-records', icon: 'admin-recharge', title: '充值记录' },
+      { path: '/admin/purchase-records', name: 'admin-purchase-records', icon: 'admin-purchase', title: '购买记录' }
+    ]
+  },
+  {
+    path: '/admin/log-records',
+    name: 'admin-log-records',
+    icon: 'admin-logs-group',
+    title: '日志记录',
+    children: [
+      { path: '/admin/subscription-logs', name: 'admin-subscription-logs', icon: 'admin-subscription-logs', title: '订阅记录' },
+      { path: '/admin/login-logs', name: 'admin-login-logs', icon: 'admin-login-logs', title: '登录记录' },
+      { path: '/admin/online-ips', name: 'admin-online-ips', icon: 'admin-online-ips', title: '在线IP' }
+    ]
+  },
+  { path: '/admin/nodes', name: 'admin-nodes', icon: 'admin-nodes', title: '节点列表' },
+  { path: '/admin/users', name: 'admin-users', icon: 'admin-users', title: '用户列表' },
+  {
+    path: '/admin/audit-system',
+    name: 'admin-audit-system',
+    icon: 'admin-audit-group',
+    title: '审计系统',
+    children: [
+      { path: '/admin/audit-rules', name: 'admin-audit-rules', icon: 'admin-audit-rules', title: '审计规则' },
+      { path: '/admin/whitelist', name: 'admin-whitelist', icon: 'admin-whitelist', title: '审计白名单' },
+      { path: '/admin/audit-logs', name: 'admin-audit-logs', icon: 'admin-audit-logs', title: '审计记录' }
+    ]
+  },
+  { path: '/admin/shared-ids', name: 'admin-shared-ids', icon: 'admin-apple', title: '苹果账号' },
+  { path: '/admin/system-configs', name: 'admin-system-configs', icon: 'admin-system-configs', title: '系统配置' }
 ];
 
 // 禁用用户可访问的路由
@@ -234,12 +266,13 @@ window.addEventListener('resize', handleResize);
   position: relative;
   width: 250px;
   height: 100vh;
-  background: var(--sidebar-bg-color, #304156);
-  color: var(--sidebar-text-color, #ffffff);
+  background: var(--sidebar-bg-color, #f9fafb);
+  color: var(--sidebar-text-color, #1f2937);
   transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
   display: flex;
   flex-direction: column;
-  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.1);
+  box-shadow: 2px 0 6px rgba(15, 23, 42, 0.05);
+  border-right: 1px solid rgba(15, 23, 42, 0.06);
 
   &.sidebar-collapse {
     width: 64px;
@@ -291,30 +324,24 @@ window.addEventListener('resize', handleResize);
     :deep(.el-menu-item) {
       height: 48px;
       line-height: 48px;
-      color: var(--sidebar-text-color, #bfcbd9);
+      color: var(--sidebar-text-color, #4b5563);
       border-bottom: none;
-      padding: 0 20px;
+      margin: 4px 12px;
+      width: calc(100% - 24px);
+      border-radius: 8px;
+      padding: 0 16px;
+      font-weight: 500;
       transition: all 0.3s ease;
 
       &:hover {
-        background-color: rgba(255, 255, 255, 0.1);
-        color: #ffffff;
+        background-color: var(--sidebar-hover-bg);
+        color: var(--sidebar-text-color);
       }
 
       &.is-active {
-        background-color: var(--sidebar-active-bg, #409eff);
+        background-color: #3b82f6;
         color: #ffffff;
-        position: relative;
-
-        &::before {
-          content: '';
-          position: absolute;
-          left: 0;
-          top: 0;
-          bottom: 0;
-          width: 3px;
-          background: #ffffff;
-        }
+        box-shadow: none;
       }
 
       .el-icon {
@@ -326,31 +353,54 @@ window.addEventListener('resize', handleResize);
         justify-content: center;
       }
     }
+
+    :deep(.el-sub-menu__title) {
+      height: 48px;
+      line-height: 48px;
+      color: var(--sidebar-text-color, #4b5563);
+      margin: 4px 12px;
+      width: calc(100% - 24px);
+      border-radius: 8px;
+      padding: 0 16px;
+      font-weight: 500;
+      transition: all 0.3s ease;
+
+      &:hover {
+        background-color: var(--sidebar-hover-bg);
+        color: var(--sidebar-text-color);
+      }
+
+      .el-sub-menu__icon-arrow {
+        right: 12px;
+      }
+    }
+
+    :deep(.el-sub-menu.is-active > .el-sub-menu__title) {
+      background-color: var(--sidebar-active-bg);
+      color: #1f2937;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+    }
+
+    :deep(.el-menu--inline) {
+      background: transparent;
+      padding-left: 12px;
+
+      .el-menu-item {
+        margin: 4px 0 4px 12px;
+        width: calc(100% - 36px);
+      }
+    }
   }
 }
 
 // CSS 变量定义
-:root {
-  --sidebar-bg-color: #304156;
-  --sidebar-text-color: #ffffff;
-  --sidebar-active-bg: #409eff;
-  --sidebar-hover-bg: rgba(255, 255, 255, 0.1);
-}
-
-// 深色主题变量
-[data-theme='dark'] {
-  --sidebar-bg-color: #1f2937;
-  --sidebar-text-color: #e5e7eb;
-  --sidebar-active-bg: #3b82f6;
-  --sidebar-hover-bg: rgba(255, 255, 255, 0.05);
-}
-
-// 浅色主题变量
+:root,
+[data-theme='dark'],
 [data-theme='light'] {
-  --sidebar-bg-color: #ffffff;
-  --sidebar-text-color: #374151;
-  --sidebar-active-bg: #3b82f6;
-  --sidebar-hover-bg: rgba(59, 130, 246, 0.1);
+  --sidebar-bg-color: #f9fafb;
+  --sidebar-text-color: #1f2937;
+  --sidebar-active-bg: rgba(59, 130, 246, 0.15);
+  --sidebar-hover-bg: rgba(17, 24, 39, 0.05);
 }
 
 // 响应式设计
