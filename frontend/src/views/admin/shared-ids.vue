@@ -22,7 +22,13 @@
         >
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
-        <el-select v-model="filters.status" placeholder="状态" clearable style="width: 150px; margin-right: 12px;">
+        <el-select
+          v-model="filters.status"
+          placeholder="状态"
+          clearable
+          style="width: 150px; margin-right: 12px;"
+          @change="handleSearch"
+        >
           <el-option label="全部状态" value="" />
           <el-option label="启用" value="1" />
           <el-option label="禁用" value="0" />
