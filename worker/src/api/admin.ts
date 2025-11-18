@@ -875,6 +875,7 @@ export class AdminAPI {
 
           return {
             ...user,
+            register_ip: ensureString(user.register_ip),
             transfer_used: transferTotal,
             transfer_remain: Math.max(0, transferEnable - transferTotal),
             is_expired: expireTime ? expireTime < new Date() : false,
@@ -1102,6 +1103,7 @@ export class AdminAPI {
         return errorResponse("Email or username already exists", 409);
       }
 
+      await this.db.ensureUsersRegisterIpColumn();
       // 创建用户
       const hashedPassword = await hashPassword(userData.password);
       const uuid = generateUUID();
@@ -1140,11 +1142,27 @@ export class AdminAPI {
         )
         .run();
 
+      let newUserId =
+        result?.meta?.last_row_id ?? result?.meta?.last_rowid ?? null;
+      if (newUserId === null) {
+        const fallback = await this.db.db
+          .prepare("SELECT id FROM users WHERE email = ? ORDER BY id DESC LIMIT 1")
+          .bind(userData.email)
+          .first<{ id: number } | null>();
+        if (fallback?.id) {
+          newUserId = ensureNumber(fallback.id, null);
+        }
+      }
+
+      if (newUserId === null) {
+        return errorResponse("创建用户失败", 500);
+      }
+
       // 清除缓存
       await this.cache.deleteByPrefix("user_");
 
       return successResponse({
-        user_id: result.meta.last_row_id,
+        user_id: newUserId,
         message: "User created successfully",
       });
     } catch (error) {

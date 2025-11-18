@@ -728,6 +728,7 @@ export class AuthAPI {
     tempPassword: string;
     passwordEmailSent: boolean;
   }> {
+    await this.db.ensureUsersRegisterIpColumn();
     const tempPassword = generateRandomString(16);
     const hashedPassword = await hashPassword(tempPassword);
     const uuid = generateUUID();
@@ -975,6 +976,33 @@ export class AuthAPI {
         </div>
       </div>
     `;
+  }
+
+  private buildUserResponsePayload(user: AuthUserRow) {
+    const transferEnable = ensureNumber((user as any).transfer_enable);
+    const transferTotal = ensureNumber((user as any).transfer_total);
+
+    return {
+      id: user.id,
+      email: ensureString(user.email),
+      username: ensureString(user.username),
+      uuid: ensureString((user as any).uuid),
+      passwd: ensureString((user as any).passwd),
+      is_admin: ensureNumber(user.is_admin) === 1,
+      class: ensureNumber((user as any).class),
+      class_expire_time: ensureString((user as any).class_expire_time),
+      expire_time: ensureString((user as any).expire_time),
+      upload_traffic: ensureNumber((user as any).upload_traffic),
+      download_traffic: ensureNumber((user as any).download_traffic),
+      upload_today: ensureNumber((user as any).upload_today),
+      download_today: ensureNumber((user as any).download_today),
+      transfer_total: transferTotal,
+      transfer_enable: transferEnable,
+      transfer_remain: Math.max(0, transferEnable - transferTotal),
+      speed_limit: ensureNumber((user as any).speed_limit),
+      device_limit: ensureNumber((user as any).device_limit),
+      status: ensureNumber(user.status),
+    };
   }
 
   getPurposeMeta(purpose: string) {
@@ -2287,6 +2315,7 @@ export class AuthAPI {
   }
 
   async register(request) {
+    let createdUserId: number | null = null;
     try {
       const body = await request.json();
       const rawEmail =
@@ -2376,6 +2405,8 @@ export class AuthAPI {
         request.headers.get("X-Real-IP") ||
         "unknown";
 
+      await this.db.ensureUsersRegisterIpColumn();
+
       // 创建用户
       const hashedPassword = await hashPassword(password);
       const uuid = generateUUID();
@@ -2448,7 +2479,20 @@ export class AuthAPI {
         .run()
       );
 
-      const userId = getLastRowId(insertResult);
+      let userId = getLastRowId(insertResult);
+      createdUserId = userId;
+
+      if (userId === null) {
+        const fallbackIdRow = await this.db.db
+          .prepare("SELECT id FROM users WHERE email = ? ORDER BY id DESC LIMIT 1")
+          .bind(email)
+          .first<{ id: number } | null>();
+        if (fallbackIdRow?.id) {
+          userId = ensureNumber(fallbackIdRow.id, null);
+          createdUserId = userId;
+        }
+      }
+
       if (userId === null) {
         return errorResponse("创建用户失败", 500);
       }
@@ -2469,64 +2513,48 @@ export class AuthAPI {
         return errorResponse("获取用户信息失败", 500);
       }
       
-      // 保存会话，包含代理连接所需信息但不包含密码哈希
-      await this.cache.set(
-        `session_${token}`,
-        JSON.stringify({
-          id: newUser.id,
-          email: ensureString(newUser.email),
-          username: ensureString(newUser.username),
-          uuid: ensureString((newUser as any).uuid),
-          passwd: ensureString((newUser as any).passwd),
-          is_admin: ensureNumber(newUser.is_admin),
-          class: ensureNumber((newUser as any).class),
-          class_expire_time: ensureString(
-            (newUser as Record<string, unknown>).class_expire_time as string | undefined
-          ),
-          upload_traffic: ensureNumber((newUser as any).upload_traffic),
-          download_traffic: ensureNumber((newUser as any).download_traffic),
-          upload_today: ensureNumber((newUser as any).upload_today),
-          download_today: ensureNumber((newUser as any).download_today),
-          transfer_total: ensureNumber((newUser as any).transfer_total),
-          transfer_enable: ensureNumber((newUser as any).transfer_enable),
-          expire_time: ensureString((newUser as any).expire_time),
-          speed_limit: ensureNumber((newUser as any).speed_limit),
-          device_limit: ensureNumber((newUser as any).device_limit),
-          status: ensureNumber(newUser.status),
-        }),
-        86400
-      );
-
-      // 清除用户缓存
-      await this.cache.deleteByPrefix("user_");
-      await this.cleanupVerificationCodes(email, PURPOSE_REGISTER);
-
-      // 返回新用户信息，包含代理连接所需的passwd，但不包含password_hash和subscription_token
-      const userTransferEnable = ensureNumber((newUser as any).transfer_enable);
-      const userTransferTotal = ensureNumber((newUser as any).transfer_total);
-
-      const newUserResponse = {
+      const sessionPayload = JSON.stringify({
         id: newUser.id,
         email: ensureString(newUser.email),
         username: ensureString(newUser.username),
         uuid: ensureString((newUser as any).uuid),
         passwd: ensureString((newUser as any).passwd),
-        is_admin: ensureNumber(newUser.is_admin) === 1,
+        is_admin: ensureNumber(newUser.is_admin),
         class: ensureNumber((newUser as any).class),
-        class_expire_time: ensureString((newUser as any).class_expire_time),
-        expire_time: ensureString((newUser as any).expire_time),
+        class_expire_time: ensureString(
+          (newUser as Record<string, unknown>).class_expire_time as string | undefined
+        ),
         upload_traffic: ensureNumber((newUser as any).upload_traffic),
         download_traffic: ensureNumber((newUser as any).download_traffic),
         upload_today: ensureNumber((newUser as any).upload_today),
         download_today: ensureNumber((newUser as any).download_today),
-        transfer_total: userTransferTotal,
-        transfer_enable: userTransferEnable,
-        transfer_remain: Math.max(0, userTransferEnable - userTransferTotal),
+        transfer_total: ensureNumber((newUser as any).transfer_total),
+        transfer_enable: ensureNumber((newUser as any).transfer_enable),
+        expire_time: ensureString((newUser as any).expire_time),
         speed_limit: ensureNumber((newUser as any).speed_limit),
         device_limit: ensureNumber((newUser as any).device_limit),
         status: ensureNumber(newUser.status),
-        // 注意：不返回subscription_token，它只在重置订阅时才返回
-      };
+      });
+
+      try {
+        await this.cache.set(`session_${token}`, sessionPayload, 86400);
+      } catch (cacheError) {
+        console.error("register session cache error:", cacheError);
+      }
+
+      try {
+        await this.cache.deleteByPrefix("user_");
+      } catch (cacheError) {
+        console.error("register cache cleanup error:", cacheError);
+      }
+
+      try {
+        await this.cleanupVerificationCodes(email, PURPOSE_REGISTER);
+      } catch (cleanupError) {
+        console.error("register cleanup verification code error:", cleanupError);
+      }
+
+      const newUserResponse = this.buildUserResponsePayload(newUser);
 
       return successResponse({
         message: "Registration successful",
@@ -2535,6 +2563,37 @@ export class AuthAPI {
       });
     } catch (error) {
       console.error("Registration error:", error);
+      if (createdUserId !== null) {
+        try {
+          const fallbackUser = await this.db.db
+            .prepare("SELECT * FROM users WHERE id = ?")
+            .bind(createdUserId)
+            .first<AuthUserRow>();
+
+          if (fallbackUser) {
+            const fallbackToken = await generateToken(
+              {
+                userId: fallbackUser.id,
+                email: ensureString(fallbackUser.email),
+                isAdmin: false,
+              },
+              this.env.JWT_SECRET
+            );
+            const fallbackResponse = this.buildUserResponsePayload(
+              fallbackUser
+            );
+
+            return successResponse({
+              message: "Registration successful",
+              token: fallbackToken,
+              user: fallbackResponse,
+              warnings: ["post_registration_noncritical_error"],
+            });
+          }
+        } catch (fallbackError) {
+          console.error("Registration fallback error:", fallbackError);
+        }
+      }
       return errorResponse(error.message, 500);
     }
   }
