@@ -36,6 +36,7 @@ export interface User {
   avatar?: string;
   u?: number;
   d?: number;
+  register_ip?: string | null;
 }
 
 // 节点相关类型
@@ -48,6 +49,8 @@ export interface Node {
   node_class: number;
   node_bandwidth: number;
   node_bandwidth_limit: number;
+  traffic_multiplier?: number;
+  bandwidthlimit_resetday?: number;
   node_config: string;
   status: number;
   is_online?: boolean;
@@ -164,8 +167,11 @@ export interface TrafficRecord {
   node_name: string;
   upload_traffic: number;
   download_traffic: number;
+  actual_upload_traffic?: number;
+  actual_download_traffic?: number;
   total_traffic: number;
-  rate: number;
+  actual_traffic: number;
+  deduction_multiplier: number;
   log_time: string;
   created_at: string;
 }

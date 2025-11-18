@@ -26,12 +26,6 @@ type DailyTrafficRow = {
   total_traffic: number | null;
 };
 
-type TodayTrafficRow = {
-  upload_traffic: number | null;
-  download_traffic: number | null;
-  total_traffic: number | null;
-};
-
 type SummaryRow = {
   week_upload?: number | null;
   week_download?: number | null;
@@ -74,8 +68,11 @@ type TrafficLogRow = {
   node_name: string | null;
   upload_traffic: number | null;
   download_traffic: number | null;
+  actual_upload_traffic: number | null;
+  actual_download_traffic: number | null;
   total_traffic: number | null;
-  rate: number | null;
+  actual_traffic: number | null;
+  deduction_multiplier: number | null;
   log_time: string;
   created_at: string;
 };
@@ -87,8 +84,11 @@ type DailyTrafficRecordRow = {
   node_name: string;
   upload_traffic: number | null;
   download_traffic: number | null;
+  actual_upload_traffic: number | null;
+  actual_download_traffic: number | null;
   total_traffic: number | null;
-  rate: number | null;
+  actual_traffic: number | null;
+  deduction_multiplier: number | null;
   log_time: string;
   created_at: string;
 };
@@ -152,21 +152,20 @@ export class TrafficAPI {
       let trends: UserTrafficTrend[] = [];
       
       if (period === 'today') {
-        // 获取今天的流量数据
         const todayResult = await this.db.db
           .prepare(`
             SELECT 
               date('now', '+8 hours') as date,
               '今天' as label,
-              COALESCE(SUM(upload_today), 0) as upload_traffic,
-              COALESCE(SUM(download_today), 0) as download_traffic,
-              COALESCE(SUM(upload_today + download_today), 0) as total_traffic
-            FROM users 
-            WHERE id = ?
+              COALESCE(SUM(actual_upload_traffic), 0) as upload_traffic,
+              COALESCE(SUM(actual_download_traffic), 0) as download_traffic,
+              COALESCE(SUM(actual_traffic), 0) as total_traffic
+            FROM traffic_logs
+            WHERE user_id = ? AND date = date('now', '+8 hours')
           `)
           .bind(userId)
           .first<TrendRow>();
-          
+
         if (todayResult) {
           trends = [{
             date: todayResult.date,
@@ -197,20 +196,21 @@ export class TrafficAPI {
           });
         }
         
-        // 查询每日流量统计
+        const lookbackDays = Math.max(daysCount - 1, 0);
         const dailyTrafficResult = await this.db.db
           .prepare(`
             SELECT 
-              record_date as date,
-              COALESCE(upload_traffic, 0) as upload_traffic,
-              COALESCE(download_traffic, 0) as download_traffic,
-              COALESCE(total_traffic, 0) as total_traffic
-            FROM daily_traffic 
+              date as date,
+              COALESCE(SUM(actual_upload_traffic), 0) as upload_traffic,
+              COALESCE(SUM(actual_download_traffic), 0) as download_traffic,
+              COALESCE(SUM(actual_traffic), 0) as total_traffic
+            FROM traffic_logs 
             WHERE user_id = ? 
-              AND record_date >= date('now', '+8 hours', '-' || ? || ' days')
-            ORDER BY record_date ASC
+              AND date >= date('now', '+8 hours', '-' || ? || ' days')
+            GROUP BY date
+            ORDER BY date ASC
           `)
-          .bind(userId, daysCount)
+          .bind(userId, lookbackDays)
           .all<DailyTrafficRow>();
         
         const dailyData = dailyTrafficResult.results ?? [];
@@ -223,27 +223,6 @@ export class TrafficAPI {
         
         // 如果是今天，需要从users表获取当日流量
         const todayStr = beijingTime.toISOString().split('T')[0];
-        const todayUserResult = await this.db.db
-          .prepare(`
-            SELECT 
-              COALESCE(upload_today, 0) as upload_traffic,
-              COALESCE(download_today, 0) as download_traffic,
-              COALESCE(upload_today + download_today, 0) as total_traffic
-            FROM users 
-            WHERE id = ?
-          `)
-          .bind(userId)
-          .first<TodayTrafficRow>();
-        
-        if (todayUserResult && !dataMap[todayStr]) {
-          dataMap[todayStr] = {
-            date: todayStr,
-            upload_traffic: todayUserResult.upload_traffic,
-            download_traffic: todayUserResult.download_traffic,
-            total_traffic: todayUserResult.total_traffic
-          };
-        }
-        
         // 合并数据，确保所有日期都有数据
         trends = dateList.map<UserTrafficTrend>((dateItem) => {
           const data = dataMap[dateItem.date];
@@ -392,8 +371,11 @@ export class TrafficAPI {
             n.name as node_name,
             tl.upload_traffic,
             tl.download_traffic,
+            tl.actual_upload_traffic,
+            tl.actual_download_traffic,
             (tl.upload_traffic + tl.download_traffic) as total_traffic,
-            0 as rate,
+            tl.actual_traffic,
+            tl.deduction_multiplier,
             tl.date as log_time,
             tl.created_at
           FROM traffic_logs tl
@@ -418,8 +400,11 @@ export class TrafficAPI {
               'Multiple Nodes' as node_name,
               upload_traffic,
               download_traffic,
+              upload_traffic as actual_upload_traffic,
+              download_traffic as actual_download_traffic,
               total_traffic,
-              0 as rate,
+              total_traffic as actual_traffic,
+              1 as deduction_multiplier,
               record_date as log_time,
               datetime(created_at, 'unixepoch') as created_at
             FROM daily_traffic

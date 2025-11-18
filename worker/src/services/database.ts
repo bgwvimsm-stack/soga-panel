@@ -1,7 +1,7 @@
 // src/services/database.ts - 数据库服务（更新版）
 
 import type { D1Database } from "@cloudflare/workers-types";
-import { getChanges, toRunResult } from "../utils/d1";
+import { ensureNumber, getChanges, toRunResult } from "../utils/d1";
 
 export class DatabaseService {
   public readonly db: D1Database;
@@ -127,10 +127,33 @@ export class DatabaseService {
 
   // 更新用户流量
   async updateUserTraffic(trafficData, nodeId) {
+    const nodeRow = await this.db
+      .prepare("SELECT traffic_multiplier FROM nodes WHERE id = ?")
+      .bind(nodeId)
+      .first<{ traffic_multiplier?: number | string | null } | null>();
+    const rawMultiplier = ensureNumber(nodeRow?.traffic_multiplier, 1);
+    const trafficMultiplier = rawMultiplier > 0 ? rawMultiplier : 1;
     const now = new Date(Date.now() + 8 * 60 * 60 * 1000);
     const date = now.toISOString().split("T")[0];
 
     for (const traffic of trafficData) {
+      const userId = ensureNumber(traffic.id);
+      if (userId <= 0) {
+        continue;
+      }
+      const upload = Math.max(0, ensureNumber(traffic.u));
+      const download = Math.max(0, ensureNumber(traffic.d));
+      const total = upload + download;
+      const actualUpload = Math.max(
+        0,
+        Math.round(upload * trafficMultiplier)
+      );
+      const actualDownload = Math.max(
+        0,
+        Math.round(download * trafficMultiplier)
+      );
+      const deductedTotal = Math.max(0, actualUpload + actualDownload);
+
       // 更新用户总流量和今日流量（分别记录上传和下载）
       await this.db
         .prepare(
@@ -146,12 +169,12 @@ export class DatabaseService {
       `
         )
         .bind(
-          traffic.u,
-          traffic.d,
-          traffic.u,
-          traffic.d,
-          traffic.u + traffic.d,
-          traffic.id
+          upload,
+          download,
+          upload,
+          download,
+          deductedTotal,
+          userId
         )
         .run();
 
@@ -160,22 +183,29 @@ export class DatabaseService {
         .prepare(
           `
         INSERT INTO traffic_logs 
-        (user_id, node_id, upload_traffic, download_traffic, date, created_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now', '+8 hours'))
+        (user_id, node_id, upload_traffic, download_traffic, actual_upload_traffic, actual_download_traffic, actual_traffic, deduction_multiplier, date, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'))
       `
         )
         .bind(
-          traffic.id,
+          userId,
           nodeId,
-          traffic.u,
-          traffic.d,
+          upload,
+          download,
+          actualUpload,
+          actualDownload,
+          deductedTotal,
+          trafficMultiplier,
           date
         )
         .run();
     }
 
     // 更新节点流量
-    const totalTraffic = trafficData.reduce((sum, t) => sum + t.u + t.d, 0);
+    const totalTraffic = trafficData.reduce(
+      (sum, t) => sum + ensureNumber(t.u) + ensureNumber(t.d),
+      0
+    );
     await this.db
       .prepare(
         `
