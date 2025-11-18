@@ -872,10 +872,12 @@ export class AdminAPI {
           const classExpireTime = user.class_expire_time
             ? new Date(String(user.class_expire_time))
             : null;
+          const registerIp = ensureString(user.register_ip);
 
           return {
             ...user,
-            register_ip: ensureString(user.register_ip),
+            register_ip: registerIp,
+            registerIp,
             transfer_used: transferTotal,
             transfer_remain: Math.max(0, transferEnable - transferTotal),
             is_expired: expireTime ? expireTime < new Date() : false,
