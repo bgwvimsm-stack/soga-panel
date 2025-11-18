@@ -64,6 +64,7 @@ export interface User {
   bark_enabled?: boolean;
   is_admin?: number;
   money?: number | string;
+  register_ip?: string | null;
 }
 
 export interface CreateUserRequest {

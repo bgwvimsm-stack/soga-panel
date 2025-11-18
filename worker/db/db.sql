@@ -34,6 +34,7 @@
 -- class_expire_time: 等级过期时间（UTC+8时区）
 -- bark_key: 用户的Bark通知Key，格式如 https://api.day.app/your_key/
 -- bark_enabled: 是否启用Bark通知 (0-禁用，1-启用)
+-- register_ip: 用户注册时记录的IP地址
 -- created_at: 创建时间（UTC+8时区）
 -- updated_at: 更新时间（UTC+8时区）
 CREATE TABLE
@@ -75,6 +76,7 @@ CREATE TABLE
         two_factor_temp_secret TEXT,
         two_factor_confirmed_at DATETIME,
         money DECIMAL(10,2) DEFAULT 0.00,
+        register_ip TEXT,
         created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
         updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
     );

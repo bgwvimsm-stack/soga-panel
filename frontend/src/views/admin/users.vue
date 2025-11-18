@@ -117,6 +117,10 @@
           <template #prefix>
             <el-icon><Search /></el-icon>
           </template>
+          <!-- 注册 IP -->
+          <template #register_ip="{ row }">
+            <span>{{ row.register_ip || '-' }}</span>
+          </template>
         </el-input>
 
         <el-select
@@ -532,6 +536,7 @@ const columns = [
   { field: 'class_expire_time', title: '等级过期时间', width: 180, visible: true, slots: { default: 'class_expire_time' } },
   { field: 'expire_time', title: '账户过期时间', width: 180, visible: false, slots: { default: 'expire_time' } },
   { field: 'created_at', title: '注册时间', width: 180, visible: false, slots: { default: 'created_at' } },
+  { field: 'register_ip', title: '注册IP', width: 160, visible: false, slots: { default: 'register_ip' } },
   { field: 'is_admin', title: '管理员', width: 100, visible: false, slots: { default: 'is_admin' } },
   { field: 'actions', title: '操作', width: 90, align: 'right', fixed: 'right', visible: true, slots: { default: 'actions' }, columnSelectable: false }
 ];

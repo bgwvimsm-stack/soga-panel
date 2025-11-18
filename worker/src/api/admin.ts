@@ -67,6 +67,7 @@ interface UserListRow {
   speed_limit: number | null;
   device_limit: number | null;
   money: number | null;
+  register_ip: string | null;
 }
 
 interface UserExportRow {
@@ -848,7 +849,8 @@ export class AdminAPI {
                u.upload_traffic, u.download_traffic, COALESCE(t.actual_total, 0) as transfer_today,
                u.transfer_enable, u.transfer_total, u.expire_time,
                u.status, u.is_admin, u.reg_date, u.last_login_time, u.created_at,
-               u.bark_key, u.bark_enabled, u.speed_limit, u.device_limit, u.money
+               u.bark_key, u.bark_enabled, u.speed_limit, u.device_limit, u.money,
+               u.register_ip
         FROM users u
         LEFT JOIN today_usage t ON t.user_id = u.id
         ${whereClause}
@@ -1079,6 +1081,11 @@ export class AdminAPI {
       }
 
       const userData = await request.json();
+      const registerIP =
+        request.headers.get("CF-Connecting-IP") ||
+        request.headers.get("X-Forwarded-For") ||
+        request.headers.get("X-Real-IP") ||
+        "admin_panel";
 
       // 验证必填字段
       if (!userData.email || !userData.username || !userData.password) {
@@ -1105,8 +1112,8 @@ export class AdminAPI {
         INSERT INTO users (
           email, username, password_hash, uuid, passwd, token,
           transfer_enable, expire_time, class, class_expire_time, speed_limit, 
-          device_limit, tcp_limit, is_admin, status, bark_key, bark_enabled
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          device_limit, tcp_limit, is_admin, status, bark_key, bark_enabled, register_ip
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const result = await stmt
@@ -1128,7 +1135,8 @@ export class AdminAPI {
           userData.is_admin || 0,
           userData.status || 1,
           userData.bark_key || null,
-          userData.bark_enabled ? 1 : 0
+          userData.bark_enabled ? 1 : 0,
+          registerIP
         )
         .run();
 

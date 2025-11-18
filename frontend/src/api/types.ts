@@ -36,6 +36,7 @@ export interface User {
   avatar?: string;
   u?: number;
   d?: number;
+  register_ip?: string | null;
 }
 
 // 节点相关类型

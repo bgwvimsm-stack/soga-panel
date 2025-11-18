@@ -748,8 +748,8 @@ export class AuthAPI {
       INSERT INTO users (
         email, username, password_hash, uuid, passwd, token,
         ${identifierColumn}, oauth_provider, first_oauth_login_at, last_oauth_login_at,
-        transfer_enable, expire_time, class, class_expire_time, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'), ?, ?, ?, ?, 1)
+        transfer_enable, expire_time, class, class_expire_time, status, register_ip
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'), ?, ?, ?, ?, 1, ?)
     `);
 
     const insertResult = await insertStmt
@@ -765,7 +765,8 @@ export class AuthAPI {
         defaults.transferEnable,
         defaults.accountExpireTime,
         defaults.defaultClass,
-        defaults.classExpireTime
+        defaults.classExpireTime,
+        pending.clientIP || "unknown"
       )
       .run();
 
@@ -2369,6 +2370,12 @@ export class AuthAPI {
         }
       }
 
+      const registerIP =
+        request.headers.get("CF-Connecting-IP") ||
+        request.headers.get("X-Forwarded-For") ||
+        request.headers.get("X-Real-IP") ||
+        "unknown";
+
       // 创建用户
       const hashedPassword = await hashPassword(password);
       const uuid = generateUUID();
@@ -2378,8 +2385,8 @@ export class AuthAPI {
       const stmt = this.db.db.prepare(`
         INSERT INTO users (
           email, username, password_hash, uuid, passwd, token,
-          transfer_enable, expire_time, class, class_expire_time, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+          transfer_enable, expire_time, class, class_expire_time, status, register_ip
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
       `);
 
       const transferEnableParsed = Number.parseInt(
@@ -2435,7 +2442,8 @@ export class AuthAPI {
           transferEnableValue,
           accountExpireTime,
           defaultClassValue,
-          classExpireTime
+          classExpireTime,
+          registerIP
         )
         .run()
       );
