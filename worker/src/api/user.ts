@@ -399,6 +399,7 @@ export class UserAPI {
           node_class: node.node_class,
           node_bandwidth: node.node_bandwidth,
           node_bandwidth_limit: node.node_bandwidth_limit,
+          traffic_multiplier: node.traffic_multiplier ?? 1,
           status: node.status,
           node_config: node.node_config,
           config: config,

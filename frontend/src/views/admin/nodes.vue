@@ -59,6 +59,11 @@
           <template #node_class="{ row }">
             <el-tag size="small">{{ row.node_class }}</el-tag>
           </template>
+          <template #traffic_multiplier="{ row }">
+            <el-tag size="small" type="info">
+              x{{ Number(row.traffic_multiplier || 1).toFixed(2) }}
+            </el-tag>
+          </template>
           <template #bandwidth_limit="{ row }">
             <span v-if="row.node_bandwidth_limit > 0">{{ formatTraffic(row.node_bandwidth_limit) }}</span>
             <span v-else>无限制</span>
@@ -170,10 +175,26 @@
             </el-form-item>
           </el-col>
         </el-row>
-        <el-form-item label="流量重置日期">
-          <el-input-number v-model="nodeForm.bandwidthlimit_resetday" :min="1" :max="31" placeholder="每月重置日期" style="width: 200px" />
-          <small>每月几号重置流量，1-31</small>
-        </el-form-item>
+        <el-row :gutter="20">
+          <el-col :span="12">
+            <el-form-item label="扣费倍率" prop="traffic_multiplier">
+              <el-input-number
+                v-model="nodeForm.traffic_multiplier"
+                :min="0.1"
+                :step="0.1"
+                :precision="2"
+                style="width: 100%"
+              />
+              <small>节点流量扣费倍率，1表示不加成，可输入小数</small>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="流量重置日期">
+              <el-input-number v-model="nodeForm.bandwidthlimit_resetday" :min="1" :max="31" placeholder="每月重置日期" style="width: 100%" />
+              <small>每月几号重置流量，1-31</small>
+            </el-form-item>
+          </el-col>
+        </el-row>
         <el-form-item label="节点配置">
           <el-input v-model="nodeForm.node_config" type="textarea" :rows="6" placeholder="请输入JSON格式的节点配置" />
           <small>节点的具体配置参数，JSON格式</small>
@@ -194,6 +215,9 @@
           <el-descriptions-item label="节点类型">{{ selectedNode.type }}</el-descriptions-item>
           <el-descriptions-item label="节点地址">{{ selectedNode.server }}:{{ selectedNode.server_port }}</el-descriptions-item>
           <el-descriptions-item label="节点等级">等级{{ selectedNode.node_class }}</el-descriptions-item>
+          <el-descriptions-item label="扣费倍率">
+            x{{ Number(selectedNode.traffic_multiplier || 1).toFixed(2) }}
+          </el-descriptions-item>
           <el-descriptions-item label="当前状态">
             <el-tag :type="selectedNode.status === 1 ? 'success' : 'danger'">{{ selectedNode.status === 1 ? '启用' : '禁用' }}</el-tag>
           </el-descriptions-item>
@@ -202,7 +226,7 @@
             {{ selectedNode.node_bandwidth_limit > 0 ? formatTraffic(selectedNode.node_bandwidth_limit) : '无限制' }}
           </el-descriptions-item>
           <el-descriptions-item label="重置日期">
-            {{ (selectedNode as any).bandwidthlimit_resetday ? `每月${(selectedNode as any).bandwidthlimit_resetday}号` : '未设置' }}
+            {{ selectedNode.bandwidthlimit_resetday ? `每月${selectedNode.bandwidthlimit_resetday}号` : '未设置' }}
           </el-descriptions-item>
           <el-descriptions-item label="创建时间">{{ formatDateTime(selectedNode.created_at) }}</el-descriptions-item>
           <el-descriptions-item label="更新时间">{{ formatDateTime(selectedNode.updated_at) }}</el-descriptions-item>
@@ -260,6 +284,7 @@ const columns = [
   { field: 'server', title: '地址', minWidth: 180, visible: true, slots: { default: 'server' } },
   { field: 'server_port', title: '端口', width: 100, visible: true, slots: { default: 'server_port' } },
   { field: 'node_class', title: '等级', width: 100, visible: true, slots: { default: 'node_class' } },
+  { field: 'traffic_multiplier', title: '倍率', width: 100, visible: true, slots: { default: 'traffic_multiplier' } },
   { field: 'bandwidth_limit', title: '流量限制', width: 120, visible: true, slots: { default: 'bandwidth_limit' } },
   { field: 'traffic_used', title: '已用流量', width: 120, visible: true, slots: { default: 'traffic_used' } },
   { field: 'status', title: '状态', width: 100, visible: true, slots: { default: 'status' } },
@@ -276,6 +301,7 @@ const nodeForm = reactive({
   tls_host: '',
   node_class: 0,
   node_bandwidth_limit_gb: 0,
+  traffic_multiplier: 1,
   node_bandwidth: 0,
   bandwidthlimit_resetday: 1,
   node_config: ''
@@ -295,6 +321,10 @@ const nodeRules = {
   node_class: [
     { required: true, message: '请输入节点等级', trigger: 'change' },
     { type: 'number', min: 0, message: '节点等级必须为非负整数', trigger: 'change' }
+  ],
+  traffic_multiplier: [
+    { required: true, message: '请输入扣费倍率', trigger: 'change' },
+    { type: 'number', min: 0.1, message: '扣费倍率需大于0', trigger: 'change' }
   ]
 };
 
@@ -410,7 +440,8 @@ const editNode = (node: Node) => {
   }
 
   nodeForm.node_bandwidth = node.node_bandwidth || 0;
-  nodeForm.bandwidthlimit_resetday = (node as any).bandwidthlimit_resetday || 1;
+  nodeForm.bandwidthlimit_resetday = node.bandwidthlimit_resetday || 1;
+  nodeForm.traffic_multiplier = Number(node.traffic_multiplier || 1);
 
   if (node.node_config) {
     nodeForm.node_config = typeof node.node_config === 'string' ? node.node_config : JSON.stringify(node.node_config, null, 2);
@@ -437,7 +468,8 @@ const copyNode = (node: Node) => {
   }
 
   nodeForm.node_bandwidth = node.node_bandwidth || 0;
-  nodeForm.bandwidthlimit_resetday = (node as any).bandwidthlimit_resetday || 1;
+  nodeForm.bandwidthlimit_resetday = node.bandwidthlimit_resetday || 1;
+  nodeForm.traffic_multiplier = Number(node.traffic_multiplier || 1);
 
   if (node.node_config) {
     nodeForm.node_config = typeof node.node_config === 'string' ? node.node_config : JSON.stringify(node.node_config, null, 2);
@@ -524,6 +556,7 @@ const saveNode = async () => {
       node_class: nodeForm.node_class,
       node_bandwidth_limit: nodeForm.node_bandwidth_limit_gb > 0 ? nodeForm.node_bandwidth_limit_gb * 1024 * 1024 * 1024 : 0,
       node_bandwidth: nodeForm.node_bandwidth,
+      traffic_multiplier: nodeForm.traffic_multiplier > 0 ? nodeForm.traffic_multiplier : 1,
       bandwidthlimit_resetday: nodeForm.bandwidthlimit_resetday,
       node_config: nodeForm.node_config
     };
@@ -557,6 +590,7 @@ const resetForm = () => {
   nodeForm.node_class = 0;
   nodeForm.node_bandwidth_limit_gb = 0;
   nodeForm.node_bandwidth = 0;
+  nodeForm.traffic_multiplier = 1;
   nodeForm.bandwidthlimit_resetday = 1;
   nodeForm.node_config = '';
   nodeFormRef.value?.clearValidate();

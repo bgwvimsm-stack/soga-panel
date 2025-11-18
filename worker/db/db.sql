@@ -90,6 +90,7 @@ CREATE TABLE
 -- node_class: 节点等级（决定哪些用户等级可以访问此节点）
 -- node_bandwidth: 节点已用流量（字节）
 -- node_bandwidth_limit: 节点流量限制（字节，0表示无限制）
+-- traffic_multiplier: 节点流量倍率（扣费时使用，默认 1）
 -- bandwidthlimit_resetday: 节点流量重置日期（每月几号重置）
 -- node_config: 节点配置JSON（包含协议相关配置）
 -- status: 节点状态（0-禁用，1-启用）
@@ -106,6 +107,7 @@ CREATE TABLE
         node_class INTEGER DEFAULT 1,
         node_bandwidth INTEGER DEFAULT 0,
         node_bandwidth_limit INTEGER DEFAULT 0,
+        traffic_multiplier REAL DEFAULT 1,
         bandwidthlimit_resetday INTEGER DEFAULT 1,
         node_config TEXT NOT NULL DEFAULT '{}',
         status INTEGER DEFAULT 1,
@@ -244,6 +246,10 @@ CREATE TABLE
 -- node_id: 节点ID（外键关联nodes表）
 -- upload_traffic: 上传流量（字节）
 -- download_traffic: 下载流量（字节）
+-- actual_upload_traffic: 扣费倍率后折算的上传流量（字节）
+-- actual_download_traffic: 扣费倍率后折算的下载流量（字节）
+-- actual_traffic: 实际扣费流量（字节，含上传+下载）
+-- deduction_multiplier: 当次扣费倍率
 -- date: 统计日期（YYYY-MM-DD格式）
 -- created_at: 记录创建时间（UTC+8时区）
 CREATE TABLE
@@ -253,6 +259,10 @@ CREATE TABLE
         node_id INTEGER NOT NULL,
         upload_traffic INTEGER DEFAULT 0,
         download_traffic INTEGER DEFAULT 0,
+        actual_upload_traffic INTEGER DEFAULT 0,
+        actual_download_traffic INTEGER DEFAULT 0,
+        actual_traffic INTEGER DEFAULT 0,
+        deduction_multiplier REAL DEFAULT 1,
         date DATE NOT NULL,
         created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,

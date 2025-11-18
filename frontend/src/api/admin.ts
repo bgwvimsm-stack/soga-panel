@@ -319,6 +319,8 @@ export interface Node {
   node_class: number;
   node_bandwidth: number;
   node_bandwidth_limit: number;
+  traffic_multiplier?: number;
+  bandwidthlimit_resetday?: number;
   node_config: string;
   status: number;
   user_count?: number;
@@ -335,7 +337,9 @@ export interface CreateNodeRequest {
   tls_host?: string;
   node_class: number;
   node_bandwidth_limit?: number;
+  traffic_multiplier?: number;
   node_config?: string;
+  bandwidthlimit_resetday?: number;
 }
 
 export const getNodes = (params?: PaginationParams): Promise<ApiResponse<PaginationResponse<Node>>> => {

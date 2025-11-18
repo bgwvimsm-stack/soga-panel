@@ -162,6 +162,7 @@ import { getUser } from "@/utils/auth-soga";
 import { getAnnouncements, type Announcement } from "@/api/announcement";
 import http from "@/api/http";
 import type { User as UserType } from "@/api/types";
+import { getTrafficTrends } from "@/api/user";
 
 const router = useRouter();
 const userStore = useUserStore();
@@ -172,15 +173,39 @@ const onlineDeviceCount = ref(0);
 
 // 计算已使用流量
 const usedTraffic = computed(() => {
+  const total = Number(user.value?.transfer_total || 0);
+  if (Number.isFinite(total) && total > 0) {
+    return total;
+  }
   const upload = user.value?.upload_traffic || 0;
   const download = user.value?.download_traffic || 0;
   return upload + download;
 });
 
 // 计算今日已用流量
-const todayUsage = computed(() => {
-  return (user.value?.upload_today || 0) + (user.value?.download_today || 0);
-});
+const todayUsage = ref(0);
+
+const updateLocalTodayUsage = () => {
+  todayUsage.value = (user.value?.upload_today || 0) + (user.value?.download_today || 0);
+};
+
+const updateTodayUsage = async () => {
+  updateLocalTodayUsage();
+  try {
+    const { data } = await getTrafficTrends('today');
+    if (Array.isArray(data) && data.length > 0) {
+      const todayData = data[0];
+      const total = Number(todayData.total_traffic || 0);
+      if (total > 0) {
+        todayUsage.value = total;
+      } else {
+        todayUsage.value = Number(todayData.upload_traffic || 0) + Number(todayData.download_traffic || 0);
+      }
+    }
+  } catch (error) {
+    console.error('获取今日流量失败:', error);
+  }
+};
 
 // formatBytes函数已从@/utils/format导入
 
@@ -376,6 +401,7 @@ const loadData = async () => {
       loadPinnedAnnouncements(),
       loadOnlineDeviceCount()
     ]);
+    await updateTodayUsage();
   } catch (error) {
     console.error('加载数据失败:', error);
     ElMessage.error('加载数据失败');

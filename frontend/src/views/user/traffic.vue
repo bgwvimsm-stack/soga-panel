@@ -126,6 +126,12 @@
           <template #total_traffic="{ row }">
             <span class="total-traffic">{{ formatTraffic(row.total_traffic) }}</span>
           </template>
+          <template #actual_traffic="{ row }">
+            <span>{{ formatTraffic(row.actual_traffic ?? row.total_traffic) }}</span>
+          </template>
+          <template #deduction_multiplier="{ row }">
+            <el-tag size="small" type="info">x{{ formatMultiplier(row.deduction_multiplier) }}</el-tag>
+          </template>
         </vxe-grid>
       </template>
     </VxeTableBar>
@@ -177,6 +183,8 @@ const columns = [
   { field: 'upload_traffic', title: '上传流量', width: 120, visible: true, slots: { default: 'upload_traffic' } },
   { field: 'download_traffic', title: '下载流量', width: 120, visible: true, slots: { default: 'download_traffic' } },
   { field: 'total_traffic', title: '总流量', width: 120, visible: true, slots: { default: 'total_traffic' } },
+  { field: 'actual_traffic', title: '实际扣费', width: 130, visible: true, slots: { default: 'actual_traffic' } },
+  { field: 'deduction_multiplier', title: '扣费倍率', width: 120, visible: true, slots: { default: 'deduction_multiplier' } },
   { field: 'node_name', title: '节点名称', width: 150, visible: true }
 ];
 
@@ -186,6 +194,12 @@ const formatTraffic = (bytes: number): string => {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+const formatMultiplier = (value?: number | string): string => {
+  const num = Number(value || 1);
+  if (!Number.isFinite(num) || num <= 0) return '1.00';
+  return num.toFixed(2);
 };
 
 const formatDate = (dateStr: string): string => {
@@ -273,7 +287,9 @@ const updateTrafficStats = () => {
   const user = userStore.user;
   if (!user) return;
 
-  totalUsed.value = Number(user.upload_traffic || 0) + Number(user.download_traffic || 0);
+  const transferUsed = Number(user.transfer_total || 0);
+  const rawUsed = Number(user.upload_traffic || 0) + Number(user.download_traffic || 0);
+  totalUsed.value = transferUsed > 0 ? transferUsed : rawUsed;
   totalEnable.value = Number(user.transfer_enable || 0);
   remaining.value = Math.max(0, totalEnable.value - totalUsed.value);
   monthUsed.value = totalUsed.value; // 本月使用等于总使用
@@ -288,7 +304,12 @@ const loadTodayTraffic = async () => {
     const { data } = await getTrafficTrends('today');
     if (Array.isArray(data) && data.length > 0) {
       const todayData = data[0];
-      todayUsed.value = Number(todayData.upload_traffic || 0) + Number(todayData.download_traffic || 0);
+      const total = Number(todayData.total_traffic || 0);
+      if (total > 0) {
+        todayUsed.value = total;
+      } else {
+        todayUsed.value = Number(todayData.upload_traffic || 0) + Number(todayData.download_traffic || 0);
+      }
     } else {
       // 如果API没有数据，使用用户数据
       const user = userStore.user;

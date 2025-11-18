@@ -89,6 +89,11 @@
           <template #node_class="{ row }">
             <el-tag size="small">等级{{ row.node_class }}</el-tag>
           </template>
+          <template #traffic_multiplier="{ row }">
+            <el-tag size="small" type="info">
+              x{{ formatMultiplier(row.traffic_multiplier) }}
+            </el-tag>
+          </template>
           <template #traffic="{ row }">
             <div class="traffic-info">
               <span>{{ (row.user_total_traffic || 0) === 0 ? '未使用' : formatTraffic(row.user_total_traffic || 0) }}</span>
@@ -119,6 +124,7 @@
               <el-descriptions-item label="节点地址">{{ formatNodeAddress(selectedNode) }}</el-descriptions-item>
               <el-descriptions-item label="节点限速">{{ getSpeedLimit(selectedNode) }}</el-descriptions-item>
               <el-descriptions-item label="节点等级">等级{{ selectedNode.node_class }}</el-descriptions-item>
+              <el-descriptions-item label="扣费倍率">x{{ formatMultiplier(selectedNode.traffic_multiplier) }}</el-descriptions-item>
               <el-descriptions-item label="状态">
                 <el-tag :type="isNodeOnline(selectedNode) ? 'success' : 'danger'">
                   {{ isNodeOnline(selectedNode) ? '在线' : '离线' }}
@@ -160,6 +166,12 @@
                 <div class="info-label">节点等级</div>
                 <div class="info-value">
                   <el-tag size="small">等级{{ selectedNode.node_class }}</el-tag>
+                </div>
+              </div>
+              <div class="info-item">
+                <div class="info-label">扣费倍率</div>
+                <div class="info-value">
+                  <el-tag size="small" type="info">x{{ formatMultiplier(selectedNode.traffic_multiplier) }}</el-tag>
                 </div>
               </div>
               <div class="info-item">
@@ -303,6 +315,7 @@ const columns = [
   { field: 'name', title: '节点名称', minWidth: 180, visible: true, slots: { default: 'name' } },
   { field: 'type', title: '类型', width: 120, visible: true, slots: { default: 'type' } },
   { field: 'node_class', title: '等级', width: 100, visible: true, slots: { default: 'node_class' } },
+  { field: 'traffic_multiplier', title: '倍率', width: 100, visible: true, slots: { default: 'traffic_multiplier' } },
   { field: 'traffic', title: '流量使用', width: 180, visible: true, slots: { default: 'traffic' } },
   { field: 'status', title: '状态', width: 100, visible: true, slots: { default: 'status' } },
   { field: 'actions', title: '操作', width: 100, fixed: 'right', visible: true, slots: { default: 'actions' } }
@@ -357,6 +370,12 @@ const formatTraffic = (bytes: number): string => {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+const formatMultiplier = (value?: number | string): string => {
+  const num = Number(value || 1);
+  if (!Number.isFinite(num) || num <= 0) return '1.00';
+  return num.toFixed(2);
 };
 
 const wrapIPv6Host = (host: string): string => {

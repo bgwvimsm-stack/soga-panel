@@ -838,13 +838,21 @@ export class AdminAPI {
 
       // 获取用户列表
       const stmt = this.db.db.prepare(`
-        SELECT id, email, username, class, class_expire_time,
-               upload_traffic, download_traffic, (upload_today + download_today) as transfer_today,
-               transfer_enable, transfer_total, expire_time,
-               status, is_admin, reg_date, last_login_time, created_at,
-               bark_key, bark_enabled, speed_limit, device_limit, money
-        FROM users ${whereClause}
-        ORDER BY id ASC
+        WITH today_usage AS (
+          SELECT user_id, SUM(actual_traffic) AS actual_total
+          FROM traffic_logs
+          WHERE date = date('now', '+8 hours')
+          GROUP BY user_id
+        )
+        SELECT u.id, u.email, u.username, u.class, u.class_expire_time,
+               u.upload_traffic, u.download_traffic, COALESCE(t.actual_total, 0) as transfer_today,
+               u.transfer_enable, u.transfer_total, u.expire_time,
+               u.status, u.is_admin, u.reg_date, u.last_login_time, u.created_at,
+               u.bark_key, u.bark_enabled, u.speed_limit, u.device_limit, u.money
+        FROM users u
+        LEFT JOIN today_usage t ON t.user_id = u.id
+        ${whereClause}
+        ORDER BY u.id ASC
         LIMIT ? OFFSET ?
       `);
 
@@ -1309,6 +1317,8 @@ export class AdminAPI {
           node_class,
           node_bandwidth,
           node_bandwidth_limit,
+          traffic_multiplier,
+          bandwidthlimit_resetday,
           node_config,
           status,
           created_at,
@@ -1328,6 +1338,8 @@ export class AdminAPI {
         node_class: ensureNumber(node.node_class),
         node_bandwidth: ensureNumber(node.node_bandwidth),
         node_bandwidth_limit: ensureNumber(node.node_bandwidth_limit),
+        traffic_multiplier: ensureNumber(node.traffic_multiplier, 1),
+        bandwidthlimit_resetday: ensureNumber(node.bandwidthlimit_resetday, 1),
         server_port: ensureNumber(node.server_port),
         status: ensureNumber(node.status),
       }));
@@ -1409,7 +1421,7 @@ export class AdminAPI {
 
       const nodes = await this.db.db.prepare(`
         SELECT name, type, server, server_port, node_class, status, node_bandwidth, node_bandwidth_limit,
-               bandwidthlimit_resetday, created_at, updated_at
+               traffic_multiplier, bandwidthlimit_resetday, created_at, updated_at
         FROM nodes
         ORDER BY id DESC
       `).all();
@@ -1417,7 +1429,7 @@ export class AdminAPI {
       // 转换为CSV格式
       const headers = [
         'Name', 'Type', 'Server', 'Server Port', 'Class', 'Status', 
-        'Bandwidth Used', 'Bandwidth Limit', 'Reset Day', 'Created At', 'Updated At'
+        'Bandwidth Used', 'Bandwidth Limit', 'Traffic Multiplier', 'Reset Day', 'Created At', 'Updated At'
       ];
 
       let csv = headers.join(',') + '\n';
@@ -1432,6 +1444,7 @@ export class AdminAPI {
           node.status === 1 ? 'Online' : 'Offline',
           node.node_bandwidth || 0,
           node.node_bandwidth_limit || 0,
+          node.traffic_multiplier || 1,
           node.bandwidthlimit_resetday || 1,
           node.created_at || '',
           node.updated_at || ''
@@ -1473,9 +1486,9 @@ export class AdminAPI {
       const stmt = this.db.db.prepare(`
         INSERT INTO nodes (
           name, type, server, server_port, tls_host, node_class, 
-          node_bandwidth_limit, bandwidthlimit_resetday,
+          node_bandwidth_limit, traffic_multiplier, bandwidthlimit_resetday,
           node_config, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       // 处理节点配置，避免双重JSON编码
@@ -1505,6 +1518,9 @@ export class AdminAPI {
           nodeData.tls_host || '',
           nodeData.node_class || 1,
           nodeData.node_bandwidth_limit || 0,
+          nodeData.traffic_multiplier && Number(nodeData.traffic_multiplier) > 0
+            ? Number(nodeData.traffic_multiplier)
+            : 1,
           nodeData.bandwidthlimit_resetday || 1,
           configValue,
           nodeData.status || 1
@@ -1551,6 +1567,7 @@ export class AdminAPI {
         "tls_host",
         "node_class",
         "node_bandwidth_limit",
+        "traffic_multiplier",
         "bandwidthlimit_resetday",
         "status",
       ];
@@ -1561,7 +1578,12 @@ export class AdminAPI {
       for (const field of allowedFields) {
         if (updateData[field] !== undefined) {
           updates.push(`${field} = ?`);
-          values.push(updateData[field]);
+          if (field === "traffic_multiplier") {
+            const normalized = Number(updateData[field]);
+            values.push(normalized > 0 ? normalized : 1);
+          } else {
+            values.push(updateData[field]);
+          }
         }
       }
 
@@ -1923,8 +1945,10 @@ export class AdminAPI {
           // 插入流量日志
           const trafficResult = await this.db.db
             .prepare(`
-              INSERT INTO traffic_logs (user_id, node_id, upload_traffic, download_traffic, date, created_at)
-              VALUES (?, ?, ?, ?, ?, datetime(? || ' ' || printf('%02d:%02d:%02d', 
+              INSERT INTO traffic_logs (
+                user_id, node_id, upload_traffic, download_traffic, actual_upload_traffic, actual_download_traffic, actual_traffic, deduction_multiplier, date, created_at
+              )
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime(? || ' ' || printf('%02d:%02d:%02d', 
                 ?, ?, ?), '+8 hours'))
             `)
             .bind(
@@ -1932,6 +1956,10 @@ export class AdminAPI {
               nodeId,
               upload,
               download,
+              upload,
+              download,
+              upload + download,
+              1,
               dateString,
               dateString,
               Math.floor(Math.random() * 24), // 随机小时
