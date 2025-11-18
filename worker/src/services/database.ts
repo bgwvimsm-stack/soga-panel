@@ -5,9 +5,51 @@ import { ensureNumber, getChanges, toRunResult } from "../utils/d1";
 
 export class DatabaseService {
   public readonly db: D1Database;
+  private registerIpColumnChecked = false;
+  private registerIpColumnExists = false;
 
   constructor(db: D1Database) {
     this.db = db;
+  }
+
+  async ensureUsersRegisterIpColumn() {
+    if (this.registerIpColumnChecked && this.registerIpColumnExists) {
+      return true;
+    }
+    try {
+      const info = await this.db
+        .prepare("PRAGMA table_info(users)")
+        .all<{ name?: string }>();
+      const exists =
+        info.results?.some((col) => {
+          const name =
+            typeof col?.name === "string"
+              ? col.name
+              : col?.name !== undefined && col?.name !== null
+              ? String(col.name)
+              : "";
+          return name === "register_ip";
+        }) ?? false;
+      if (!exists) {
+        await this.db
+          .prepare("ALTER TABLE users ADD COLUMN register_ip TEXT")
+          .run();
+      }
+      this.registerIpColumnExists = true;
+      this.registerIpColumnChecked = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("duplicate column name")) {
+        this.registerIpColumnExists = true;
+      } else {
+        console.error("ensureUsersRegisterIpColumn error:", error);
+        this.registerIpColumnExists = false;
+      }
+      if (this.registerIpColumnExists) {
+        this.registerIpColumnChecked = true;
+      }
+    }
+    return this.registerIpColumnExists;
   }
 
   // 获取节点信息

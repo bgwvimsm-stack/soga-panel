@@ -117,10 +117,6 @@
           <template #prefix>
             <el-icon><Search /></el-icon>
           </template>
-          <!-- 注册 IP -->
-          <template #register_ip="{ row }">
-            <span>{{ row.register_ip || '-' }}</span>
-          </template>
         </el-input>
 
         <el-select
@@ -244,6 +240,11 @@
           <!-- 注册时间 -->
           <template #created_at="{ row }">
             {{ formatDateTime(row.created_at) }}
+          </template>
+
+          <!-- 注册 IP -->
+          <template #register_ip="{ row }">
+            <span>{{ row.register_ip || '-' }}</span>
           </template>
 
           <!-- 管理员标志 -->
