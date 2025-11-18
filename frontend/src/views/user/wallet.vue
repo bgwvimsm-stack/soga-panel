@@ -75,10 +75,6 @@
           <el-icon><Plus /></el-icon>
           余额充值
         </el-button>
-        <el-button size="large" @click="$router.push('/user/store')">
-          <el-icon><Shop /></el-icon>
-          购买套餐
-        </el-button>
         <el-button size="large" @click="showGiftCardDialog = true">
           <el-icon><ChatDotRound /></el-icon>
           礼卡兑换
@@ -158,9 +154,7 @@
               <span v-if="row.coupon_code" class="coupon-tag">{{ row.coupon_code }}</span>
               <span v-else>-</span>
             </template>
-            <template #traffic_quota_gb="{ row }">
-              <span>{{ row.traffic_quota_gb || 0 }} GB</span>
-            </template>
+            <template #trade_no="{ row }"><span class="trade-no">{{ row.trade_no }}</span></template>
             <template #purchase_type="{ row }">
               <span class="payment-chip" :class="getPaymentChipClass(row.purchase_type)">
                 {{ getPurchaseTypeText(row.purchase_type) }}
@@ -292,10 +286,10 @@ const rechargeColumns = [
 const purchaseColumns = [
   { field: 'package_name', title: '套餐名称', width: 180, visible: true, slots: { default: 'package_name' }, align: 'center' },
   { field: 'price', title: '购买金额', width: 180, visible: true, slots: { default: 'price' }, align: 'center' },
-  { field: 'discount_amount', title: '优惠金额', width: 140, visible: true, slots: { default: 'discount_amount' }, align: 'center' },
-  { field: 'coupon_code', title: '优惠码', width: 160, visible: true, slots: { default: 'coupon_code' }, align: 'center' },
-  { field: 'traffic_quota_gb', title: '流量配额', width: 120, visible: true, slots: { default: 'traffic_quota_gb' }, align: 'center' },
-  { field: 'purchase_type', title: '支付方式', width: 120, visible: true, slots: { default: 'purchase_type' }, align: 'center' },
+  { field: 'discount_amount', title: '优惠金额', width: 120, visible: true, slots: { default: 'discount_amount' }, align: 'center' },
+  { field: 'coupon_code', title: '优惠码', width: 140, visible: true, slots: { default: 'coupon_code' }, align: 'center' },
+  { field: 'trade_no', title: '交易号', width: 200, visible: true, slots: { default: 'trade_no' }, align: 'center' },
+  { field: 'purchase_type', title: '支付方式', width: 100, visible: true, slots: { default: 'purchase_type' }, align: 'center' },
   { field: 'status', title: '状态', width: 100, visible: true, slots: { default: 'status' }, align: 'center' },
   { field: 'created_at', title: '创建时间', width: 180, visible: true, slots: { default: 'created_at' }, align: 'center' },
   { field: 'paid_at', title: '购买时间', width: 180, visible: true, slots: { default: 'paid_at' }, align: 'center' }
@@ -652,6 +646,20 @@ onMounted(() => {
       .el-button {
         flex: 1 1 0;
         min-width: 140px;
+        border-radius: 12px;
+        height: 48px;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        border: none;
+      }
+      .el-button:nth-child(1),
+      .el-button:nth-child(2) {
+        background: rgba(59, 130, 246, 0.12);
+        color: #2563eb;
+        &:hover {
+          background: rgba(59, 130, 246, 0.18);
+          color: #1d4ed8;
+        }
       }
     }
   }

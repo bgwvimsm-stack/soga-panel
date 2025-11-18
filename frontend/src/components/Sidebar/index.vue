@@ -116,6 +116,9 @@ const adminRoutes: MenuRoute[] = [
   { path: '/admin/announcements', name: 'admin-announcements', icon: 'admin-announcements', title: '公告管理' },
   { path: '/admin/tickets', name: 'admin-tickets', icon: 'admin-tickets', title: '工单管理' },
   { path: '/admin/packages', name: 'admin-packages', icon: 'admin-packages', title: '套餐管理' },
+  { path: '/admin/nodes', name: 'admin-nodes', icon: 'admin-nodes', title: '节点列表' },
+  { path: '/admin/users', name: 'admin-users', icon: 'admin-users', title: '用户列表' },
+  { path: '/admin/shared-ids', name: 'admin-shared-ids', icon: 'admin-apple', title: '苹果账号' },
   {
     path: '/admin/promotions',
     name: 'admin-promotions',
@@ -147,8 +150,6 @@ const adminRoutes: MenuRoute[] = [
       { path: '/admin/online-ips', name: 'admin-online-ips', icon: 'admin-online-ips', title: '在线IP' }
     ]
   },
-  { path: '/admin/nodes', name: 'admin-nodes', icon: 'admin-nodes', title: '节点列表' },
-  { path: '/admin/users', name: 'admin-users', icon: 'admin-users', title: '用户列表' },
   {
     path: '/admin/audit-system',
     name: 'admin-audit-system',
@@ -160,7 +161,6 @@ const adminRoutes: MenuRoute[] = [
       { path: '/admin/audit-logs', name: 'admin-audit-logs', icon: 'admin-audit-logs', title: '审计记录' }
     ]
   },
-  { path: '/admin/shared-ids', name: 'admin-shared-ids', icon: 'admin-apple', title: '苹果账号' },
   { path: '/admin/system-configs', name: 'admin-system-configs', icon: 'admin-system-configs', title: '系统配置' }
 ];
 
@@ -364,14 +364,25 @@ window.addEventListener('resize', handleResize);
       padding: 0 16px;
       font-weight: 500;
       transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: relative;
 
       &:hover {
         background-color: var(--sidebar-hover-bg);
         color: var(--sidebar-text-color);
       }
 
+      .menu-title {
+        flex: 1;
+      }
+
       .el-sub-menu__icon-arrow {
-        right: 12px;
+        position: static;
+        margin-left: auto;
+        margin-right: 0;
+        align-self: center;
       }
     }
 
@@ -521,3 +532,11 @@ window.addEventListener('resize', handleResize);
   }
 }
 </style>
+    :deep(.el-sub-menu__title .menu-icon) {
+      min-width: 18px;
+      font-size: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-right: 0;
+    }

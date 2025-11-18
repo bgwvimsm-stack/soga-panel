@@ -1,95 +1,95 @@
 <template>
-  <div class="admin-shared-ids">
-    <el-card class="toolbar-card">
-      <div class="toolbar">
-        <div class="filters">
-          <el-input
-            v-model="filters.keyword"
-            placeholder="名称搜索"
-            clearable
-            @clear="handleSearch"
-            @keyup.enter="handleSearch"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-          <el-select v-model="filters.status" placeholder="状态" clearable @change="handleSearch">
-            <el-option label="全部" value="" />
-            <el-option label="启用" value="1" />
-            <el-option label="禁用" value="0" />
-          </el-select>
-        </div>
-        <div class="actions">
-          <el-button :icon="RefreshRight" @click="fetchList" :loading="loading">刷新</el-button>
-          <el-button type="primary" :icon="Plus" @click="openCreate">新增苹果账号</el-button>
-        </div>
-      </div>
-    </el-card>
+  <div class="admin-page admin-shared-ids">
+    <div class="page-header">
+      <h2>苹果账号管理</h2>
+      <p>统一管理共享 Apple ID 配置</p>
+    </div>
 
-    <el-card>
-      <el-table :data="records" v-loading="loading" border>
-        <el-table-column prop="name" label="名称" min-width="160" />
-        <el-table-column prop="fetch_url" label="拉取地址" min-width="220">
-          <template #default="{ row }">
-            <el-link :href="row.fetch_url" type="primary" target="_blank">{{ row.fetch_url }}</el-link>
+    <VxeTableBar
+      :vxeTableRef="vxeTableRef"
+      :columns="columns"
+      title="苹果账号列表"
+      @refresh="fetchList"
+    >
+      <template #buttons>
+        <el-input
+          v-model="filters.keyword"
+          placeholder="搜索名称或拉取地址"
+          clearable
+          @clear="handleSearch"
+          @keyup.enter="handleSearch"
+          style="width: 220px; margin-right: 12px;"
+        >
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+        <el-select
+          v-model="filters.status"
+          placeholder="状态"
+          clearable
+          style="width: 150px; margin-right: 12px;"
+          @change="handleSearch"
+        >
+          <el-option label="全部状态" value="" />
+          <el-option label="启用" value="1" />
+          <el-option label="禁用" value="0" />
+        </el-select>
+        <el-button type="primary" @click="openCreate"><el-icon><Plus /></el-icon>新增苹果账号</el-button>
+      </template>
+
+      <template v-slot="{ size, dynamicColumns }">
+        <vxe-grid
+          ref="vxeTableRef"
+          v-loading="loading"
+          show-overflow
+          :height="getTableHeight(size)"
+          :size="size"
+          :column-config="{ resizable: true }"
+          :row-config="{ isHover: true, keyField: 'id' }"
+          :columns="dynamicColumns"
+          :data="records"
+          :pager-config="pagerConfig"
+          @page-change="handlePageChange"
+        >
+          <template #name="{ row }">
+            <span class="name-text">{{ row.name || '-' }}</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="remote_account_id" label="远程ID" width="100" />
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : 'info'">
-              {{ row.status === 1 ? "启用" : "禁用" }}
+          <template #fetch_url="{ row }">
+            <el-link v-if="row.fetch_url" :href="row.fetch_url" type="primary" target="_blank">
+              {{ row.fetch_url }}
+            </el-link>
+            <span v-else>-</span>
+          </template>
+          <template #status="{ row }">
+            <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
+              {{ row.status === 1 ? '启用' : '禁用' }}
             </el-tag>
           </template>
-        </el-table-column>
-        <el-table-column prop="updated_at" label="更新时间" min-width="180">
-          <template #default="{ row }">{{ formatTime(row.updated_at) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
+          <template #updated_at="{ row }"><span>{{ formatTime(row.updated_at) }}</span></template>
+          <template #actions="{ row }">
+            <div class="table-actions">
+              <el-button size="small" @click="openEdit(row)">编辑</el-button>
+              <el-button size="small" type="danger" @click="handleDelete(row)">删除</el-button>
+            </div>
           </template>
-        </el-table-column>
-      </el-table>
+        </vxe-grid>
+      </template>
+    </VxeTableBar>
 
-      <div class="table-footer">
-        <el-pagination
-          background
-          layout="total, prev, pager, next, sizes"
-          :page-size="pagination.limit"
-          :page-sizes="[10, 20, 50]"
-          :current-page="pagination.page"
-          :total="pagination.total"
-          @current-change="handlePageChange"
-          @size-change="handleSizeChange"
-        />
-      </div>
-    </el-card>
-
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="520px" destroy-on-close>
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="540px" destroy-on-close>
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
         <el-form-item label="名称" prop="name">
-          <el-input v-model="form.name" placeholder="展示给用户的名称" />
+          <el-input v-model="form.name" placeholder="展示给用户的名称" maxlength="40" show-word-limit />
         </el-form-item>
-        <el-form-item label="拉取URL" prop="fetch_url">
+        <el-form-item label="拉取 URL" prop="fetch_url">
           <el-input v-model="form.fetch_url" placeholder="https://example.com/accounts.json" />
         </el-form-item>
-        <el-form-item label="远程ID" prop="remote_account_id">
-          <el-input-number
-            v-model="form.remote_account_id"
-            :min="1"
-            :precision="0"
-            :controls="false"
-            style="width: 100%;"
-          />
+        <el-form-item label="远程账号 ID" prop="remote_account_id">
+          <el-input-number v-model="form.remote_account_id" :min="1" :controls="false" style="width: 100%;" />
         </el-form-item>
         <el-form-item label="状态">
           <el-switch v-model="form.status" :active-value="1" :inactive-value="0" />
         </el-form-item>
       </el-form>
-
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="handleSubmit">确定</el-button>
@@ -101,7 +101,8 @@
 <script setup lang="ts">
 import { reactive, ref, computed, onMounted } from "vue";
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from "element-plus";
-import { Search, RefreshRight, Plus } from "@element-plus/icons-vue";
+import { Search, Plus } from "@element-plus/icons-vue";
+import { VxeTableBar } from "@/components/ReVxeTableBar";
 import {
   getSharedIdConfigs,
   createSharedIdConfig,
@@ -110,18 +111,41 @@ import {
   type SharedIdConfig,
 } from "@/api/admin";
 
+const vxeTableRef = ref();
 const loading = ref(false);
 const saving = ref(false);
 const records = ref<SharedIdConfig[]>([]);
-const pagination = reactive({
-  page: 1,
-  limit: 10,
+const pagerConfig = reactive({
   total: 0,
+  currentPage: 1,
+  pageSize: 20,
+  pageSizes: [10, 20, 50, 100],
+  layouts: ['Total', 'Sizes', 'PrevPage', 'Number', 'NextPage', 'FullJump']
 });
+
 const filters = reactive({
   keyword: "",
   status: "",
 });
+
+const getTableHeight = computed(() => (size: string) => {
+  switch (size) {
+    case 'medium': return 600;
+    case 'small': return 550;
+    case 'mini': return 500;
+    default: return 600;
+  }
+});
+
+const columns = [
+  { field: 'id', title: 'ID', width: 80, visible: true },
+  { field: 'name', title: '名称', minWidth: 180, visible: true, slots: { default: 'name' } },
+  { field: 'fetch_url', title: '拉取地址', minWidth: 260, visible: true, slots: { default: 'fetch_url' } },
+  { field: 'remote_account_id', title: '远程ID', width: 120, visible: true },
+  { field: 'status', title: '状态', width: 120, visible: true, slots: { default: 'status' } },
+  { field: 'updated_at', title: '更新时间', width: 180, visible: true, slots: { default: 'updated_at' } },
+  { field: 'actions', title: '操作', width: 200, fixed: 'right', visible: true, slots: { default: 'actions' }, columnSelectable: false }
+];
 
 const dialogVisible = ref(false);
 const isEdit = ref(false);
@@ -137,32 +161,32 @@ const form = reactive({
 const rules: FormRules = {
   name: [
     { required: true, message: "请输入名称", trigger: "blur" },
-    { min: 2, max: 30, message: "名称长度需在2~30个字符之间", trigger: "blur" },
+    { min: 2, max: 40, message: "名称长度需在2~40个字符之间", trigger: "blur" },
   ],
   fetch_url: [
-    { required: true, message: "请输入获取URL", trigger: "blur" },
+    { required: true, message: "请输入拉取 URL", trigger: "blur" },
     {
       validator: (_rule, value, callback) => {
         if (!value) {
-          callback(new Error("请输入获取URL"));
+          callback(new Error("请输入拉取 URL"));
           return;
         }
         try {
           new URL(value);
           callback();
         } catch {
-          callback(new Error("URL格式不正确"));
+          callback(new Error("URL 格式不正确"));
         }
       },
       trigger: "blur",
     },
   ],
   remote_account_id: [
-    { required: true, message: "请输入远程ID", trigger: "blur" },
+    { required: true, message: "请输入远程 ID", trigger: "blur" },
     {
       validator: (_rule, value, callback) => {
         if (!value || value <= 0) {
-          callback(new Error("远程ID需大于0"));
+          callback(new Error("远程 ID 需大于 0"));
           return;
         }
         callback();
@@ -178,15 +202,15 @@ const fetchList = async () => {
   loading.value = true;
   try {
     const { data } = await getSharedIdConfigs({
-      page: pagination.page,
-      limit: pagination.limit,
+      page: pagerConfig.currentPage,
+      limit: pagerConfig.pageSize,
       keyword: filters.keyword || undefined,
       status: filters.status === "" ? undefined : Number(filters.status),
     });
     records.value = data?.records ?? [];
-    pagination.total = data?.pagination?.total ?? 0;
-    pagination.page = data?.pagination?.page ?? pagination.page;
-    pagination.limit = data?.pagination?.limit ?? pagination.limit;
+    pagerConfig.total = data?.pagination?.total ?? 0;
+    pagerConfig.currentPage = data?.pagination?.page ?? pagerConfig.currentPage;
+    pagerConfig.pageSize = data?.pagination?.limit ?? pagerConfig.pageSize;
   } catch (error) {
     console.error(error);
     ElMessage.error("获取苹果账号失败");
@@ -196,18 +220,13 @@ const fetchList = async () => {
 };
 
 const handleSearch = () => {
-  pagination.page = 1;
+  pagerConfig.currentPage = 1;
   fetchList();
 };
 
-const handlePageChange = (page: number) => {
-  pagination.page = page;
-  fetchList();
-};
-
-const handleSizeChange = (size: number) => {
-  pagination.limit = size;
-  pagination.page = 1;
+const handlePageChange = ({ currentPage, pageSize }) => {
+  pagerConfig.currentPage = currentPage;
+  pagerConfig.pageSize = pageSize;
   fetchList();
 };
 
@@ -261,16 +280,12 @@ const handleSubmit = async () => {
 
 const handleDelete = async (record: SharedIdConfig) => {
   try {
-    await ElMessageBox.confirm(`确定删除苹果账号【${record.name}】吗？`, "提示", {
-      type: "warning",
-    });
+    await ElMessageBox.confirm(`确定删除苹果账号【${record.name}】吗？`, "提示", { type: "warning" });
     await deleteSharedIdConfig(record.id);
     ElMessage.success("删除成功");
     fetchList();
   } catch (error) {
-    if (error === "cancel" || error === "close") {
-      return;
-    }
+    if (error === "cancel" || error === "close") return;
     console.error(error);
     ElMessage.error("删除失败");
   }
@@ -287,40 +302,26 @@ onMounted(fetchList);
 
 <style scoped lang="scss">
 .admin-shared-ids {
-  .toolbar-card {
+  .page-header {
     margin-bottom: 16px;
+    h2 { margin: 0 0 8px 0; color: #303133; font-size: 24px; }
+    p { margin: 0; color: #909399; }
   }
 
-  .toolbar {
+  .apple-name {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 12px;
+    align-items: center;
+    gap: 10px;
 
-    .filters {
-      display: flex;
-      gap: 12px;
-      min-width: 260px;
-
-      .el-input {
-        width: 240px;
-      }
-
-      .el-select {
-        width: 140px;
-      }
-    }
-
-    .actions {
-      display: flex;
-      gap: 12px;
+    .name-text {
+      font-weight: 500;
+      color: #303133;
     }
   }
 
-  .table-footer {
+  .table-actions {
     display: flex;
-    justify-content: flex-end;
-    margin-top: 16px;
+    gap: 8px;
   }
 }
 </style>
