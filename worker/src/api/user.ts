@@ -389,11 +389,20 @@ export class UserAPI {
           SELECT 
             COALESCE(SUM(upload_traffic), 0) as upload_traffic,
             COALESCE(SUM(download_traffic), 0) as download_traffic,
-            COALESCE(SUM(upload_traffic + download_traffic), 0) as total_traffic
+            COALESCE(SUM(upload_traffic + download_traffic), 0) as total_traffic,
+            COALESCE(SUM(actual_upload_traffic), 0) as actual_upload_traffic,
+            COALESCE(SUM(actual_download_traffic), 0) as actual_download_traffic,
+            COALESCE(SUM(actual_traffic), 0) as actual_total_traffic
           FROM traffic_logs 
           WHERE user_id = ? AND node_id = ?
         `);
         const userTraffic = await userTrafficStmt.bind(userId, node.id).first<DbRow | null>();
+        const rawUpload = toNumber(userTraffic?.upload_traffic);
+        const rawDownload = toNumber(userTraffic?.download_traffic);
+        const rawTotal = toNumber(userTraffic?.total_traffic);
+        const actualUpload = toNumber(userTraffic?.actual_upload_traffic);
+        const actualDownload = toNumber(userTraffic?.actual_download_traffic);
+        const actualTotal = toNumber(userTraffic?.actual_total_traffic);
 
         return {
           id: node.id,
@@ -412,9 +421,13 @@ export class UserAPI {
           created_at: node.created_at,
           updated_at: node.updated_at,
           // 用户在该节点的流量使用情况
-          user_upload_traffic: toNumber(userTraffic?.upload_traffic),
-          user_download_traffic: toNumber(userTraffic?.download_traffic),
-          user_total_traffic: toNumber(userTraffic?.total_traffic),
+          user_upload_traffic: rawUpload,
+          user_download_traffic: rawDownload,
+          user_total_traffic: actualTotal || rawTotal,
+          user_raw_total_traffic: rawTotal,
+          user_actual_upload_traffic: actualUpload,
+          user_actual_download_traffic: actualDownload,
+          user_actual_total_traffic: actualTotal,
           // 添加一些用户友好的标签
           tags: this.getNodeTags(node.node_class),
           // 在线状态（基于最近5分钟的状态更新）
