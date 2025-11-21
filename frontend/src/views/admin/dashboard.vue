@@ -68,76 +68,33 @@
             <span class="admin-tip">请谨慎使用以下功能，操作不可逆</span>
           </div>
 
-          <div class="action-buttons">
-            <el-button
-              type="warning"
-              :loading="executingDailyTask"
-              @click="handleExecuteDailyTask"
-              :disabled="anyOperationRunning"
+          <div class="action-grid">
+            <div
+              v-for="action in adminActions"
+              :key="action.key"
+              class="action-item"
+              :class="action.tone"
             >
-              <el-icon><Refresh /></el-icon>
-              手动执行每日定时任务
-            </el-button>
-
-            <el-button
-              type="danger"
-              :loading="resettingPasswords"
-              @click="handleResetAllPasswords"
-              :disabled="anyOperationRunning"
-            >
-              <el-icon><Key /></el-icon>
-              重置所有用户UUID和密码
-            </el-button>
-
-            <el-button
-              type="danger"
-              :loading="resettingSubscriptions"
-              @click="handleResetAllSubscriptions"
-              :disabled="anyOperationRunning"
-            >
-              <el-icon><Link /></el-icon>
-              重置所有用户订阅链接
-            </el-button>
-
-            <el-button
-              type="danger"
-              :loading="resettingInviteCodes"
-              @click="handleResetInviteCodes"
-              :disabled="anyOperationRunning"
-            >
-              <el-icon><Link /></el-icon>
-              重置所有用户邀请码
-            </el-button>
-
-            <el-button
-              type="primary"
-              :loading="clearingAuditCache"
-              @click="handleClearAuditRulesCache"
-              :disabled="anyOperationRunning"
-            >
-              <el-icon><Refresh /></el-icon>
-              清除审计规则缓存
-            </el-button>
-
-            <el-button
-              type="primary"
-              :loading="clearingWhitelistCache"
-              @click="handleClearWhitelistCache"
-              :disabled="anyOperationRunning"
-            >
-              <el-icon><Refresh /></el-icon>
-              清除白名单缓存
-            </el-button>
-
-            <el-button
-              type="danger"
-              :loading="deletingPendingRecords"
-              @click="handleDeletePendingRecords"
-              :disabled="anyOperationRunning"
-            >
-              <el-icon><Delete /></el-icon>
-              删除待支付记录
-            </el-button>
+              <div class="item-main">
+                <div class="item-icon">
+                  <el-icon><component :is="action.icon" /></el-icon>
+                </div>
+                <div class="item-text">
+                  <div class="item-title">{{ action.label }}</div>
+                  <div class="item-desc">{{ action.desc }}</div>
+                </div>
+              </div>
+              <el-button
+                :type="action.buttonType"
+                plain
+                size="small"
+                :loading="action.loading"
+                :disabled="anyOperationRunning"
+                @click="action.handler"
+              >
+                执行
+              </el-button>
+            </div>
           </div>
 
           <div class="operation-status" v-if="operationResult">
@@ -303,6 +260,79 @@ const clearingAuditCache = ref(false);
 const clearingWhitelistCache = ref(false);
 const deletingPendingRecords = ref(false);
 const operationResult = ref(null);
+
+const adminActions = computed(() => [
+  {
+    key: 'dailyTask',
+    label: '手动执行每日定时任务',
+    desc: '立即运行流量重置和数据清理',
+    icon: Refresh,
+    tone: 'warning',
+    buttonType: 'warning',
+    loading: executingDailyTask.value,
+    handler: handleExecuteDailyTask
+  },
+  {
+    key: 'resetPassword',
+    label: '重置所有用户UUID和密码',
+    desc: '用户需重新获取订阅链接',
+    icon: Key,
+    tone: 'danger',
+    buttonType: 'danger',
+    loading: resettingPasswords.value,
+    handler: handleResetAllPasswords
+  },
+  {
+    key: 'resetSubscription',
+    label: '重置所有用户订阅链接',
+    desc: '刷新订阅令牌并通知用户',
+    icon: Link,
+    tone: 'danger',
+    buttonType: 'danger',
+    loading: resettingSubscriptions.value,
+    handler: handleResetAllSubscriptions
+  },
+  {
+    key: 'resetInvite',
+    label: '重置所有用户邀请码',
+    desc: '生成新的邀请码以防滥用',
+    icon: Link,
+    tone: 'danger',
+    buttonType: 'danger',
+    loading: resettingInviteCodes.value,
+    handler: handleResetInviteCodes
+  },
+  {
+    key: 'deletePending',
+    label: '删除待支付记录',
+    desc: '清理长期未支付订单',
+    icon: Delete,
+    tone: 'danger',
+    buttonType: 'danger',
+    loading: deletingPendingRecords.value,
+    handler: handleDeletePendingRecords
+  },
+  {
+    key: 'clearAudit',
+    label: '清除审计规则缓存',
+    desc: '使最新规则立即生效',
+    icon: Refresh,
+    tone: 'info',
+    buttonType: 'primary',
+    loading: clearingAuditCache.value,
+    handler: handleClearAuditRulesCache
+  },
+  {
+    key: 'clearWhitelist',
+    label: '清除白名单缓存',
+    desc: '同步最新白名单配置',
+    icon: Refresh,
+    tone: 'info',
+    buttonType: 'primary',
+    loading: clearingWhitelistCache.value,
+    handler: handleClearWhitelistCache
+  }
+]);
 
 // 计算属性：是否有操作正在运行
 const anyOperationRunning = computed(() => {
@@ -893,14 +923,82 @@ onMounted(async () => {
     }
   }
 
-  .action-buttons {
-    display: flex;
+  .action-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 16px;
-    flex-wrap: wrap;
     margin-bottom: 20px;
 
-    .el-button {
-      min-width: 180px;
+    .action-item {
+      border-radius: 12px;
+      padding: 14px;
+      border: 1px solid #ebeef5;
+      background: #f9fafb;
+      min-height: 80px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: all 0.2s ease;
+
+      &.warning {
+        background: linear-gradient(135deg, #fff7e6, #fff1cc);
+        border-color: #ffe7ba;
+      }
+
+      &.danger {
+        background: linear-gradient(135deg, #fff1f0, #ffe8e6);
+        border-color: #ffc8c2;
+      }
+
+      &.info {
+        background: linear-gradient(135deg, #f0f7ff, #e6f4ff);
+        border-color: #cfe4ff;
+      }
+
+      &:hover {
+        box-shadow: 0 10px 18px rgba(0, 0, 0, 0.06);
+        transform: translateY(-2px);
+      }
+
+      .item-main {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 12px;
+        align-items: center;
+      }
+
+      .item-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        color: #606266;
+      }
+
+      .item-text {
+        flex: 1;
+
+        .item-title {
+          font-size: 15px;
+          font-weight: 600;
+          color: #303133;
+          margin-bottom: 4px;
+        }
+
+        .item-desc {
+          font-size: 12px;
+          color: #8f9399;
+          line-height: 1.5;
+        }
+      }
+
+      .el-button {
+        align-self: flex-start;
+      }
     }
   }
 
@@ -1060,28 +1158,28 @@ onMounted(async () => {
       }
     }
 
-    .action-buttons {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      margin-bottom: 15px;
+    .action-grid {
+      grid-template-columns: 1fr;
+      gap: 12px;
       padding: 0 5px;
 
-      .el-button {
-        width: 100%;
-        min-width: auto;
-        height: 48px;
-        font-size: 14px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin: 0;
-        padding: 12px 16px;
-        box-sizing: border-box;
+      .action-item {
+        min-height: auto;
+        padding: 12px;
 
-        :deep(.el-icon) {
-          margin-right: 8px;
-          font-size: 16px;
+        .item-main {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 10px;
+        }
+
+        .item-icon {
+          width: 38px;
+          height: 38px;
+        }
+
+        .el-button {
+          width: 100%;
         }
       }
     }
@@ -1235,13 +1333,15 @@ onMounted(async () => {
   .admin-actions-card {
     margin: 0 8px;
 
-    .action-buttons {
-      .el-button {
-        height: 40px;
-        font-size: 13px;
+    .action-grid {
+      grid-template-columns: 1fr;
+      gap: 10px;
 
-        .el-icon {
-          font-size: 14px;
+      .action-item {
+        padding: 12px;
+
+        .item-main {
+          flex-direction: row;
         }
       }
     }
