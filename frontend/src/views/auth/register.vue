@@ -7,6 +7,15 @@
         <p class="brand-subtitle">创建您的 {{ appTitle }} 账户</p>
       </div>
 
+      <el-alert
+        v-if="configLoaded && !registerAllowed"
+        type="warning"
+        show-icon
+        :closable="false"
+        class="register-disabled-alert"
+        title="当前已停止开放注册，请稍后再试"
+      />
+
       <el-form
         v-if="configLoaded"
         ref="registerFormRef"
@@ -33,6 +42,18 @@
             :prefix-icon="User"
           />
         </el-form-item>
+        <el-form-item prop="inviteCode">
+          <el-input
+            v-model="registerForm.inviteCode"
+            placeholder="请输入邀请码（选填）"
+            size="large"
+            clearable
+            :prefix-icon="Link"
+          />
+        </el-form-item>
+        <p v-if="registerMode === '2'" class="invite-required-tip">
+          当前仅支持受邀注册，请输入邀请人提供的邀请码。
+        </p>
         <el-form-item prop="password">
           <el-input
             v-model="registerForm.password"
@@ -93,6 +114,7 @@
         size="large"
         class="auth-submit"
         :loading="loading"
+        :disabled="!registerAllowed"
         @click="handleRegister"
       >
         创建账户
@@ -113,9 +135,9 @@
 
 <script setup lang="ts">
 import { ref, reactive, onBeforeUnmount, onMounted, computed } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { ElMessage, type FormInstance, type FormRules } from "element-plus";
-import { Message, User, Lock, MessageBox, Loading } from "@element-plus/icons-vue";
+import { Message, User, Lock, MessageBox, Loading, Link } from "@element-plus/icons-vue";
 import {
   register,
   sendRegisterEmailCode,
@@ -127,6 +149,7 @@ import { useSiteStore } from "@/store/site";
 import TermsAgreement from "@/components/auth/TermsAgreement.vue";
 
 const router = useRouter();
+const route = useRoute();
 const userStore = useUserStore();
 
 const siteStore = useSiteStore();
@@ -137,6 +160,9 @@ const sendingCode = ref(false);
 const codeCountdown = ref(0);
 const showVerification = ref(false);
 const configLoaded = ref(false);
+const registerAllowed = ref(true);
+const registerMode = ref("1");
+const inviteRequired = ref(false);
 const termsAccepted = ref(false);
 type PendingAction = (() => void) | null;
 const pendingAgreementAction = ref<PendingAction>(null);
@@ -148,7 +174,8 @@ const registerForm = reactive({
   username: "",
   password: "",
   confirmPassword: "",
-  verificationCode: ""
+  verificationCode: "",
+  inviteCode: ""
 });
 
 const isGmailAlias = (email: string) => {
@@ -182,6 +209,9 @@ const registerRules = computed<FormRules>(() => ({
     { required: true, message: "请确认密码", trigger: "blur" },
     { validator: validateConfirmPassword, trigger: "blur" }
   ],
+  inviteCode: inviteRequired.value
+    ? [{ required: true, message: "请输入邀请码", trigger: "blur" }]
+    : [],
   verificationCode: showVerification.value
     ? [
         { required: true, message: "请输入邮箱验证码", trigger: "blur" },
@@ -247,6 +277,10 @@ const handleSendCode = async () => {
 
 const handleRegister = async () => {
   if (!registerFormRef.value) return;
+  if (!registerAllowed.value) {
+    ElMessage.warning("当前暂未开放注册");
+    return;
+  }
 
   if (!termsAccepted.value) {
     pendingAgreementAction.value = handleRegister;
@@ -264,7 +298,8 @@ const handleRegister = async () => {
       email: registerForm.email,
       username: registerForm.username,
       password: registerForm.password,
-      verificationCode: registerForm.verificationCode
+      verificationCode: registerForm.verificationCode,
+      inviteCode: registerForm.inviteCode.trim() || undefined
     });
 
     setToken(data.token);
@@ -296,12 +331,20 @@ const handleTermsDeclined = () => {
 };
 
 onMounted(async () => {
+  const inviteParam = typeof route.query.invite === "string" ? route.query.invite : "";
+  if (inviteParam) {
+    registerForm.inviteCode = inviteParam;
+  }
   try {
     const { data } = await getRegisterConfig();
     showVerification.value = data?.verificationEnabled === true;
+    registerAllowed.value = data?.registerEnabled !== false;
+    registerMode.value = data?.registerMode || "1";
+    inviteRequired.value = Boolean(data?.inviteRequired);
   } catch (error) {
     console.error("获取注册配置失败:", error);
     showVerification.value = false;
+    registerAllowed.value = true;
   } finally {
     configLoaded.value = true;
   }
@@ -434,5 +477,15 @@ onBeforeUnmount(() => {
   text-align: center;
   color: #6b7280;
   font-size: 14px;
+}
+
+.register-disabled-alert {
+  margin-bottom: 16px;
+}
+
+.invite-required-tip {
+  margin: -12px 0 12px;
+  font-size: 12px;
+  color: #9ca3af;
 }
 </style>

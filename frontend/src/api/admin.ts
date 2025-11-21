@@ -65,6 +65,9 @@ export interface User {
   is_admin?: number;
   money?: number | string;
   register_ip?: string | null;
+  invite_code?: string | null;
+  invite_limit?: number | null;
+  invite_used?: number | null;
 }
 
 export interface CreateUserRequest {
@@ -80,6 +83,8 @@ export interface CreateUserRequest {
   device_limit?: number;
   bark_key?: string;
   bark_enabled?: boolean;
+  invite_code?: string;
+  invite_limit?: number;
 }
 
 export interface UpdateUserRequest {
@@ -95,6 +100,8 @@ export interface UpdateUserRequest {
   bark_key?: string;
   bark_enabled?: boolean;
   money?: number;
+  invite_code?: string;
+  invite_limit?: number;
 }
 
 export interface UserListResponse {
@@ -795,4 +802,24 @@ export const addSystemConfig = (data: SystemConfig): Promise<ApiResponse<null>> 
 
 export const deleteSystemConfig = (key: string): Promise<ApiResponse<null>> => {
   return http.delete(`/admin/system-configs/${key}`);
+};
+
+export const getRebateWithdrawals = (params?: {
+  page?: number;
+  limit?: number;
+  status?: string;
+}): Promise<ApiResponse<any>> => {
+  return http.get("/admin/rebate/withdrawals", { params });
+};
+
+export const reviewRebateWithdrawal = (data: {
+  id: number;
+  status: "approved" | "rejected" | "paid";
+  note?: string;
+}): Promise<ApiResponse<any>> => {
+  return http.post("/admin/rebate/withdrawals/review", data);
+};
+
+export const resetAllInviteCodes = (): Promise<ApiResponse<{ count: number; message?: string }>> => {
+  return http.post("/admin/invite-codes/reset");
 };

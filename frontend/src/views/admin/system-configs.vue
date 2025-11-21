@@ -66,9 +66,14 @@
           <ul>
             <li><strong>default_traffic</strong>: 默认10GB = 10737418240 字节</li>
             <li><strong>traffic_reset_day</strong>: 0表示不执行每月定时任务，1-31表示每月几号重置流量</li>
-            <li><strong>register_enabled</strong>: 1表示允许注册，0表示禁用注册</li>
+            <li><strong>register_enabled</strong>: 0=禁用，1=开放注册，2=仅允许邀请码注册</li>
             <li><strong>default_class</strong>: 新用户默认等级，数字越大权限越高</li>
             <li><strong>register_email_verification_enabled</strong>: 1 开启注册验证码，0 可关闭此功能</li>
+            <li><strong>rebate_rate</strong>: 邀请返利比例，0.1 表示 10%</li>
+            <li><strong>rebate_mode</strong>: first_order=首单返利，every_order=每笔返利</li>
+            <li><strong>invite_default_limit</strong>: 默认邀请码可使用次数（0 表示不限）</li>
+            <li><strong>rebate_withdraw_fee_rate</strong>: 返利提现手续费比例（0.05 表示 5%）</li>
+            <li><strong>rebate_withdraw_min_amount</strong>: 返利提现最低金额（元）</li>
           </ul>
         </el-alert>
       </div>
@@ -151,7 +156,14 @@ const handleSaveEdit = async (config: ExtendedSystemConfig) => {
 
 // 获取输入框类型
 const getInputType = (key: string) => {
-  if (key.includes('traffic') || key.includes('expire_days') || key.includes('class') || key.includes('reset_day')) {
+  if (
+    key.includes('traffic') ||
+    key.includes('expire_days') ||
+    key.includes('class') ||
+    key.includes('reset_day') ||
+    key.endsWith('_amount') ||
+    key.endsWith('_rate')
+  ) {
     return 'number'
   }
   if (key.includes('url')) {
@@ -170,6 +182,9 @@ const getUnit = (key: string) => {
   }
   if (key.includes('expire_days') || key.includes('reset_day')) {
     return '天'
+  }
+  if (key.endsWith('_amount')) {
+    return '元'
   }
   return ''
 }

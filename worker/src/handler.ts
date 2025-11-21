@@ -92,6 +92,11 @@ export async function handleRequest(
     "GET /api/user/login-logs": () => userAPI.getLoginLogs(request),
     "GET /api/user/online-devices": () => userAPI.getOnlineDevices(request),
     "GET /api/user/online-ips-detail": () => userAPI.getOnlineIpsDetail(request),
+    "GET /api/user/referrals": () => userAPI.getReferralOverview(request),
+    "GET /api/user/rebate/ledger": () => userAPI.getRebateLedger(request),
+    "POST /api/user/rebate/transfer": () => userAPI.transferRebateToBalance(request),
+    "POST /api/user/rebate/withdraw": () => userAPI.createRebateWithdrawal(request),
+    "GET /api/user/rebate/withdrawals": () => userAPI.getRebateWithdrawals(request),
     "POST /api/user/two-factor/setup": () => userAPI.startTwoFactorSetup(request),
     "POST /api/user/two-factor/enable": () => userAPI.enableTwoFactor(request),
     "POST /api/user/two-factor/backup-codes": () =>
@@ -226,6 +231,9 @@ export async function handleRequest(
     "PUT /api/admin/system-configs": () => adminAPI.updateSystemConfig(request),
     "PUT /api/admin/system-configs/batch": () => adminAPI.updateSystemConfigsBatch(request),
     "POST /api/admin/system-configs": () => adminAPI.addSystemConfig(request),
+    "GET /api/admin/rebate/withdrawals": () => adminAPI.getRebateWithdrawals(request),
+    "POST /api/admin/rebate/withdrawals/review": () => adminAPI.reviewRebateWithdrawal(request),
+    "POST /api/admin/invite-codes/reset": () => adminAPI.resetAllInviteCodes(request),
     
     // 缓存管理 API
     "GET /api/admin/cache-status": () => adminAPI.getCacheStatus(request),

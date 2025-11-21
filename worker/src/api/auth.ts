@@ -34,6 +34,7 @@ import {
   getLastRowId,
 } from "../utils/d1";
 import { TwoFactorService } from "../services/twoFactor";
+import { ReferralService } from "../services/referralService";
 
 const GOOGLE_TOKENINFO_ENDPOINT = "https://oauth2.googleapis.com/tokeninfo";
 
@@ -142,6 +143,7 @@ export class AuthAPI {
   logger: Logger;
   private readonly dbRaw: D1Database;
   private readonly twoFactorService: TwoFactorService;
+  private readonly referralService: ReferralService;
 
   constructor(env: Env) {
     this.dbRaw = env.DB as D1Database;
@@ -152,6 +154,7 @@ export class AuthAPI {
     this.configManager = createSystemConfigManager(env);
     this.logger = getLogger(env);
     this.twoFactorService = new TwoFactorService(env);
+    this.referralService = new ReferralService(this.db, this.configManager, this.logger);
   }
 
   getIntConfig(value: unknown, fallback: number, options: GetIntOptions = {}) {
@@ -722,7 +725,8 @@ export class AuthAPI {
   }
 
   private async createOAuthUserFromPending(
-    pending: PendingOAuthRegistration
+    pending: PendingOAuthRegistration,
+    options: { invitedBy?: number; inviteCode?: string } = {}
   ): Promise<{
     user: AuthUserRow;
     tempPassword: string;
@@ -745,12 +749,21 @@ export class AuthAPI {
     const identifierColumn =
       pending.provider === "google" ? "google_sub" : "github_id";
 
+    const invitedBy =
+      options.invitedBy && options.invitedBy > 0
+        ? ensureNumber(options.invitedBy)
+        : 0;
+    const inviteCodeOverride = this.referralService.normalizeInviteCode(
+      options.inviteCode
+    );
+
     const insertStmt = this.db.db.prepare(`
       INSERT INTO users (
         email, username, password_hash, uuid, passwd, token,
+        invited_by,
         ${identifierColumn}, oauth_provider, first_oauth_login_at, last_oauth_login_at,
         transfer_enable, expire_time, class, class_expire_time, status, register_ip
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'), ?, ?, ?, ?, 1, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'), ?, ?, ?, ?, 1, ?)
     `);
 
     const insertResult = await insertStmt
@@ -761,6 +774,7 @@ export class AuthAPI {
         uuid,
         proxyPassword,
         subscriptionToken,
+        invitedBy,
         pending.providerId,
         pending.provider,
         defaults.transferEnable,
@@ -779,6 +793,20 @@ export class AuthAPI {
 
     if (!user) {
       throw new Error("无法创建或加载用户信息");
+    }
+
+    const ensuredInviteCode = await this.referralService.ensureUserInviteCode(
+      userId
+    );
+    await this.referralService.applyDefaultInviteLimit(userId);
+    if (invitedBy > 0) {
+      await this.referralService.saveReferralRelation({
+        inviterId: invitedBy,
+        inviteeId: userId,
+        inviteCode: inviteCodeOverride || ensuredInviteCode,
+        inviteIp: pending.clientIP,
+      });
+      await this.referralService.incrementInviteUsage(invitedBy);
     }
 
     const siteConfigs = await this.configManager.getSiteConfigs();
@@ -992,6 +1020,12 @@ export class AuthAPI {
       class: ensureNumber((user as any).class),
       class_expire_time: ensureString((user as any).class_expire_time),
       expire_time: ensureString((user as any).expire_time),
+      invite_code: ensureString((user as any).invite_code),
+      invited_by: ensureNumber((user as any).invited_by),
+      invite_limit: ensureNumber((user as any).invite_limit),
+      invite_used: ensureNumber((user as any).invite_used),
+      rebate_available: ensureNumber((user as any).rebate_available),
+      rebate_total: ensureNumber((user as any).rebate_total),
       upload_traffic: ensureNumber((user as any).upload_traffic),
       download_traffic: ensureNumber((user as any).download_traffic),
       upload_today: ensureNumber((user as any).upload_today),
@@ -1399,7 +1433,9 @@ export class AuthAPI {
         ),
       ]);
 
-      const registerEnabledFlag = registerEnabled !== "0";
+      const registerMode = registerEnabled || "1";
+      const registerEnabledFlag = registerMode !== "0";
+      const inviteRequired = registerMode === "2";
       const verificationFlag =
         registerEnabledFlag &&
         verificationEnabled !== "0" &&
@@ -1409,6 +1445,8 @@ export class AuthAPI {
 
       return successResponse({
         registerEnabled: registerEnabledFlag,
+        registerMode,
+        inviteRequired,
         verificationEnabled: verificationFlag,
         passwordResetEnabled,
         emailProviderEnabled,
@@ -2331,6 +2369,13 @@ export class AuthAPI {
           : typeof body.verification_code === "string"
           ? body.verification_code.trim()
           : "";
+      const inviteCodeRaw =
+        typeof body.inviteCode === "string"
+          ? body.inviteCode
+          : typeof body.invite_code === "string"
+          ? body.invite_code
+          : "";
+      const inviteCode = this.referralService.normalizeInviteCode(inviteCodeRaw);
 
       if (!email || !username || !password) {
         return errorResponse("请填写邮箱、用户名和密码", 400);
@@ -2361,10 +2406,24 @@ export class AuthAPI {
         }
       }
 
-      const registerEnabled = config.get("register_enabled");
-
-      if (registerEnabled !== "1") {
+      const registerMode = config.get("register_enabled") || "1";
+      if (registerMode === "0") {
         return errorResponse("系统暂时关闭注册功能", 403);
+      }
+
+      let invitedBy = 0;
+      if (inviteCode) {
+        const inviterUser = await this.referralService.findInviterByCode(inviteCode);
+        if (!inviterUser) {
+          return errorResponse("邀请码无效或已失效，请确认后重试", 400);
+        }
+        invitedBy = ensureNumber(inviterUser.id);
+        const canUseInvite = await this.referralService.isInviteAvailable(invitedBy);
+        if (!canUseInvite) {
+          return errorResponse("该邀请码使用次数已达上限，请联系邀请人", 400);
+        }
+      } else if (registerMode === "2") {
+        return errorResponse("当前仅允许受邀注册，请填写有效邀请码", 403);
       }
 
       // 检查邮箱和用户名是否已存在
@@ -2416,8 +2475,9 @@ export class AuthAPI {
       const stmt = this.db.db.prepare(`
         INSERT INTO users (
           email, username, password_hash, uuid, passwd, token,
+          invited_by,
           transfer_enable, expire_time, class, class_expire_time, status, register_ip
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
       `);
 
       const transferEnableParsed = Number.parseInt(
@@ -2470,6 +2530,7 @@ export class AuthAPI {
           uuid,
           proxyPassword,
           subscriptionToken,
+          invitedBy,
           transferEnableValue,
           accountExpireTime,
           defaultClassValue,
@@ -2495,6 +2556,20 @@ export class AuthAPI {
 
       if (userId === null) {
         return errorResponse("创建用户失败", 500);
+      }
+
+      const ensuredInviteCode = await this.referralService.ensureUserInviteCode(
+        userId
+      );
+      await this.referralService.applyDefaultInviteLimit(userId);
+      if (invitedBy > 0) {
+        await this.referralService.saveReferralRelation({
+          inviterId: invitedBy,
+          inviteeId: userId,
+          inviteCode: inviteCode || ensuredInviteCode,
+          inviteIp: registerIP,
+        });
+        await this.referralService.incrementInviteUsage(invitedBy);
       }
 
       // 自动登录
@@ -2607,6 +2682,19 @@ export class AuthAPI {
         this.logger.warn("解析 OAuth 完成请求失败", error);
       }
 
+      const inviteCodeInput =
+        typeof body.inviteCode === "string"
+          ? body.inviteCode
+          : typeof body.invite_code === "string"
+          ? body.invite_code
+          : "";
+      const inviteCode = this.referralService.normalizeInviteCode(inviteCodeInput);
+      const registerModeRaw = await this.configManager.getSystemConfig(
+        "register_enabled",
+        "1"
+      );
+      const registerMode = registerModeRaw || "1";
+
       const pendingToken = ensureString(
         body?.pendingToken || body?.pending_token
       );
@@ -2651,8 +2739,31 @@ export class AuthAPI {
       let tempPassword: string | null = null;
       let passwordEmailSent = false;
 
+      let invitedBy = 0;
+      let inviterUser: { id: number; invite_code: string } | null = null;
+
       if (!user) {
-        const creationResult = await this.createOAuthUserFromPending(pending);
+        if (registerMode === "0") {
+          return errorResponse("系统暂时关闭注册功能", 403);
+        }
+        if (inviteCode) {
+          inviterUser = await this.referralService.findInviterByCode(inviteCode);
+          if (!inviterUser) {
+            return errorResponse("邀请码无效或已失效，请联系邀请人", 400);
+          }
+          invitedBy = ensureNumber(inviterUser.id);
+          const canUseInvite = await this.referralService.isInviteAvailable(invitedBy);
+          if (!canUseInvite) {
+            return errorResponse("该邀请码使用次数已达上限，请联系邀请人", 400);
+          }
+        } else if (registerMode === "2") {
+          return errorResponse("当前仅允许受邀注册，请输入有效邀请码", 403);
+        }
+
+        const creationResult = await this.createOAuthUserFromPending(pending, {
+          invitedBy,
+          inviteCode: inviteCode || ensureString(inviterUser?.invite_code),
+        });
         user = creationResult.user;
         tempPassword = creationResult.tempPassword;
         passwordEmailSent = creationResult.passwordEmailSent;

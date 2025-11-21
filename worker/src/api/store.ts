@@ -12,6 +12,7 @@ import { createSystemConfigManager } from "../utils/systemConfig";
 import { ensureNumber, ensureString, ensureDate, getChanges, toRunResult } from "../utils/d1";
 import { fixMoneyPrecision } from "../utils/money";
 import type { PaymentCreateResult } from "./pay/types";
+import { ReferralService } from "../services/referralService";
 
 type PackageRow = {
   id: number;
@@ -137,6 +138,7 @@ export class StoreAPI {
   private readonly logger: Logger;
   private readonly configManager: SystemConfigManager;
   private readonly couponService: CouponService;
+  private readonly referralService: ReferralService;
 
   constructor(env: Env) {
     this.env = env;
@@ -144,6 +146,7 @@ export class StoreAPI {
     this.logger = getLogger(env);
     this.configManager = createSystemConfigManager(env);
     this.couponService = new CouponService(this.db.db);
+    this.referralService = new ReferralService(this.db, this.configManager, this.logger);
   }
 
   // 获取套餐列表

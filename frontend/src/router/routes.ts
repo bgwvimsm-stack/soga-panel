@@ -145,6 +145,15 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: "invite",
+        name: "Invite",
+        component: () => import("@/views/user/invite.vue"),
+        meta: {
+          title: "邀请返利",
+          requiresAuth: true
+        }
+      },
+      {
         path: "store",
         name: "Store",
         component: () => import("@/views/user/store.vue"),
@@ -368,6 +377,16 @@ export const routes: RouteRecordRaw[] = [
         component: () => import("@/views/admin/purchase-records.vue"),
         meta: {
           title: "购买记录",
+          requiresAuth: true,
+          requiresAdmin: true
+        }
+      },
+      {
+        path: "rebate-withdrawals",
+        name: "AdminRebateWithdrawals",
+        component: () => import("@/views/admin/rebate-withdrawals.vue"),
+        meta: {
+          title: "返利提现审核",
           requiresAuth: true,
           requiresAdmin: true
         }

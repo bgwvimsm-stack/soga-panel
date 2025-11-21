@@ -9,6 +9,8 @@ import { hashPassword, verifyPassword } from "../utils/crypto";
 import { createSystemConfigManager, type SystemConfigManager } from "../utils/systemConfig";
 import { ensureNumber, ensureString } from "../utils/d1";
 import { TwoFactorService } from "../services/twoFactor";
+import { ReferralService } from "../services/referralService";
+import { getLogger, type Logger } from "../utils/logger";
 
 type AuthenticatedUser = {
   id: number;
@@ -56,6 +58,8 @@ export class UserAPI {
   private readonly env: Env;
   private readonly configManager: SystemConfigManager;
   private readonly twoFactorService: TwoFactorService;
+  private readonly logger: Logger;
+  private readonly referralService: ReferralService;
 
   constructor(env: Env) {
     this.db = new DatabaseService(env.DB);
@@ -63,6 +67,8 @@ export class UserAPI {
     this.env = env;
     this.configManager = createSystemConfigManager(env);
     this.twoFactorService = new TwoFactorService(env);
+    this.logger = getLogger(env);
+    this.referralService = new ReferralService(this.db, this.configManager, this.logger);
   }
 
   private async validateUser(request: Request): Promise<AuthResult> {
@@ -1446,4 +1452,308 @@ export class UserAPI {
       return errorResponse(toErrorMessage(error), 500);
     }
   }
+
+  async getReferralOverview(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+
+      const userId = ensureNumber(authResult.user.id);
+      const url = new URL(request.url);
+      const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+      const limit = Math.max(1, Number.parseInt(url.searchParams.get("limit") ?? "10", 10) || 10);
+      const offset = (page - 1) * limit;
+
+      const userRow = await this.db.db
+        .prepare("SELECT invite_code, invited_by, rebate_available, rebate_total, invite_limit, invite_used FROM users WHERE id = ?")
+        .bind(userId)
+        .first<DbRow | null>();
+      if (!userRow) {
+        return errorResponse("用户不存在", 404);
+      }
+
+      const statsRow = await this.db.db
+        .prepare(`
+          SELECT 
+            COUNT(*) AS total,
+            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_total
+          FROM referral_relations
+          WHERE inviter_id = ?
+        `)
+        .bind(userId)
+        .first<{ total?: number | string | null; active_total?: number | string | null } | null>();
+
+      const referrals = await this.db.db
+        .prepare(
+          `
+          SELECT 
+            rr.id,
+            rr.invitee_id,
+            rr.status,
+            rr.registered_at,
+            rr.first_paid_at,
+            u.email,
+            u.username,
+            (
+              SELECT COALESCE(SUM(amount), 0)
+              FROM rebate_transactions rt
+              WHERE rt.referral_id = rr.id AND rt.amount > 0
+            ) AS total_rebate
+          FROM referral_relations rr
+          LEFT JOIN users u ON rr.invitee_id = u.id
+          WHERE rr.inviter_id = ?
+          ORDER BY rr.created_at DESC
+          LIMIT ? OFFSET ?
+        `
+        )
+        .bind(userId, limit, offset)
+        .all();
+
+      const rows = (referrals.results ?? []) as DbRow[];
+      const total = ensureNumber(statsRow?.total);
+      const [settings, withdrawSettings, siteConfigs] = await Promise.all([
+        this.referralService.getRebateSettings(),
+        this.referralService.getWithdrawalSettings(),
+        this.configManager.getSiteConfigs()
+      ]);
+
+      return successResponse({
+        inviteCode: toString(userRow.invite_code),
+        invitedBy: toNumber(userRow.invited_by),
+        rebateAvailable: toNumber(userRow.rebate_available),
+        rebateTotal: toNumber(userRow.rebate_total),
+        inviteLimit: toNumber(userRow.invite_limit),
+        inviteUsed: toNumber(userRow.invite_used),
+        stats: {
+          totalInvited: total,
+          activeInvited: ensureNumber(statsRow?.active_total),
+        },
+        referrals: rows.map((row) => ({
+          id: ensureNumber(row.id),
+          inviteeId: ensureNumber(row.invitee_id),
+          email: toString(row.email),
+          username: toString(row.username),
+          status: toString(row.status, "pending"),
+          registeredAt: toString(row.registered_at),
+          firstPaidAt: toString(row.first_paid_at),
+          totalRebate: toNumber(row.total_rebate),
+        })),
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.max(1, Math.ceil(total / limit)),
+        },
+        rebateSettings: settings,
+        withdrawSettings,
+        inviteBaseUrl: siteConfigs.site_url || "",
+      });
+    } catch (error) {
+      this.logger.error("获取邀请数据失败", error);
+      return errorResponse(toErrorMessage(error, "获取邀请数据失败"), 500);
+    }
+  }
+
+  async getRebateLedger(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+      const userId = ensureNumber(authResult.user.id);
+      const url = new URL(request.url);
+      const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+      const limit = Math.max(1, Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20);
+      const offset = (page - 1) * limit;
+      const eventType = url.searchParams.get("event_type");
+
+      let whereClause = "WHERE inviter_id = ?";
+      const bindings: Array<number | string> = [userId];
+      if (eventType) {
+        whereClause += " AND event_type = ?";
+        bindings.push(eventType);
+      }
+
+      const totalRow = await this.db.db
+        .prepare(`SELECT COUNT(*) AS total FROM rebate_transactions ${whereClause}`)
+        .bind(...bindings)
+        .first<{ total?: number | string | null } | null>();
+
+      const ledger = await this.db.db
+        .prepare(
+          `
+          SELECT id, event_type, amount, source_type, source_id, trade_no, status, created_at
+          FROM rebate_transactions
+          ${whereClause}
+          ORDER BY created_at DESC
+          LIMIT ? OFFSET ?
+        `
+        )
+        .bind(...bindings, limit, offset)
+        .all();
+
+      const rows = (ledger.results ?? []) as DbRow[];
+      const total = ensureNumber(totalRow?.total);
+
+      return successResponse({
+        records: rows.map((row) => ({
+          id: ensureNumber(row.id),
+          eventType: toString(row.event_type),
+          amount: toNumber(row.amount),
+          sourceType: toString(row.source_type),
+          sourceId: row.source_id ?? null,
+          tradeNo: toString(row.trade_no),
+          status: toString(row.status),
+          createdAt: toString(row.created_at),
+        })),
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.max(1, Math.ceil(total / limit)),
+        },
+      });
+    } catch (error) {
+      this.logger.error("获取返利流水失败", error);
+      return errorResponse(toErrorMessage(error, "获取返利流水失败"), 500);
+    }
+  }
+
+  async transferRebateToBalance(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+      const userId = ensureNumber(authResult.user.id);
+      const body = (await request.json().catch(() => ({}))) as {
+        amount?: number | string;
+      };
+      const amount = ensureNumber(body?.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return errorResponse("请输入有效的划转金额", 400);
+      }
+
+      await this.referralService.transferRebateToBalance(userId, amount);
+      const userRow = await this.db.db
+        .prepare("SELECT money, rebate_available FROM users WHERE id = ?")
+        .bind(userId)
+        .first<{ money?: number | string | null; rebate_available?: number | string | null } | null>();
+
+      return successResponse(
+        {
+          money: toNumber(userRow?.money),
+          rebateAvailable: toNumber(userRow?.rebate_available),
+        },
+        "返利已划转至余额"
+      );
+    } catch (error) {
+      this.logger.error("返利划转失败", error);
+      return errorResponse(toErrorMessage(error, "划转失败，请稍后再试"), 400);
+    }
+  }
+
+  async createRebateWithdrawal(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+      const userId = ensureNumber(authResult.user.id);
+      const body = (await request.json().catch(() => ({}))) as {
+        amount?: number | string;
+        method?: string;
+        accountPayload?: Record<string, unknown> | null;
+      };
+      const amount = ensureNumber(body?.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return errorResponse("请输入有效的提现金额", 400);
+      }
+      const method = toString(body?.method || "manual");
+      const payload =
+        body?.accountPayload && typeof body.accountPayload === "object"
+          ? body.accountPayload
+          : null;
+
+      const withdrawalId = await this.referralService.createWithdrawal({
+        userId,
+        amount,
+        method,
+        accountPayload: payload,
+      });
+
+      return successResponse(
+        {
+          id: withdrawalId,
+        },
+        "提现申请已提交，请等待审核"
+      );
+    } catch (error) {
+      this.logger.error("提交提现申请失败", error);
+      return errorResponse(toErrorMessage(error, "提现申请失败"), 400);
+    }
+  }
+
+  async getRebateWithdrawals(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+      const userId = ensureNumber(authResult.user.id);
+      const url = new URL(request.url);
+      const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+      const limit = Math.max(1, Number.parseInt(url.searchParams.get("limit") ?? "10", 10) || 10);
+      const offset = (page - 1) * limit;
+
+      const totalRow = await this.db.db
+        .prepare("SELECT COUNT(*) as total FROM rebate_withdrawals WHERE user_id = ?")
+        .bind(userId)
+        .first<{ total?: number | string | null } | null>();
+
+      const records = await this.db.db
+        .prepare(
+          `
+          SELECT id, amount, method, status, account_payload, review_note, fee_rate, fee_amount, created_at, updated_at, processed_at
+          FROM rebate_withdrawals
+          WHERE user_id = ?
+          ORDER BY id DESC
+          LIMIT ? OFFSET ?
+        `
+        )
+        .bind(userId, limit, offset)
+        .all();
+
+      const rows = (records.results ?? []) as DbRow[];
+      const total = ensureNumber(totalRow?.total);
+
+      return successResponse({
+        records: rows.map((row) => ({
+          id: ensureNumber(row.id),
+          amount: toNumber(row.amount),
+          method: toString(row.method),
+          status: toString(row.status),
+          accountPayload: row.account_payload ? JSON.parse(toString(row.account_payload)) : null,
+          reviewNote: toString(row.review_note),
+          feeRate: toNumber(row.fee_rate),
+          feeAmount: toNumber(row.fee_amount),
+          createdAt: toString(row.created_at),
+          updatedAt: toString(row.updated_at),
+          processedAt: toString(row.processed_at),
+        })),
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.max(1, Math.ceil(total / limit)),
+        },
+      });
+    } catch (error) {
+      this.logger.error("获取提现记录失败", error);
+      return errorResponse(toErrorMessage(error, "获取提现记录失败"), 500);
+    }
+  }
+
 }
