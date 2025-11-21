@@ -209,7 +209,27 @@
     decline-message="不同意将无法注册账号"
     @accepted="handleOAuthTermsAccepted"
     @declined="handleOAuthTermsDeclined"
-  />
+  >
+    <template #dialog-top>
+      <div v-if="pendingOAuthToken" class="oauth-invite-block">
+        <p class="oauth-invite-label">
+          邀请码
+          <span v-if="inviteRequiredForOAuth" class="required-indicator">*</span>
+        </p>
+        <el-input
+          v-model="oauthInviteCode"
+          size="large"
+          placeholder="请输入邀请人提供的邀请码"
+          clearable
+        />
+        <p class="oauth-invite-tip">
+          若有邀请人请填写其分享的邀请码。
+          <span v-if="inviteRequiredForOAuth">当前仅允许受邀注册。</span>
+        </p>
+        <p v-if="oauthInviteError" class="oauth-invite-error">{{ oauthInviteError }}</p>
+      </div>
+    </template>
+  </TermsAgreement>
 </template>
 
 <script setup lang="ts">
@@ -284,6 +304,13 @@ const oauthTermsRef = ref<InstanceType<typeof TermsAgreement>>();
 const pendingOAuthToken = ref("");
 const pendingOAuthProvider = ref("第三方");
 const oauthTermsHint = "首次使用第三方登录注册账号前需要先阅读并同意服务条款";
+const registerMode = ref("1");
+const oauthInviteCode = ref("");
+const oauthInviteError = ref("");
+const inviteRequiredForOAuth = computed(() => registerMode.value === "2");
+const inviteQueryCode = computed(() =>
+  typeof route.query.invite === "string" ? route.query.invite : ""
+);
 const showPasswordDialog = ref(false);
 const generatedPassword = ref("");
 const passwordEmailSent = ref(false);
@@ -422,19 +449,33 @@ const requestOAuthAgreement = (
 ) => {
   pendingOAuthToken.value = pendingToken;
   pendingOAuthProvider.value = providerLabel;
+  oauthInviteError.value = "";
+  oauthInviteCode.value = inviteQueryCode.value || "";
   oauthTermsRef.value?.openDialog();
   ElMessage.warning(oauthTermsHint);
 };
 
 const handleOAuthTermsAccepted = async () => {
   if (!pendingOAuthToken.value) return;
+  const trimmedCode = oauthInviteCode.value.trim();
+  if (inviteRequiredForOAuth.value && !trimmedCode) {
+    oauthInviteError.value = "请输入邀请码";
+    ElMessage.warning("请输入邀请码");
+    return;
+  }
   try {
-    const { data } = await completePendingOAuthRegistration({
+    const payload: { pendingToken: string; inviteCode?: string } = {
       pendingToken: pendingOAuthToken.value
-    });
+    };
+    if (trimmedCode) {
+      payload.inviteCode = trimmedCode;
+    }
+    const { data } = await completePendingOAuthRegistration(payload);
     const providerLabel = pendingOAuthProvider.value || "第三方";
     pendingOAuthToken.value = "";
     pendingOAuthProvider.value = "第三方";
+    oauthInviteCode.value = "";
+    oauthInviteError.value = "";
     handleOAuthLoginSuccess(providerLabel, data as OAuthLoginPayload);
   } catch (error) {
     console.error("完成 OAuth 注册失败:", error);
@@ -445,6 +486,7 @@ const handleOAuthTermsAccepted = async () => {
 const handleOAuthTermsDeclined = () => {
   pendingOAuthToken.value = "";
   pendingOAuthProvider.value = "第三方";
+  oauthInviteError.value = "";
   ElMessage.warning("不同意服务条款无法自动注册账号");
 };
 
@@ -738,6 +780,7 @@ const loadAuthConfig = async () => {
   try {
     const { data } = await getRegisterConfig();
     forgotPasswordVisible.value = Boolean(data?.passwordResetEnabled);
+    registerMode.value = data?.registerMode || "1";
   } catch (error) {
     console.error("获取认证配置失败:", error);
     forgotPasswordVisible.value = false;
@@ -1068,5 +1111,32 @@ const copyGeneratedPassword = async () => {
   .el-icon {
     color: #4f46e5;
   }
+}
+
+.oauth-invite-block {
+  margin-bottom: 16px;
+
+  .oauth-invite-label {
+    font-size: 13px;
+    color: #4b5563;
+    margin-bottom: 6px;
+
+    .required-indicator {
+      color: #ef4444;
+      margin-left: 4px;
+    }
+  }
+
+  .oauth-invite-tip {
+    font-size: 12px;
+    color: #9ca3af;
+    margin-top: 6px;
+  }
+}
+
+.oauth-invite-error {
+  color: #ef4444;
+  font-size: 12px;
+  margin-top: 4px;
 }
 </style>

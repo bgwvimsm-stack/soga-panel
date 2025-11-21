@@ -22,6 +22,12 @@ export interface User {
   download_today: number;
   transfer_total: number;
   transfer_enable: number;
+  invite_code?: string;
+  invited_by?: number;
+  invite_limit?: number;
+  invite_used?: number;
+  rebate_available?: number;
+  rebate_total?: number;
   status: number;
   reg_date: string;
   expire_time: string;
@@ -118,6 +124,7 @@ export interface RegisterRequest {
   username: string;
   password: string;
   verificationCode: string;
+  inviteCode?: string;
 }
 
 export interface PasswordResetRequestPayload {

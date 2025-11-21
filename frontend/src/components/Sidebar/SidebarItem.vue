@@ -41,6 +41,7 @@ import IconUserTraffic from '~icons/mdi/chart-line-variant';
 import IconUserSubscription from '~icons/mdi/link-variant';
 import IconUserSharedIds from '~icons/mdi/key-chain-variant';
 import IconUserSubscriptionLogs from '~icons/mdi/history';
+import IconUserInvite from '~icons/mdi/account-multiple-plus-outline';
 import IconUserAuditRules from '~icons/mdi/shield-sync-outline';
 import IconUserAuditLogs from '~icons/mdi/file-search-outline';
 import IconUserProfile from '~icons/mdi/account-circle-outline';
@@ -66,6 +67,7 @@ import IconAdminWhitelist from '~icons/mdi/shield-plus-outline';
 import IconAdminAuditLogs from '~icons/mdi/book-search-outline';
 import IconAdminSystemConfigs from '~icons/mdi/tune-variant';
 import IconAdminAppleAccounts from '~icons/mdi/apple-ios';
+import IconAdminWithdraw from '~icons/mdi/cash-refund';
 
 interface MenuItem {
   path: string;
@@ -99,6 +101,7 @@ const iconMap = {
   'user-announcement': IconUserAnnouncement,
   'user-tickets': IconUserTickets,
   'user-wallet': IconUserWallet,
+  'user-invite': IconUserInvite,
   'user-store': IconUserStore,
   'user-nodes': IconUserNodes,
   'user-traffic': IconUserTraffic,
@@ -129,7 +132,8 @@ const iconMap = {
   'admin-whitelist': IconAdminWhitelist,
   'admin-audit-logs': IconAdminAuditLogs,
   'admin-system-configs': IconAdminSystemConfigs,
-  'admin-apple': IconAdminAppleAccounts
+  'admin-apple': IconAdminAppleAccounts,
+  'admin-withdraw': IconAdminWithdraw
 };
 
 const getIcon = (iconName: string) => {

@@ -100,6 +100,16 @@
             </el-button>
 
             <el-button
+              type="danger"
+              :loading="resettingInviteCodes"
+              @click="handleResetInviteCodes"
+              :disabled="anyOperationRunning"
+            >
+              <el-icon><Link /></el-icon>
+              重置所有用户邀请码
+            </el-button>
+
+            <el-button
               type="primary"
               :loading="clearingAuditCache"
               @click="handleClearAuditRulesCache"
@@ -274,7 +284,8 @@ import {
   resetAllUserPasswords,
   resetAllSubscriptionTokens,
   clearAuditRulesCache,
-  clearWhitelistCache
+  clearWhitelistCache,
+  resetAllInviteCodes
 } from "@/api/admin";
 import http from "@/api/http";
 
@@ -287,6 +298,7 @@ const loadingRecentUsers = ref(false);
 const executingDailyTask = ref(false);
 const resettingPasswords = ref(false);
 const resettingSubscriptions = ref(false);
+const resettingInviteCodes = ref(false);
 const clearingAuditCache = ref(false);
 const clearingWhitelistCache = ref(false);
 const deletingPendingRecords = ref(false);
@@ -294,7 +306,15 @@ const operationResult = ref(null);
 
 // 计算属性：是否有操作正在运行
 const anyOperationRunning = computed(() => {
-  return executingDailyTask.value || resettingPasswords.value || resettingSubscriptions.value || clearingAuditCache.value || clearingWhitelistCache.value || deletingPendingRecords.value;
+  return (
+    executingDailyTask.value ||
+    resettingPasswords.value ||
+    resettingSubscriptions.value ||
+    resettingInviteCodes.value ||
+    clearingAuditCache.value ||
+    clearingWhitelistCache.value ||
+    deletingPendingRecords.value
+  );
 });
 
 // 系统统计数据 - 从API获取
@@ -563,6 +583,41 @@ const handleResetAllSubscriptions = async () => {
     }
   } finally {
     resettingSubscriptions.value = false;
+  }
+};
+
+const handleResetInviteCodes = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '此操作将为所有用户生成新的邀请码并清空已使用次数，是否继续？',
+      '危险操作确认',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'error'
+      }
+    );
+
+    resettingInviteCodes.value = true;
+    const { data } = await resetAllInviteCodes();
+    operationResult.value = {
+      title: '操作成功',
+      type: 'success',
+      description: data.message || `已重置 ${data.count ?? 0} 个用户的邀请码`
+    };
+    ElMessage.success(data.message || '邀请码已全部重置');
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('重置邀请码失败:', error);
+      operationResult.value = {
+        title: '操作失败',
+        type: 'error',
+        description: '重置邀请码失败，请稍后重试'
+      };
+      ElMessage.error('重置邀请码失败，请稍后重试');
+    }
+  } finally {
+    resettingInviteCodes.value = false;
   }
 };
 

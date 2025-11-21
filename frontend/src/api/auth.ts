@@ -39,6 +39,7 @@ export const loginWithGithub = (
 
 export const completePendingOAuthRegistration = (data: {
   pendingToken: string;
+  inviteCode?: string;
 }): Promise<ApiResponse<LoginResponse>> => {
   return http.post("/auth/oauth/complete", data);
 };
@@ -76,6 +77,8 @@ export const confirmPasswordReset = (data: PasswordResetConfirmPayload): Promise
  */
 export const getRegisterConfig = (): Promise<ApiResponse<{
   registerEnabled: boolean;
+  registerMode: string;
+  inviteRequired: boolean;
   verificationEnabled: boolean;
   passwordResetEnabled: boolean;
   emailProviderEnabled: boolean;

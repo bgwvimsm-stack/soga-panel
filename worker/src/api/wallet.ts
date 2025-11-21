@@ -15,6 +15,7 @@ import { ensureNumber, ensureString, getLastRowId, toRunResult } from "../utils/
 import { fixMoneyPrecision } from "../utils/money";
 import { GiftCardService, GiftCardType } from "../services/giftCardService";
 import { StoreAPI } from "./store";
+import { ReferralService } from "../services/referralService";
 
 type AuthenticatedUser = {
   id: number;
@@ -147,6 +148,7 @@ export class WalletAPI {
   private readonly couponService: CouponService;
   private readonly giftCardService: GiftCardService;
   private storeApiInstance: StoreAPI | null = null;
+  private readonly referralService: ReferralService;
 
   constructor(env: Env) {
     this.env = env;
@@ -155,6 +157,7 @@ export class WalletAPI {
     this.logger = getLogger(env);
     this.configManager = createSystemConfigManager(env);
     this.giftCardService = new GiftCardService(this.db.db);
+    this.referralService = new ReferralService(this.db, this.configManager, this.logger);
 
     let provider: PaymentProvider | null = null;
     try {
@@ -528,6 +531,22 @@ export class WalletAPI {
             amount: rechargeRecord.amount
           });
           return new Response('fail');
+        }
+
+        try {
+          await this.referralService.awardRebate({
+            inviteeId: rechargeRecord.user_id,
+            amount: ensureNumber(rechargeRecord.amount),
+            sourceType: "recharge",
+            sourceId: rechargeRecord.id,
+            tradeNo: rechargeRecord.trade_no,
+            eventType: "recharge_rebate",
+          });
+        } catch (error) {
+          this.logger.error("处理充值返利失败", error, {
+            user_id: rechargeRecord.user_id,
+            trade_no: rechargeRecord.trade_no,
+          });
         }
 
         // 检查是否为智能补差额的套餐购买

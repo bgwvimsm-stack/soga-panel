@@ -317,6 +317,29 @@
 
         <el-row :gutter="20">
           <el-col :span="12">
+            <el-form-item label="邀请码" prop="invite_code">
+              <el-input
+                v-model="userForm.invite_code"
+                placeholder="留空自动生成"
+                maxlength="16"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="邀请码次数" prop="invite_limit">
+              <el-input-number
+                v-model="userForm.invite_limit"
+                :min="0"
+                :max="9999"
+                controls-position="right"
+                style="width: 100%"
+              />
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row :gutter="20">
+          <el-col :span="12">
             <el-form-item label="账户余额" prop="money">
               <el-input-number
                 v-model="userForm.money"
@@ -558,7 +581,9 @@ const userForm = reactive({
   speed_limit: 0,
   device_limit: 0,
   bark_key: '',
-  bark_enabled: false
+  bark_enabled: false,
+  invite_code: '',
+  invite_limit: 0
 });
 
 // 表单验证规则
@@ -745,6 +770,8 @@ const editUser = (user: User) => {
   userForm.device_limit = user.device_limit || 0;
   userForm.bark_key = user.bark_key || '';
   userForm.bark_enabled = user.bark_enabled || false;
+  userForm.invite_code = (user.invite_code || '').toUpperCase();
+  userForm.invite_limit = user.invite_limit ?? 0;
   showAddUserDialog.value = true;
 };
 
@@ -755,6 +782,10 @@ const saveUser = async () => {
   try {
     await userFormRef.value.validate();
     submitting.value = true;
+    const normalizedInviteCode = (userForm.invite_code || '').trim();
+    const inviteLimitValue = Number.isFinite(Number(userForm.invite_limit))
+      ? Math.max(0, Math.floor(Number(userForm.invite_limit)))
+      : 0;
 
     if (editingUser.value) {
       const formData: UpdateUserRequest = {
@@ -768,7 +799,9 @@ const saveUser = async () => {
         speed_limit: userForm.speed_limit,
         device_limit: userForm.device_limit,
         bark_key: userForm.bark_key || null,
-        bark_enabled: userForm.bark_enabled
+        bark_enabled: userForm.bark_enabled,
+        invite_code: normalizedInviteCode,
+        invite_limit: inviteLimitValue
       };
 
       if (userForm.password) {
@@ -790,7 +823,9 @@ const saveUser = async () => {
         speed_limit: userForm.speed_limit,
         device_limit: userForm.device_limit,
         bark_key: userForm.bark_key || null,
-        bark_enabled: userForm.bark_enabled
+        bark_enabled: userForm.bark_enabled,
+        invite_code: normalizedInviteCode,
+        invite_limit: inviteLimitValue
       };
 
       await createUser(formData);
@@ -1096,6 +1131,8 @@ const resetForm = () => {
   userForm.device_limit = 0;
   userForm.bark_key = '';
   userForm.bark_enabled = false;
+  userForm.invite_code = '';
+  userForm.invite_limit = 0;
 
   const now = new Date();
   const defaultExpireTime = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);

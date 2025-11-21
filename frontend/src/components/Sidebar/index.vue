@@ -100,6 +100,7 @@ const userRoutes: MenuRoute[] = [
   { path: '/user/announcements', name: 'announcements', icon: 'user-announcement', title: '公告详情' },
   { path: '/user/tickets', name: 'tickets', icon: 'user-tickets', title: '工单中心' },
   { path: '/user/wallet', name: 'wallet', icon: 'user-wallet', title: '我的钱包' },
+  { path: '/user/invite', name: 'invite', icon: 'user-invite', title: '邀请返利' },
   { path: '/user/store', name: 'store', icon: 'user-store', title: '套餐商店' },
   { path: '/user/nodes', name: 'nodes', icon: 'user-nodes', title: '节点列表' },
   { path: '/user/traffic', name: 'traffic', icon: 'user-traffic', title: '流量统计' },
@@ -136,7 +137,8 @@ const adminRoutes: MenuRoute[] = [
     title: '交易记录',
     children: [
       { path: '/admin/recharge-records', name: 'admin-recharge-records', icon: 'admin-recharge', title: '充值记录' },
-      { path: '/admin/purchase-records', name: 'admin-purchase-records', icon: 'admin-purchase', title: '购买记录' }
+      { path: '/admin/purchase-records', name: 'admin-purchase-records', icon: 'admin-purchase', title: '购买记录' },
+      { path: '/admin/rebate-withdrawals', name: 'admin-rebate-withdrawals', icon: 'admin-withdraw', title: '返利提现' }
     ]
   },
   {

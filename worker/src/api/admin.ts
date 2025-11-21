@@ -18,6 +18,8 @@ import { createSystemConfigManager } from "../utils/systemConfig";
 import { getChanges, toRunResult, ensureNumber, ensureString, ensureDate, getLastRowId } from "../utils/d1";
 import { fixMoneyPrecision } from "../utils/money";
 import { GiftCardService, GiftCardType, CreateGiftCardPayload } from "../services/giftCardService";
+import { ReferralService } from "../services/referralService";
+import { getLogger, type Logger } from "../utils/logger";
 
 interface AdminAuthResult {
   success: boolean;
@@ -68,6 +70,9 @@ interface UserListRow {
   device_limit: number | null;
   money: number | null;
   register_ip: string | null;
+  invite_code: string | null;
+  invite_limit: number | null;
+  invite_used: number | null;
 }
 
 interface UserExportRow {
@@ -387,6 +392,8 @@ export class AdminAPI {
   private readonly scheduler: SchedulerService;
   private readonly configManager: SystemConfigManager;
   private readonly giftCardService: GiftCardService;
+  private readonly referralService: ReferralService;
+  private readonly logger: Logger;
 
   constructor(env: Env) {
     this.env = env;
@@ -395,6 +402,8 @@ export class AdminAPI {
     this.scheduler = new SchedulerService(env);
     this.configManager = createSystemConfigManager(env);
     this.giftCardService = new GiftCardService(this.db.db);
+    this.logger = getLogger(env);
+    this.referralService = new ReferralService(this.db, this.configManager, this.logger);
   }
 
   // 验证管理员权限
@@ -850,7 +859,7 @@ export class AdminAPI {
                u.transfer_enable, u.transfer_total, u.expire_time,
                u.status, u.is_admin, u.reg_date, u.last_login_time, u.created_at,
                u.bark_key, u.bark_enabled, u.speed_limit, u.device_limit, u.money,
-               u.register_ip
+               u.register_ip, u.invite_code, u.invite_limit, u.invite_used
         FROM users u
         LEFT JOIN today_usage t ON t.user_id = u.id
         ${whereClause}
@@ -1083,7 +1092,27 @@ export class AdminAPI {
         return errorResponse(adminCheck.message, 401);
       }
 
-      const userData = await request.json();
+      const userData = (await request.json().catch(() => ({}))) as Record<string, any>;
+      const providedInviteCode = this.referralService.normalizeInviteCode(
+        typeof userData.invite_code === "string" ? userData.invite_code : ""
+      );
+      if (providedInviteCode) {
+        const existingInvite = await this.db.db
+          .prepare("SELECT id FROM users WHERE invite_code = ?")
+          .bind(providedInviteCode)
+          .first<{ id: number } | null>();
+        if (existingInvite) {
+          return errorResponse("邀请码已被占用，请更换后重试", 409);
+        }
+      }
+      const inviteLimitInput =
+        userData.invite_limit !== undefined
+          ? Number(userData.invite_limit)
+          : null;
+      const providedInviteLimit =
+        inviteLimitInput !== null && Number.isFinite(inviteLimitInput)
+          ? Math.max(0, Math.floor(inviteLimitInput))
+          : null;
       const registerIP =
         request.headers.get("CF-Connecting-IP") ||
         request.headers.get("X-Forwarded-For") ||
@@ -1159,12 +1188,50 @@ export class AdminAPI {
       if (newUserId === null) {
         return errorResponse("创建用户失败", 500);
       }
+      const createdUserId = newUserId as number;
+
+      if (providedInviteCode) {
+        await this.db.db
+          .prepare(
+            "UPDATE users SET invite_code = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?"
+          )
+          .bind(providedInviteCode, createdUserId)
+          .run();
+      } else {
+        await this.referralService.ensureUserInviteCode(createdUserId);
+      }
+
+      if (providedInviteLimit !== null) {
+        await this.db.db
+          .prepare(
+            `
+            UPDATE users
+            SET invite_limit = ?,
+                invite_used = CASE
+                  WHEN ? > 0 AND invite_used > ? THEN ?
+                  ELSE invite_used
+                END,
+                updated_at = datetime('now', '+8 hours')
+            WHERE id = ?
+          `
+          )
+          .bind(
+            providedInviteLimit,
+            providedInviteLimit,
+            providedInviteLimit,
+            providedInviteLimit,
+            createdUserId
+          )
+          .run();
+      } else {
+        await this.referralService.applyDefaultInviteLimit(createdUserId);
+      }
 
       // 清除缓存
       await this.cache.deleteByPrefix("user_");
 
       return successResponse({
-        user_id: newUserId,
+        user_id: createdUserId,
         message: "User created successfully",
       });
     } catch (error) {
@@ -1181,8 +1248,46 @@ export class AdminAPI {
       }
 
       const url = new URL(request.url);
-      const userId = parseInt(url.pathname.split("/").pop());
-      const updateData = await request.json();
+      const userId = Number.parseInt(url.pathname.split("/").pop() || "");
+      if (!Number.isFinite(userId)) {
+        return errorResponse("Invalid user id", 400);
+      }
+      const updateData = (await request.json().catch(() => ({}))) as Record<string, any>;
+      const updates = [];
+      const values = [];
+      let shouldRegenerateInviteCode = false;
+      let inviteLimitForClamp: number | null = null;
+
+      if (Object.prototype.hasOwnProperty.call(updateData, "invite_code")) {
+        const normalizedInviteCode = this.referralService.normalizeInviteCode(
+          typeof updateData.invite_code === "string"
+            ? updateData.invite_code
+            : ""
+        );
+        if (!normalizedInviteCode) {
+          shouldRegenerateInviteCode = true;
+        } else {
+          const existingInvite = await this.db.db
+            .prepare("SELECT id FROM users WHERE invite_code = ? AND id != ?")
+            .bind(normalizedInviteCode, userId)
+            .first<{ id: number } | null>();
+          if (existingInvite) {
+            return errorResponse("邀请码已被占用，请更换后重试", 409);
+          }
+          updates.push("invite_code = ?");
+          values.push(normalizedInviteCode);
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(updateData, "invite_limit")) {
+        const rawLimit = Number(updateData.invite_limit);
+        const safeLimit = Number.isFinite(rawLimit)
+          ? Math.max(0, Math.floor(rawLimit))
+          : 0;
+        updates.push("invite_limit = ?");
+        values.push(safeLimit);
+        inviteLimitForClamp = safeLimit;
+      }
 
       // 构建更新语句
       const allowedFields = [
@@ -1201,9 +1306,6 @@ export class AdminAPI {
         "bark_key",
         "bark_enabled",
       ];
-
-      const updates = [];
-      const values = [];
 
       for (const field of allowedFields) {
         if (updateData[field] !== undefined) {
@@ -1230,6 +1332,27 @@ export class AdminAPI {
       `);
 
       await stmt.bind(...values).run();
+
+      if (shouldRegenerateInviteCode) {
+        await this.referralService.ensureUserInviteCode(userId);
+      }
+
+      if (inviteLimitForClamp !== null && inviteLimitForClamp > 0) {
+        await this.db.db
+          .prepare(
+            `
+            UPDATE users
+            SET invite_used = CASE 
+                  WHEN invite_used > ? THEN ?
+                  ELSE invite_used
+                END,
+                updated_at = datetime('now', '+8 hours')
+            WHERE id = ?
+          `
+          )
+          .bind(inviteLimitForClamp, inviteLimitForClamp, userId)
+          .run();
+      }
 
       // 清除用户缓存
       await this.cache.deleteByPrefix(`user_${userId}`);
@@ -4214,6 +4337,152 @@ export class AdminAPI {
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       console.error("删除系统配置失败:", err);
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  async getRebateWithdrawals(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
+      const limit = Math.max(1, Number.parseInt(url.searchParams.get("limit") ?? "20", 10) || 20);
+      const offset = (page - 1) * limit;
+      const statusFilter = url.searchParams.get("status");
+
+      let whereClause = "WHERE 1=1";
+      const bindings: Array<string | number> = [];
+      if (statusFilter) {
+        whereClause += " AND rw.status = ?";
+        bindings.push(statusFilter);
+      }
+
+      const totalRow = await this.db.db
+        .prepare(`SELECT COUNT(*) as total FROM rebate_withdrawals rw ${whereClause}`)
+        .bind(...bindings)
+        .first<{ total?: number | string | null } | null>();
+
+      const rows = await this.db.db
+        .prepare(
+          `
+          SELECT 
+            rw.id,
+            rw.user_id,
+            rw.amount,
+            rw.method,
+            rw.status,
+            rw.account_payload,
+            rw.review_note,
+            rw.fee_rate,
+            rw.fee_amount,
+            rw.created_at,
+            rw.updated_at,
+            rw.processed_at,
+            u.email,
+            u.username
+          FROM rebate_withdrawals rw
+          LEFT JOIN users u ON rw.user_id = u.id
+          ${whereClause}
+          ORDER BY rw.id DESC
+          LIMIT ? OFFSET ?
+        `
+        )
+        .bind(...bindings, limit, offset)
+        .all();
+
+      const records = (rows.results ?? []) as Array<Record<string, unknown>>;
+      const total = ensureNumber(totalRow?.total);
+
+      return successResponse({
+        records: records.map((row) => ({
+          id: ensureNumber(row.id),
+          userId: ensureNumber(row.user_id),
+          email: ensureString(row.email),
+          username: ensureString(row.username),
+          amount: fixMoneyPrecision(ensureNumber(row.amount)),
+          method: ensureString(row.method),
+          status: ensureString(row.status),
+          accountPayload: row.account_payload ? JSON.parse(ensureString(row.account_payload)) : null,
+          reviewNote: ensureString(row.review_note),
+          feeRate: ensureNumber(row.fee_rate),
+          feeAmount: fixMoneyPrecision(ensureNumber(row.fee_amount)),
+          createdAt: ensureString(row.created_at),
+          updatedAt: ensureString(row.updated_at),
+          processedAt: ensureString(row.processed_at),
+        })),
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.max(1, Math.ceil(total / limit)),
+        },
+      });
+    } catch (error) {
+      this.logger.error("获取提现申请失败", error);
+      const message = error instanceof Error ? error.message : "获取提现申请失败";
+      return errorResponse(message, 500);
+    }
+  }
+
+  async reviewRebateWithdrawal(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+      const body = (await request.json().catch(() => ({}))) as {
+        id?: number;
+        status?: string;
+        note?: string;
+      };
+      const withdrawalId = ensureNumber(body?.id);
+      if (!withdrawalId) {
+        return errorResponse("缺少提现申请ID", 400);
+      }
+      const status = ensureString(body?.status);
+      const allowed = new Set(["approved", "rejected", "paid"]);
+      if (!allowed.has(status)) {
+        return errorResponse("不支持的状态", 400);
+      }
+      const note = ensureString(body?.note);
+      const reviewerId = ensureNumber(adminCheck.admin?.id);
+
+      const updated = await this.referralService.updateWithdrawalStatus(
+        withdrawalId,
+        status as "approved" | "rejected" | "paid",
+        reviewerId,
+        note
+      );
+
+      return successResponse({
+        message: "提现状态已更新",
+        record: updated,
+      });
+    } catch (error) {
+      this.logger.error("更新提现状态失败", error);
+      const message = error instanceof Error ? error.message : "更新失败";
+      return errorResponse(message, 400);
+    }
+  }
+
+  async resetAllInviteCodes(request: Request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+      const updated = await this.referralService.resetAllInviteCodes();
+      await this.cache.deleteByPrefix("user_");
+      return successResponse({
+        message: `已重置 ${updated} 个用户的邀请码`,
+        count: updated
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
       return errorResponse(err.message, 500);
     }
   }

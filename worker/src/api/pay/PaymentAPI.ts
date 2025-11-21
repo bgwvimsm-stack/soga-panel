@@ -9,8 +9,12 @@ import { getLogger, type Logger } from "../../utils/logger";
 import { PaymentProviderFactory } from "./PaymentProviderFactory";
 import type { PaymentProvider, PaymentCreateResult, PaymentParams } from "./types";
 import { ensureNumber, ensureString, getChanges, toRunResult } from "../../utils/d1";
+import { ReferralService } from "../../services/referralService";
+import { createSystemConfigManager, type SystemConfigManager } from "../../utils/systemConfig";
+import { fixMoneyPrecision } from "../../utils/money";
 
 interface RechargeRecordRow {
+  id?: number;
   trade_no: string;
   status: number;
   user_id: number;
@@ -75,6 +79,8 @@ export class PaymentAPI {
   private readonly currentProvider: string;
   private readonly paymentProvider: PaymentProvider | null;
   private readonly couponService: CouponService;
+  private readonly configManager: SystemConfigManager;
+  private readonly referralService: ReferralService;
 
   constructor(env: Env) {
     this.env = env;
@@ -82,6 +88,8 @@ export class PaymentAPI {
     this.db = new DatabaseService(this.dbRaw);
     this.couponService = new CouponService(this.dbRaw);
     this.logger = getLogger(env);
+    this.configManager = createSystemConfigManager(env);
+    this.referralService = new ReferralService(this.db, this.configManager, this.logger);
 
     this.currentProvider = ensureString(env.PAYMENT_PROVIDER) || "epay";
 
@@ -467,6 +475,22 @@ export class PaymentAPI {
       amount,
       changes: getChanges(updateResult)
     });
+
+    try {
+      await this.referralService.awardRebate({
+        inviteeId: rechargeRecord.user_id,
+        amount: ensureNumber(amount),
+        sourceType: "recharge",
+        sourceId: ensureNumber((rechargeRecord as any).id ?? 0) || null,
+        tradeNo: rechargeRecord.trade_no,
+        eventType: "recharge_rebate",
+      });
+    } catch (error) {
+      this.logger.error("充值返利发放失败", error, {
+        trade_no: rechargeRecord.trade_no,
+        user_id: rechargeRecord.user_id,
+      });
+    }
   }
 
   // 处理购买成功
@@ -494,7 +518,7 @@ export class PaymentAPI {
     }
 
     // 如果是智能补差额支付，需要先扣除用户余额
-    const paidAmount = ensureNumber(amount);
+    const onlinePaidAmount = ensureNumber(amount);
     const purchaseType = ensureString(purchaseRecord.purchase_type);
 
     const isHybridPayment = purchaseType === 'smart_topup' || purchaseType.startsWith('balance_');
@@ -511,14 +535,14 @@ export class PaymentAPI {
       if (currentBalance > 0) {
         // 计算需要扣除的余额（套餐价格 - 在线支付金额）
         const basePrice = ensureNumber(
-          purchaseRecord.package_price ?? purchaseRecord.price ?? paidAmount
+          purchaseRecord.package_price ?? purchaseRecord.price ?? onlinePaidAmount
         );
         const discountAmount =
           purchaseRecord.discount_amount != null
             ? ensureNumber(purchaseRecord.discount_amount)
             : 0;
         const finalPrice = Math.max(basePrice - discountAmount, 0);
-        const balanceToDeduct = Math.max(Number((finalPrice - paidAmount).toFixed(2)), 0);
+        const balanceToDeduct = Math.max(Number((finalPrice - onlinePaidAmount).toFixed(2)), 0);
 
         if (balanceToDeduct > 0 && currentBalance + 1e-6 >= balanceToDeduct) {
           // 扣除用户余额
@@ -538,7 +562,7 @@ export class PaymentAPI {
               trade_no: purchaseRecord.trade_no,
               user_id: purchaseRecord.user_id,
               balance_deducted: balanceToDeduct,
-              online_payment: paidAmount,
+              online_payment: onlinePaidAmount,
               total_package_price: finalPrice
             });
           } else {
@@ -575,6 +599,35 @@ export class PaymentAPI {
       amount,
       changes: getChanges(updateResult)
     });
+
+    const recordBasePrice = ensureNumber(
+          purchaseRecord.package_price ?? purchaseRecord.price ?? amount
+        );
+    const discountAmount =
+      purchaseRecord.discount_amount != null
+        ? ensureNumber(purchaseRecord.discount_amount)
+        : 0;
+    const finalPrice = fixMoneyPrecision(Math.max(recordBasePrice - discountAmount, 0));
+    const rebatePaidAmount = fixMoneyPrecision(Math.max(ensureNumber(amount), 0));
+    const rebateBase = Math.min(rebatePaidAmount, finalPrice);
+
+    if (rebateBase > 0) {
+      try {
+        await this.referralService.awardRebate({
+          inviteeId: purchaseRecord.user_id,
+          amount: rebateBase,
+          sourceType: "purchase",
+          sourceId: ensureNumber(purchaseRecord.id ?? 0) || null,
+          tradeNo: purchaseRecord.trade_no,
+          eventType: "purchase_rebate",
+        });
+      } catch (error) {
+        this.logger.error("套餐返利发放失败", error, {
+          trade_no: purchaseRecord.trade_no,
+          user_id: purchaseRecord.user_id,
+        });
+      }
+    }
   }
 
   // 处理支付失败

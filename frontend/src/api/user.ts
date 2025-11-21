@@ -167,6 +167,42 @@ export const getLoginLogs = (params?: {
 }>> => {
   return http.get("/user/login-logs", { params });
 };
+
+export const getReferralOverview = (params?: {
+  page?: number;
+  limit?: number;
+}): Promise<ApiResponse<any>> => {
+  return http.get("/user/referrals", { params });
+};
+
+export const getRebateLedger = (params?: {
+  page?: number;
+  limit?: number;
+  event_type?: string;
+}): Promise<ApiResponse<any>> => {
+  return http.get("/user/rebate/ledger", { params });
+};
+
+export const transferRebate = (data: {
+  amount: number;
+}): Promise<ApiResponse<{ money: number; rebateAvailable: number }>> => {
+  return http.post("/user/rebate/transfer", data);
+};
+
+export const createRebateWithdrawal = (data: {
+  amount: number;
+  method?: string;
+  accountPayload?: Record<string, unknown>;
+}): Promise<ApiResponse<{ id: number }>> => {
+  return http.post("/user/rebate/withdraw", data);
+};
+
+export const getUserRebateWithdrawals = (params?: {
+  page?: number;
+  limit?: number;
+}): Promise<ApiResponse<any>> => {
+  return http.get("/user/rebate/withdrawals", { params });
+};
 /**
  * 获取用户钱包信息
  */

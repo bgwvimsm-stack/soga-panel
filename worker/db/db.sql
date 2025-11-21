@@ -10,6 +10,10 @@
 -- uuid: 用户UUID（唯一标识，用于代理配置）
 -- passwd: 代理密码（明文，用于代理认证）
 -- token: 订阅令牌（唯一，用于订阅链接）
+-- invite_code: 用户的唯一邀请码（用于邀请注册）
+-- invited_by: 上级邀请人ID（0表示无上级）
+-- invite_limit: 邀请码可使用次数（0表示无限制）
+-- invite_used: 邀请码已使用次数
 -- google_sub: Google OAuth 唯一标识（第三方登录时记录）
 -- oauth_provider: OAuth 提供商标识（如 google、github 等）
 -- first_oauth_login_at: 首次通过 OAuth 登录的时间（UTC+8时区）
@@ -46,6 +50,12 @@ CREATE TABLE
         uuid TEXT UNIQUE NOT NULL,
         passwd TEXT NOT NULL,
         token TEXT UNIQUE NOT NULL,
+        invite_code TEXT UNIQUE,
+        invited_by INTEGER NOT NULL DEFAULT 0,
+        invite_limit INTEGER DEFAULT 0,
+        invite_used INTEGER DEFAULT 0,
+        invite_limit INTEGER DEFAULT 0,
+        invite_used INTEGER DEFAULT 0,
         google_sub TEXT,
         oauth_provider TEXT,
         first_oauth_login_at DATETIME,
@@ -76,6 +86,8 @@ CREATE TABLE
         two_factor_temp_secret TEXT,
         two_factor_confirmed_at DATETIME,
         money DECIMAL(10,2) DEFAULT 0.00,
+        rebate_available DECIMAL(10,2) DEFAULT 0.00,
+        rebate_total DECIMAL(10,2) DEFAULT 0.00,
         register_ip TEXT,
         created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
         updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
@@ -655,6 +667,125 @@ CREATE INDEX IF NOT EXISTS idx_gift_cards_code ON gift_cards (code);
 CREATE INDEX IF NOT EXISTS idx_gift_card_redemptions_card_id ON gift_card_redemptions (card_id);
 CREATE INDEX IF NOT EXISTS idx_gift_card_redemptions_user_id ON gift_card_redemptions (user_id);
 
+-- 邀请关系表
+-- 字段说明：
+-- id: 关联ID
+-- inviter_id: 邀请人用户ID
+-- invitee_id: 被邀请人用户ID
+-- invite_code: 使用的邀请码
+-- invite_ip: 注册时的IP地址
+-- registered_at: 注册时间
+-- first_payment_type: 首次付费类型（recharge/purchase）
+-- first_payment_id: 首次付费记录ID
+-- first_paid_at: 首次付费时间
+-- status: 状态（pending/active/blocked）
+-- created_at: 创建时间
+-- updated_at: 更新时间
+CREATE TABLE IF NOT EXISTS referral_relations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    inviter_id INTEGER NOT NULL,
+    invitee_id INTEGER NOT NULL UNIQUE,
+    invite_code TEXT NOT NULL,
+    invite_ip TEXT,
+    registered_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    first_payment_type TEXT,
+    first_payment_id INTEGER,
+    first_paid_at DATETIME,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    updated_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    FOREIGN KEY (inviter_id) REFERENCES users (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_referral_relations_inviter ON referral_relations (inviter_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_referral_relations_status ON referral_relations (status);
+
+-- 返利流水表
+-- 字段说明：
+-- id: 流水ID
+-- inviter_id: 获得返利的用户ID
+-- referral_id: 对应的邀请关系ID
+-- invitee_id: 受邀人ID
+-- source_type: 来源类型（recharge/purchase/withdraw/transfer等）
+-- source_id: 来源记录ID
+-- trade_no: 关联交易号
+-- event_type: 事件类型（order_rebate/cancel/withdraw等）
+-- amount: 变动金额（正为增加，负为扣减）
+-- status: 流水状态（confirmed/canceled）
+-- remark: 备注信息
+-- created_at: 创建时间
+CREATE TABLE IF NOT EXISTS rebate_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    inviter_id INTEGER NOT NULL,
+    referral_id INTEGER,
+    invitee_id INTEGER,
+    source_type TEXT NOT NULL,
+    source_id INTEGER,
+    trade_no TEXT,
+    event_type TEXT NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    status TEXT NOT NULL DEFAULT 'confirmed',
+    remark TEXT,
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    FOREIGN KEY (inviter_id) REFERENCES users (id) ON DELETE CASCADE,
+    FOREIGN KEY (referral_id) REFERENCES referral_relations (id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rebate_transactions_user ON rebate_transactions (inviter_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_rebate_transactions_source ON rebate_transactions (source_type, source_id);
+
+-- 返利划转记录
+-- 字段说明：
+-- id: 记录ID
+-- user_id: 用户ID
+-- amount: 划转金额
+-- balance_before/balance_after: 划转前后余额
+-- rebate_before/rebate_after: 划转前后返利余额
+-- created_at: 创建时间
+CREATE TABLE IF NOT EXISTS rebate_transfers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    balance_before DECIMAL(10,2) NOT NULL,
+    balance_after DECIMAL(10,2) NOT NULL,
+    rebate_before DECIMAL(10,2) NOT NULL,
+    rebate_after DECIMAL(10,2) NOT NULL,
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_rebate_transfers_user ON rebate_transfers (user_id, created_at);
+
+-- 返利提现申请表
+-- 字段说明：
+-- id: 提现申请ID
+-- user_id: 用户ID
+-- amount: 申请金额
+-- method: 提现方式
+-- account_payload: 收款信息JSON
+-- status: 状态（pending/approved/rejected/paid）
+-- reviewer_id: 审核管理员ID
+-- review_note: 审核备注
+-- created_at: 申请时间
+-- updated_at: 更新时间
+-- processed_at: 处理完成时间
+CREATE TABLE IF NOT EXISTS rebate_withdrawals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    method TEXT NOT NULL DEFAULT 'manual',
+    account_payload TEXT,
+    fee_rate DECIMAL(6,4) NOT NULL DEFAULT 0,
+    fee_amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    reviewer_id INTEGER,
+    review_note TEXT,
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    updated_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    processed_at DATETIME,
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+    FOREIGN KEY (reviewer_id) REFERENCES users (id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rebate_withdrawals_user ON rebate_withdrawals (user_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_rebate_withdrawals_status ON rebate_withdrawals (status);
+
 -- 充值记录表
 -- 字段说明：
 -- id: 充值记录唯一标识ID（主键）
@@ -762,6 +893,8 @@ CREATE INDEX IF NOT EXISTS idx_users_uuid ON users (uuid);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
 
 CREATE INDEX IF NOT EXISTS idx_users_token ON users (token);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_invite_code ON users (invite_code);
+CREATE INDEX IF NOT EXISTS idx_users_invited_by ON users (invited_by);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub ON users (google_sub);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_github_id ON users (github_id);
 CREATE INDEX IF NOT EXISTS idx_users_oauth_provider ON users (oauth_provider);

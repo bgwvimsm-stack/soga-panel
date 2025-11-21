@@ -18,6 +18,7 @@
       :close-on-click-modal="false"
       :close-on-press-escape="false"
     >
+      <slot name="dialog-top" />
       <div class="terms-body">
         <section v-for="section in termsSections" :key="section.title" class="terms-section">
           <h4>{{ section.title }}</h4>
