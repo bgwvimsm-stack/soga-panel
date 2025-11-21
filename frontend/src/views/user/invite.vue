@@ -171,6 +171,9 @@
         <template #source_type="{ row }">
           {{ getLedgerSourceText(row.sourceType) }}
         </template>
+        <template #invitee="{ row }">
+          {{ row.inviteeEmail || "-" }}
+        </template>
         <template #amount="{ row }">
           <span :class="row.amount >= 0 ? 'amount-plus' : 'amount-minus'">
             {{ row.amount >= 0 ? "+" : "" }}{{ row.amount.toFixed(2) }}
@@ -275,6 +278,7 @@ const referralColumns = [
 const ledgerColumns = [
   { field: "eventType", title: "类型", width: 140, align: "center", slots: { default: "event_type" } },
   { field: "sourceType", title: "来源", width: 140, align: "center", slots: { default: "source_type" } },
+  { field: "inviteeEmail", title: "关联用户", width: 200, align: "center", slots: { default: "invitee" } },
   { field: "tradeNo", title: "关联订单", width: 200, align: "center" },
   { field: "amount", title: "金额", width: 120, align: "center", slots: { default: "amount" } },
   { field: "created_at", title: "时间", width: 180, align: "center", slots: { default: "created_at" } }

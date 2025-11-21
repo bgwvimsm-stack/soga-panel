@@ -1570,10 +1570,14 @@ export class UserAPI {
       const eventType = url.searchParams.get("event_type");
 
       let whereClause = "WHERE inviter_id = ?";
+      let ledgerWhereClause = "WHERE rt.inviter_id = ?";
       const bindings: Array<number | string> = [userId];
+      const ledgerBindings: Array<number | string> = [userId];
       if (eventType) {
         whereClause += " AND event_type = ?";
+        ledgerWhereClause += " AND rt.event_type = ?";
         bindings.push(eventType);
+        ledgerBindings.push(eventType);
       }
 
       const totalRow = await this.db.db
@@ -1584,14 +1588,25 @@ export class UserAPI {
       const ledger = await this.db.db
         .prepare(
           `
-          SELECT id, event_type, amount, source_type, source_id, trade_no, status, created_at
-          FROM rebate_transactions
-          ${whereClause}
-          ORDER BY created_at DESC
+          SELECT 
+            rt.id,
+            rt.event_type,
+            rt.amount,
+            rt.source_type,
+            rt.source_id,
+            rt.trade_no,
+            rt.status,
+            rt.created_at,
+            rt.invitee_id,
+            u.email AS invitee_email
+          FROM rebate_transactions rt
+          LEFT JOIN users u ON rt.invitee_id = u.id
+          ${ledgerWhereClause}
+          ORDER BY rt.created_at DESC
           LIMIT ? OFFSET ?
         `
         )
-        .bind(...bindings, limit, offset)
+        .bind(...ledgerBindings, limit, offset)
         .all();
 
       const rows = (ledger.results ?? []) as DbRow[];
@@ -1607,6 +1622,7 @@ export class UserAPI {
           tradeNo: toString(row.trade_no),
           status: toString(row.status),
           createdAt: toString(row.created_at),
+          inviteeEmail: toString(row.invitee_email),
         })),
         pagination: {
           page,
