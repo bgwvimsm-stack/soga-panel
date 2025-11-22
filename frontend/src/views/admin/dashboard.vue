@@ -275,7 +275,7 @@ const adminActions = computed(() => [
   {
     key: 'resetPassword',
     label: '重置所有用户UUID和密码',
-    desc: '用户需重新获取订阅链接',
+    desc: '用户需重新获取节点',
     icon: Key,
     tone: 'danger',
     buttonType: 'danger',
@@ -545,7 +545,7 @@ const handleExecuteDailyTask = async () => {
 const handleResetAllPasswords = async () => {
   try {
     await ElMessageBox.confirm(
-      '此操作将重置所有用户的节点密码，用户需要重新获取订阅链接，是否继续？',
+      '此操作将重置所有用户的节点密码，用户需要重新获取节点，是否继续？',
       '危险操作确认',
       {
         confirmButtonText: '确定',
