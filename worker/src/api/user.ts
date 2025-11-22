@@ -389,11 +389,20 @@ export class UserAPI {
           SELECT 
             COALESCE(SUM(upload_traffic), 0) as upload_traffic,
             COALESCE(SUM(download_traffic), 0) as download_traffic,
-            COALESCE(SUM(upload_traffic + download_traffic), 0) as total_traffic
+            COALESCE(SUM(upload_traffic + download_traffic), 0) as total_traffic,
+            COALESCE(SUM(actual_upload_traffic), 0) as actual_upload_traffic,
+            COALESCE(SUM(actual_download_traffic), 0) as actual_download_traffic,
+            COALESCE(SUM(actual_traffic), 0) as actual_total_traffic
           FROM traffic_logs 
           WHERE user_id = ? AND node_id = ?
         `);
         const userTraffic = await userTrafficStmt.bind(userId, node.id).first<DbRow | null>();
+        const rawUpload = toNumber(userTraffic?.upload_traffic);
+        const rawDownload = toNumber(userTraffic?.download_traffic);
+        const rawTotal = toNumber(userTraffic?.total_traffic);
+        const actualUpload = toNumber(userTraffic?.actual_upload_traffic);
+        const actualDownload = toNumber(userTraffic?.actual_download_traffic);
+        const actualTotal = toNumber(userTraffic?.actual_total_traffic);
 
         return {
           id: node.id,
@@ -412,9 +421,13 @@ export class UserAPI {
           created_at: node.created_at,
           updated_at: node.updated_at,
           // 用户在该节点的流量使用情况
-          user_upload_traffic: toNumber(userTraffic?.upload_traffic),
-          user_download_traffic: toNumber(userTraffic?.download_traffic),
-          user_total_traffic: toNumber(userTraffic?.total_traffic),
+          user_upload_traffic: rawUpload,
+          user_download_traffic: rawDownload,
+          user_total_traffic: actualTotal || rawTotal,
+          user_raw_total_traffic: rawTotal,
+          user_actual_upload_traffic: actualUpload,
+          user_actual_download_traffic: actualDownload,
+          user_actual_total_traffic: actualTotal,
           // 添加一些用户友好的标签
           tags: this.getNodeTags(node.node_class),
           // 在线状态（基于最近5分钟的状态更新）
@@ -1570,10 +1583,14 @@ export class UserAPI {
       const eventType = url.searchParams.get("event_type");
 
       let whereClause = "WHERE inviter_id = ?";
+      let ledgerWhereClause = "WHERE rt.inviter_id = ?";
       const bindings: Array<number | string> = [userId];
+      const ledgerBindings: Array<number | string> = [userId];
       if (eventType) {
         whereClause += " AND event_type = ?";
+        ledgerWhereClause += " AND rt.event_type = ?";
         bindings.push(eventType);
+        ledgerBindings.push(eventType);
       }
 
       const totalRow = await this.db.db
@@ -1584,14 +1601,25 @@ export class UserAPI {
       const ledger = await this.db.db
         .prepare(
           `
-          SELECT id, event_type, amount, source_type, source_id, trade_no, status, created_at
-          FROM rebate_transactions
-          ${whereClause}
-          ORDER BY created_at DESC
+          SELECT 
+            rt.id,
+            rt.event_type,
+            rt.amount,
+            rt.source_type,
+            rt.source_id,
+            rt.trade_no,
+            rt.status,
+            rt.created_at,
+            rt.invitee_id,
+            u.email AS invitee_email
+          FROM rebate_transactions rt
+          LEFT JOIN users u ON rt.invitee_id = u.id
+          ${ledgerWhereClause}
+          ORDER BY rt.created_at DESC
           LIMIT ? OFFSET ?
         `
         )
-        .bind(...bindings, limit, offset)
+        .bind(...ledgerBindings, limit, offset)
         .all();
 
       const rows = (ledger.results ?? []) as DbRow[];
@@ -1607,6 +1635,7 @@ export class UserAPI {
           tradeNo: toString(row.trade_no),
           status: toString(row.status),
           createdAt: toString(row.created_at),
+          inviteeEmail: toString(row.invitee_email),
         })),
         pagination: {
           page,

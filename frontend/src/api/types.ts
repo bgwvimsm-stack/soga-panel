@@ -66,6 +66,10 @@ export interface Node {
   user_upload_traffic?: number;
   user_download_traffic?: number;
   user_total_traffic?: number;
+  user_raw_total_traffic?: number;
+  user_actual_upload_traffic?: number;
+  user_actual_download_traffic?: number;
+  user_actual_total_traffic?: number;
 }
 
 // 节点统计信息

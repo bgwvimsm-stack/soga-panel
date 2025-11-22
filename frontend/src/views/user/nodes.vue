@@ -96,7 +96,7 @@
           </template>
           <template #traffic="{ row }">
             <div class="traffic-info">
-              <span>{{ (row.user_total_traffic || 0) === 0 ? '未使用' : formatTraffic(row.user_total_traffic || 0) }}</span>
+              <span>{{ getUserTrafficDisplay(row) }}</span>
             </div>
           </template>
           <template #status="{ row }">
@@ -131,7 +131,7 @@
                 </el-tag>
               </el-descriptions-item>
               <el-descriptions-item label="个人流量使用">
-                {{ (selectedNode.user_total_traffic || 0) === 0 ? '未使用' : formatTraffic(selectedNode.user_total_traffic || 0) }}
+                {{ getUserTrafficDisplay(selectedNode) }}
               </el-descriptions-item>
               <el-descriptions-item label="在线状态">
                 <el-tag :type="isNodeOnline(selectedNode) ? 'success' : 'info'" size="small">
@@ -185,7 +185,7 @@
               <div class="info-item">
                 <div class="info-label">个人流量使用</div>
                 <div class="info-value">
-                  {{ (selectedNode.user_total_traffic || 0) === 0 ? '未使用' : formatTraffic(selectedNode.user_total_traffic || 0) }}
+                  {{ getUserTrafficDisplay(selectedNode) }}
                 </div>
               </div>
               <div class="info-item">
@@ -370,6 +370,26 @@ const formatTraffic = (bytes: number): string => {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+const getUserDeductedTraffic = (node: any): number => {
+  if (!node) return 0;
+  const actual = Number(node.user_actual_total_traffic ?? node.user_total_traffic ?? 0);
+  if (Number.isFinite(actual) && actual > 0) {
+    return actual;
+  }
+  const raw = Number(node.user_raw_total_traffic ?? node.user_total_traffic ?? 0);
+  const multiplier = Number(node.traffic_multiplier ?? 1);
+  if (!Number.isFinite(multiplier) || multiplier <= 0) {
+    return Number.isFinite(raw) ? Math.max(0, raw) : 0;
+  }
+  const deducted = raw * multiplier;
+  return Number.isFinite(deducted) ? Math.max(0, deducted) : 0;
+};
+
+const getUserTrafficDisplay = (node: any): string => {
+  const used = getUserDeductedTraffic(node);
+  return used === 0 ? '未使用' : formatTraffic(used);
 };
 
 const formatMultiplier = (value?: number | string): string => {
