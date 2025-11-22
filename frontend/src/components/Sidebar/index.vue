@@ -98,6 +98,7 @@ const isUserAdmin = computed(() => userStore.isAdmin());
 const userRoutes: MenuRoute[] = [
   { path: '/user/dashboard', name: 'dashboard', icon: 'user-dashboard', title: '仪表板' },
   { path: '/user/announcements', name: 'announcements', icon: 'user-announcement', title: '公告详情' },
+  { path: '/user/docs', name: 'docs', icon: 'user-docs', title: '文档教程' },
   { path: '/user/tickets', name: 'tickets', icon: 'user-tickets', title: '工单中心' },
   { path: '/user/wallet', name: 'wallet', icon: 'user-wallet', title: '我的钱包' },
   { path: '/user/invite', name: 'invite', icon: 'user-invite', title: '邀请返利' },
@@ -170,6 +171,7 @@ const adminRoutes: MenuRoute[] = [
 const allowedRoutesForDisabledUser = [
   '/user/dashboard',
   '/user/announcements',
+  '/user/docs',
   '/user/profile',
   '/user/tickets'
 ];

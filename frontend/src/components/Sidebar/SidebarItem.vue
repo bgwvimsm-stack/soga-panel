@@ -45,6 +45,7 @@ import IconUserInvite from '~icons/mdi/account-multiple-plus-outline';
 import IconUserAuditRules from '~icons/mdi/shield-sync-outline';
 import IconUserAuditLogs from '~icons/mdi/file-search-outline';
 import IconUserProfile from '~icons/mdi/account-circle-outline';
+import IconUserDocs from '~icons/mdi/book-open-page-variant';
 import IconAdminDashboard from '~icons/mdi/chart-bell-curve';
 import IconAdminAnnouncement from '~icons/mdi/message-badge-outline';
 import IconAdminTickets from '~icons/mdi/inbox-multiple-outline';
@@ -111,6 +112,7 @@ const iconMap = {
   'user-audit-rules': IconUserAuditRules,
   'user-audit-logs': IconUserAuditLogs,
   'user-profile': IconUserProfile,
+  'user-docs': IconUserDocs,
   'admin-dashboard': IconAdminDashboard,
   'admin-announcements': IconAdminAnnouncement,
   'admin-tickets': IconAdminTickets,
