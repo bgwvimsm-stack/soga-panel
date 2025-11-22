@@ -118,6 +118,15 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: "docs",
+        name: "UserDocs",
+        component: () => import("@/views/user/docs.vue"),
+        meta: {
+          title: "文档教程",
+          requiresAuth: true
+        }
+      },
+      {
         path: "tickets",
         name: "UserTickets",
         component: () => import("@/views/user/tickets.vue"),

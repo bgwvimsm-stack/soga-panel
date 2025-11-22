@@ -178,6 +178,7 @@ const getPageTitle = () => {
     '/audit-rules': '审计规则',
     '/audit-logs': '审计记录',
     '/profile': '个人资料',
+    '/user/docs': '文档教程',
     '/admin/dashboard': '管理概览',
     '/admin/announcements': '公告管理',
     '/admin/nodes': '节点列表',
