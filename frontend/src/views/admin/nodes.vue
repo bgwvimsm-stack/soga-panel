@@ -119,88 +119,401 @@
     </VxeTableBar>
 
     <!-- 创建/编辑节点对话框 -->
-    <el-dialog v-model="showCreateDialog" :title="editingNode ? '编辑节点' : '新增节点'" width="700px" @close="resetForm">
-      <el-form ref="nodeFormRef" :model="nodeForm" :rules="nodeRules" label-width="110px">
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="节点名称" prop="name">
-              <el-input v-model="nodeForm.name" placeholder="请输入节点名称" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="节点类型" prop="type">
-              <el-select v-model="nodeForm.type" placeholder="请选择节点类型">
-                <el-option label="Shadowsocks" value="ss" />
-                <el-option label="ShadowsocksR" value="ssr" />
-                <el-option label="V2Ray" value="v2ray" />
-                <el-option label="VLess" value="vless" />
-                <el-option label="Trojan" value="trojan" />
-                <el-option label="Hysteria" value="hysteria" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="节点地址" prop="server">
-              <el-input v-model="nodeForm.server" placeholder="请输入节点地址" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="端口" prop="server_port">
-              <el-input-number v-model="nodeForm.server_port" :min="1" :max="65535" style="width: 100%" placeholder="请输入端口号" />
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="TLS主机名">
-          <el-input v-model="nodeForm.tls_host" placeholder="SNI/ServerName (可选)" />
-          <small>用于部分协议的servername或sni参数</small>
-        </el-form-item>
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="节点等级" prop="node_class">
-              <el-input-number
-                v-model="nodeForm.node_class"
-                :min="0"
-                :max="10"
-                :step="1"
-                style="width: 100%"
-                placeholder="请输入节点等级"
-              />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="流量限制 (GB)">
-              <el-input-number v-model="nodeForm.node_bandwidth_limit_gb" :min="0" placeholder="0表示无限制" style="width: 100%" />
-              <small>每月流量限制，单位: GB，0表示无限制</small>
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row :gutter="20">
-          <el-col :span="12">
-            <el-form-item label="扣费倍率" prop="traffic_multiplier">
-              <el-input-number
-                v-model="nodeForm.traffic_multiplier"
-                :min="0.1"
-                :step="0.1"
-                :precision="2"
-                style="width: 100%"
-              />
-              <small>节点流量扣费倍率，1表示不加成，可输入小数</small>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="流量重置日期">
-              <el-input-number v-model="nodeForm.bandwidthlimit_resetday" :min="1" :max="31" placeholder="每月重置日期" style="width: 100%" />
-              <small>每月几号重置流量，1-31</small>
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="节点配置">
-          <el-input v-model="nodeForm.node_config" type="textarea" :rows="6" placeholder="请输入JSON格式的节点配置" />
-          <small>节点的具体配置参数，JSON格式</small>
-        </el-form-item>
-      </el-form>
+    <el-dialog v-model="showCreateDialog" :title="editingNode ? '编辑节点' : '新增节点'" width="780px" class="node-dialog" @close="resetForm">
+      <el-scrollbar max-height="65vh" class="form-scroll">
+        <div class="section-grid">
+          <el-card shadow="never" class="section-card">
+            <div class="section-header">
+              <div>
+                <span class="section-title">基础信息</span>
+                <span class="section-sub">节点名称与类型</span>
+              </div>
+              <el-tag size="small" type="info" effect="plain">{{ advancedView ? '高级 JSON' : '可视化表单' }}</el-tag>
+            </div>
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="节点名称" prop="name">
+                  <el-input v-model="nodeForm.name" placeholder="请输入节点名称" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="节点类型" prop="type">
+                  <el-select v-model="nodeForm.type" placeholder="请选择节点类型" @change="handleTypeChange">
+                    <el-option label="Shadowsocks" value="ss" />
+                    <el-option label="ShadowsocksR" value="ssr" />
+                    <el-option label="V2Ray" value="v2ray" />
+                    <el-option label="VLess" value="vless" />
+                    <el-option label="Trojan" value="trojan" />
+                    <el-option label="Hysteria" value="hysteria" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <div class="mode-toggle">
+              <span>视图模式</span>
+              <el-switch v-model="advancedView" active-text="高级视图" inactive-text="普通视图" @change="handleViewToggle" />
+              <span class="hint">普通视图提供常用字段，切换到高级视图可直接编辑完整 JSON</span>
+            </div>
+          </el-card>
+
+          <el-card shadow="never" class="section-card">
+            <div class="section-header">
+              <div>
+                <span class="section-title">额度与计费</span>
+                <span class="section-sub">等级、流量与计费规则</span>
+              </div>
+            </div>
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="节点等级" prop="node_class">
+                  <el-input-number
+                    v-model="nodeForm.node_class"
+                    :min="0"
+                    :max="10"
+                    :step="1"
+                    style="width: 100%"
+                    placeholder="请输入节点等级"
+                  />
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="流量限制 (GB)">
+                  <el-input-number v-model="nodeForm.node_bandwidth_limit_gb" :min="0" placeholder="0表示无限制" style="width: 100%" />
+                  <small>每月流量限制，单位: GB，0表示无限制</small>
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="扣费倍率" prop="traffic_multiplier">
+                  <el-input-number
+                    v-model="nodeForm.traffic_multiplier"
+                    :min="0.1"
+                    :step="0.1"
+                    :precision="2"
+                    style="width: 100%"
+                  />
+                  <small>节点流量扣费倍率，1表示不加成，可输入小数</small>
+                </el-form-item>
+              </el-col>
+              <el-col :span="12">
+                <el-form-item label="流量重置日期">
+                  <el-input-number v-model="nodeForm.bandwidthlimit_resetday" :min="1" :max="31" placeholder="每月重置日期" style="width: 100%" />
+                  <small>每月几号重置流量，1-31</small>
+                </el-form-item>
+              </el-col>
+            </el-row>
+          </el-card>
+
+          <template v-if="!advancedView">
+            <el-card shadow="never" class="section-card">
+              <div class="section-header">
+                <div>
+                  <span class="section-title">节点连接</span>
+                  <span class="section-sub">客户端连接入口</span>
+                </div>
+              </div>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="节点地址" prop="client_server">
+                    <el-input v-model="nodeForm.client_server" placeholder="例如 1.1.1.1 或域名" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="12">
+                  <el-form-item label="连接端口" prop="client_port">
+                    <el-input-number v-model="nodeForm.client_port" :min="1" :max="65535" style="width: 100%" placeholder="客户端连接端口" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </el-card>
+
+            <el-card shadow="never" class="section-card">
+              <div class="section-header">
+                <div>
+                  <span class="section-title">服务端配置</span>
+                  <span class="section-sub">监听端口与协议参数</span>
+                </div>
+              </div>
+              <el-row :gutter="16">
+                <el-col :span="12">
+                  <el-form-item label="服务端口" prop="service_port">
+                    <el-input-number v-model="nodeForm.service_port" :min="1" :max="65535" style="width: 100%" placeholder="服务监听端口" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+
+              <!-- SS 配置 -->
+              <template v-if="nodeForm.type === 'ss'">
+                <div class="section-subtitle">Shadowsocks</div>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="加密方式">
+                      <el-select v-model="nodeForm.config_method" placeholder="请选择加密方式">
+                        <el-option v-for="item in ssCipherOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="混淆">
+                      <el-select v-model="nodeForm.config_obfs" placeholder="请选择混淆">
+                        <el-option v-for="item in ssObfsOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+              </template>
+
+              <!-- SSR 配置 -->
+              <template v-else-if="nodeForm.type === 'ssr'">
+                <div class="section-subtitle">ShadowsocksR</div>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="加密方式">
+                      <el-select v-model="nodeForm.config_method" placeholder="请选择加密方式">
+                        <el-option v-for="item in ssrMethodOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="协议">
+                      <el-select v-model="nodeForm.config_protocol" placeholder="请选择协议">
+                        <el-option v-for="item in ssrProtocolOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="混淆">
+                      <el-select v-model="nodeForm.config_obfs" placeholder="请选择混淆">
+                        <el-option v-for="item in ssrObfsOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="单端口类型">
+                      <el-select v-model="nodeForm.config_single_port_type" placeholder="请选择单端口类型">
+                        <el-option v-for="item in ssrSinglePortOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="密码">
+                      <el-input v-model="nodeForm.config_password" placeholder="节点密码或密钥" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+              </template>
+
+              <!-- VMess 配置 -->
+              <template v-else-if="nodeForm.type === 'v2ray'">
+                <div class="section-subtitle">VMess</div>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="传输协议">
+                      <el-select v-model="nodeForm.config_stream_type" placeholder="请选择传输协议">
+                        <el-option v-for="item in streamTypeOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="TLS">
+                      <el-select v-model="nodeForm.config_tls_type" placeholder="请选择TLS类型">
+                        <el-option v-for="item in tlsOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16">
+                  <el-col :span="12" v-if="nodeForm.config_tls_type === 'tls'">
+                    <el-form-item label="TLS Host">
+                      <el-input v-model="nodeForm.client_tls_host" placeholder="SNI/ServerName" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12" v-if="nodeForm.config_stream_type === 'ws'">
+                    <el-form-item label="PATH">
+                      <el-input v-model="nodeForm.config_path" placeholder="WebSocket 路径，如 /path" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16">
+                  <el-col :span="12" v-if="nodeForm.config_stream_type === 'grpc'">
+                    <el-form-item label="ServerName">
+                      <el-input v-model="nodeForm.config_service_name" placeholder="gRPC service name" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+              </template>
+
+              <!-- Trojan 配置 -->
+              <template v-else-if="nodeForm.type === 'trojan'">
+                <div class="section-subtitle">Trojan</div>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="传输协议">
+                      <el-select v-model="nodeForm.config_stream_type" placeholder="请选择传输协议">
+                        <el-option v-for="item in streamTypeOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="TLS Host">
+                      <el-input v-model="nodeForm.client_tls_host" placeholder="SNI/ServerName" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16">
+                  <el-col :span="12" v-if="nodeForm.config_stream_type === 'ws'">
+                    <el-form-item label="PATH">
+                      <el-input v-model="nodeForm.config_path" placeholder="WebSocket 路径，如 /path" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12" v-if="nodeForm.config_stream_type === 'grpc'">
+                    <el-form-item label="ServerName">
+                      <el-input v-model="nodeForm.config_service_name" placeholder="gRPC service name" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+              </template>
+
+              <!-- VLESS 配置 -->
+              <template v-else-if="nodeForm.type === 'vless'">
+                <div class="section-subtitle">VLESS</div>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="传输协议">
+                      <el-select v-model="nodeForm.config_stream_type" placeholder="请选择传输协议">
+                        <el-option v-for="item in streamTypeOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="TLS">
+                      <el-select v-model="nodeForm.config_tls_type" placeholder="请选择TLS类型">
+                        <el-option v-for="item in vlessTlsOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16">
+                  <el-col :span="12" v-if="nodeForm.config_stream_type === 'ws'">
+                    <el-form-item label="PATH">
+                      <el-input v-model="nodeForm.config_path" placeholder="WebSocket 路径，如 /path" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12" v-if="nodeForm.config_tls_type === 'tls' || nodeForm.config_tls_type === 'reality'">
+                    <el-form-item label="TLS Host">
+                      <el-input v-model="nodeForm.client_tls_host" placeholder="SNI/ServerName" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12" v-if="nodeForm.config_stream_type === 'grpc'">
+                    <el-form-item label="ServerName">
+                      <el-input v-model="nodeForm.config_service_name" placeholder="gRPC service name" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <template v-if="nodeForm.config_tls_type === 'reality'">
+                  <div class="section-subtitle">Reality</div>
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="Flow">
+                        <el-input v-model="nodeForm.config_flow" placeholder="xtls-rprx-vision 等" />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                      <el-form-item label="目标地址">
+                        <el-input v-model="nodeForm.config_dest" placeholder="如 www.server.com:443" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="ServerNames">
+                        <el-input
+                          v-model="nodeForm.config_server_names"
+                          type="textarea"
+                          :rows="2"
+                          placeholder="用逗号分隔多个 server_name"
+                        />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                      <el-form-item label="Short IDs">
+                        <el-input
+                          v-model="nodeForm.config_short_ids"
+                          type="textarea"
+                          :rows="2"
+                          placeholder="用逗号分隔多个 short_id"
+                        />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="PrivateKey">
+                        <el-input v-model="nodeForm.config_private_key" placeholder="Reality private key" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                </template>
+              </template>
+
+              <!-- Hysteria 配置 -->
+              <template v-else-if="nodeForm.type === 'hysteria'">
+                <div class="section-subtitle">Hysteria</div>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="混淆">
+                      <el-select v-model="nodeForm.config_obfs" placeholder="请选择混淆">
+                        <el-option v-for="item in hysteriaObfsOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="混淆密码">
+                      <el-input v-model="nodeForm.config_obfs_password" placeholder="可选，混淆密码" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="上行(Mbps)">
+                      <el-input-number v-model="nodeForm.config_up_mbps" :min="0" style="width: 100%" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item label="下行(Mbps)">
+                      <el-input-number v-model="nodeForm.config_down_mbps" :min="0" style="width: 100%" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+              </template>
+            </el-card>
+          </template>
+
+          <template v-else>
+            <el-card shadow="never" class="section-card">
+              <div class="section-header">
+                <div>
+                  <span class="section-title">节点配置 JSON</span>
+                  <span class="section-sub">包含 basic、config、client</span>
+                </div>
+              </div>
+              <el-form-item label="节点配置JSON" prop="node_config_json">
+                <el-input
+                  v-model="nodeForm.node_config_json"
+                  type="textarea"
+                  :rows="14"
+                  placeholder="输入完整节点配置 JSON（包含 basic、config、client）"
+                />
+                <small>高级视图允许直接粘贴完整节点配置，保存时会覆盖普通视图字段</small>
+              </el-form-item>
+            </el-card>
+          </template>
+        </div>
+      </el-scrollbar>
       <template #footer>
         <el-button @click="showCreateDialog = false">取消</el-button>
         <el-button type="primary" @click="saveNode" :loading="submitting">{{ editingNode ? '更新' : '创建' }}</el-button>
@@ -255,6 +568,64 @@ const showCreateDialog = ref(false);
 const showDetailsDialog = ref(false);
 const editingNode = ref<Node | null>(null);
 const selectedNode = ref<Node | null>(null);
+const advancedView = ref(false);
+
+const ssCipherOptions = [
+  'aes-128-gcm',
+  'chacha20-ietf-poly1305',
+  'aes-192-gcm',
+  'aes-256-gcm',
+  '2022-blake3-aes-128-gcm',
+  '2022-blake3-aes-256-gcm'
+];
+const ssObfsOptions = ['plain', 'simple_obfs_http'];
+
+const ssrMethodOptions = [
+  'none',
+  'rc4',
+  'rc4-md5',
+  'aes-128-cfb',
+  'aes-192-cfb',
+  'aes-256-cfb',
+  'aes-128-ctr',
+  'aes-192-ctr',
+  'aes-256-ctr',
+  'aes-128-ofb',
+  'aes-192-ofb',
+  'aes-256-ofb',
+  'chacha20',
+  'chacha20-ietf',
+  'salsa20',
+  'aes-128-gcm',
+  'aes-192-gcm',
+  'aes-256-gcm',
+  'chacha20-ietf-poly1305'
+];
+const ssrProtocolOptions = [
+  'origin',
+  'auth_aes128_md5',
+  'auth_aes128_sha1',
+  'auth_chain_a',
+  'auth_chain_b',
+  'auth_chain_c',
+  'auth_chain_d',
+  'auth_chain_e',
+  'auth_chain_f'
+];
+const ssrObfsOptions = [
+  'plain',
+  'http_simple',
+  'http_post',
+  'tls1.2_ticket_auth',
+  'simple_obfs_http',
+  'simple_obfs_tls'
+];
+const ssrSinglePortOptions = ['protocol', 'obfs'];
+
+const streamTypeOptions = ['tcp', 'ws', 'http', 'h2', 'grpc'];
+const tlsOptions = ['none', 'tls'];
+const vlessTlsOptions = ['none', 'tls', 'reality'];
+const hysteriaObfsOptions = ['plain', 'salamander'];
 const nodes = ref<Node[]>([]);
 const selectedNodes = ref<Node[]>([]);
 const pagerConfig = reactive({
@@ -297,15 +668,33 @@ const nodeFormRef = ref<FormInstance>();
 const nodeForm = reactive({
   name: '',
   type: 'ss',
-  server: '',
-  server_port: 443,
-  tls_host: '',
   node_class: 0,
   node_bandwidth_limit_gb: 0,
   traffic_multiplier: 1,
   node_bandwidth: 0,
   bandwidthlimit_resetday: 1,
-  node_config: ''
+  client_server: '',
+  client_port: null as number | null,
+  service_port: null as number | null,
+  client_tls_host: '',
+  config_method: '',
+  config_password: '',
+  config_protocol: '',
+  config_obfs: '',
+  config_single_port_type: '',
+  config_stream_type: '',
+  config_tls_type: '',
+  config_path: '',
+  config_service_name: '',
+  config_flow: '',
+  config_server_names: '',
+  config_private_key: '',
+  config_short_ids: '',
+  config_dest: '',
+  config_obfs_password: '',
+  config_up_mbps: 1000,
+  config_down_mbps: 1000,
+  node_config_json: ''
 });
 
 const nodeRules = {
@@ -314,11 +703,6 @@ const nodeRules = {
     { min: 2, max: 50, message: '节点名称长度应在2-50个字符', trigger: 'blur' }
   ],
   type: [{ required: true, message: '请选择节点类型', trigger: 'change' }],
-  server: [{ required: true, message: '请输入节点地址', trigger: 'blur' }],
-  server_port: [
-    { required: true, message: '请输入端口号', trigger: 'blur' },
-    { type: 'number', min: 1, max: 65535, message: '端口号应在1-65535之间', trigger: 'blur' }
-  ],
   node_class: [
     { required: true, message: '请输入节点等级', trigger: 'change' },
     { type: 'number', min: 0, message: '节点等级必须为非负整数', trigger: 'change' }
@@ -326,6 +710,50 @@ const nodeRules = {
   traffic_multiplier: [
     { required: true, message: '请输入扣费倍率', trigger: 'change' },
     { type: 'number', min: 0.1, message: '扣费倍率需大于0', trigger: 'change' }
+  ],
+  client_server: [
+    {
+      validator: (_rule: any, value: string, callback: any) => {
+        if (advancedView.value) return callback();
+        if (!value) return callback(new Error('请输入节点地址'));
+        return callback();
+      },
+      trigger: 'blur'
+    }
+  ],
+  service_port: [
+    {
+      validator: (_rule: any, value: number, callback: any) => {
+        if (advancedView.value) return callback();
+        if (value === null || value === undefined) return callback(new Error('请输入服务端口'));
+        if (value < 1 || value > 65535) return callback(new Error('端口号应在1-65535之间'));
+        return callback();
+      },
+      trigger: 'blur'
+    }
+  ],
+  client_port: [
+    { type: 'number', min: 1, max: 65535, message: '端口号应在1-65535之间', trigger: 'blur' }
+  ],
+  config_method: [{ required: false }],
+  config_password: [{ required: false }],
+  config_protocol: [{ required: false }],
+  config_obfs: [{ required: false }],
+  config_single_port_type: [{ required: false }],
+  node_config_json: [
+    {
+      validator: (_rule: any, value: string, callback: any) => {
+        if (!advancedView.value) return callback();
+        if (!value || value.trim() === '') return callback(new Error('请输入节点配置JSON'));
+        try {
+          JSON.parse(value);
+          callback();
+        } catch {
+          callback(new Error('节点配置JSON格式错误'));
+        }
+      },
+      trigger: 'blur'
+    }
   ]
 };
 
@@ -369,6 +797,211 @@ const formatDateTime = (dateStr: string): string => {
     return new Date(dateStr).toLocaleString('zh-CN');
   } catch {
     return '--';
+  }
+};
+
+type NodeConfigState = {
+  basic: {
+    pull_interval: number;
+    push_interval: number;
+    speed_limit: number;
+  };
+  config: Record<string, any>;
+  client: {
+    server: string;
+    port: number | null;
+    tls_host: string;
+  };
+};
+
+const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
+  basic: {
+    pull_interval: 60,
+    push_interval: 60,
+    speed_limit: 0
+  },
+  config: {
+    port: type === 'hysteria' ? 443 : 443,
+    ...(type === 'ss'
+      ? { cipher: 'aes-128-gcm', obfs: 'plain' }
+      : {}),
+    ...(type === 'ssr'
+      ? {
+        method: 'chacha20-ietf',
+        protocol: 'auth_aes128_sha1',
+        obfs: 'plain',
+        single_port_type: 'protocol'
+      }
+      : {}),
+    ...(type === 'v2ray'
+      ? { stream_type: 'tcp', tls_type: 'none', path: '', service_name: '' }
+      : {}),
+    ...(type === 'trojan'
+      ? { stream_type: 'tcp', path: '', service_name: '' }
+      : {}),
+    ...(type === 'vless'
+      ? { stream_type: 'tcp', tls_type: 'tls', path: '', service_name: '' }
+      : {}),
+    ...(type === 'hysteria'
+      ? { obfs: 'plain', obfs_password: '', up_mbps: 1000, down_mbps: 1000 }
+      : {})
+  },
+  client: {
+    server: '',
+    port: null,
+    tls_host: ''
+  }
+});
+
+const nodeConfigState = reactive<NodeConfigState>(createDefaultNodeConfig());
+
+const normalizeNodeConfig = (config: any, type = nodeForm.type): NodeConfigState => {
+  const normalized = createDefaultNodeConfig(type);
+  if (config?.basic && typeof config.basic === 'object') {
+    normalized.basic = { ...normalized.basic, ...config.basic };
+  }
+  if (config?.config && typeof config.config === 'object') {
+    normalized.config = { ...normalized.config, ...config.config };
+  }
+  if (config?.client && typeof config.client === 'object') {
+    normalized.client = { ...normalized.client, ...config.client };
+  }
+  return normalized;
+};
+
+const applyConfigToState = (config: any) => {
+  const normalized = normalizeNodeConfig(config);
+  nodeConfigState.basic = { ...normalized.basic };
+  nodeConfigState.config = { ...normalized.config };
+  nodeConfigState.client = { ...normalized.client };
+
+  nodeForm.client_server = nodeConfigState.client.server || '';
+  nodeForm.client_tls_host = (nodeConfigState.client as any).tls_host || '';
+  const clientPort = Number(nodeConfigState.client.port);
+  nodeForm.client_port = Number.isFinite(clientPort) && clientPort > 0 ? clientPort : null;
+  const servicePort = Number(nodeConfigState.config.port);
+  nodeForm.service_port = Number.isFinite(servicePort) && servicePort > 0 ? servicePort : null;
+  nodeForm.config_method = nodeConfigState.config.method || nodeConfigState.config.cipher || '';
+  nodeForm.config_password = nodeConfigState.config.password || '';
+  nodeForm.config_protocol = nodeConfigState.config.protocol || '';
+  nodeForm.config_obfs = nodeConfigState.config.obfs || '';
+  nodeForm.config_single_port_type = nodeConfigState.config.single_port_type || '';
+  nodeForm.config_stream_type = nodeConfigState.config.stream_type || 'tcp';
+  nodeForm.config_tls_type = nodeConfigState.config.tls_type || (nodeForm.type === 'vless' ? 'tls' : 'none');
+  nodeForm.config_path = nodeConfigState.config.path || '';
+  nodeForm.config_service_name = nodeConfigState.config.service_name || '';
+  nodeForm.config_flow = nodeConfigState.config.flow || '';
+  nodeForm.config_server_names = Array.isArray(nodeConfigState.config.server_names)
+    ? nodeConfigState.config.server_names.join(',')
+    : nodeConfigState.config.server_names || '';
+  nodeForm.config_private_key = nodeConfigState.config.private_key || '';
+  nodeForm.config_short_ids = Array.isArray(nodeConfigState.config.short_ids)
+    ? nodeConfigState.config.short_ids.join(',')
+    : nodeConfigState.config.short_ids || '';
+  nodeForm.config_dest = nodeConfigState.config.dest || '';
+  nodeForm.config_obfs_password = nodeConfigState.config.obfs_password || '';
+  const upMbps = Number(nodeConfigState.config.up_mbps);
+  nodeForm.config_up_mbps = Number.isFinite(upMbps) ? upMbps : 1000;
+  const downMbps = Number(nodeConfigState.config.down_mbps);
+  nodeForm.config_down_mbps = Number.isFinite(downMbps) ? downMbps : 1000;
+  nodeForm.node_config_json = JSON.stringify(normalized, null, 2);
+};
+
+const buildConfigFromForm = () => {
+  const merged = normalizeNodeConfig(nodeConfigState);
+  merged.client.server = nodeForm.client_server || merged.client.server;
+  if (!merged.client) merged.client = { server: '', port: null, tls_host: '' } as any;
+  (merged.client as any).tls_host = nodeForm.client_tls_host || (merged.client as any).tls_host || '';
+  const clientPort = nodeForm.client_port ?? merged.client.port ?? nodeForm.service_port ?? null;
+  merged.client.port = clientPort ? Number(clientPort) : null;
+  const servicePort = nodeForm.service_port ?? merged.config.port ?? nodeForm.client_port ?? null;
+  merged.config.port = servicePort ? Number(servicePort) : null;
+  switch (nodeForm.type) {
+    case 'ss':
+      if (nodeForm.config_method) {
+        merged.config.cipher = nodeForm.config_method;
+        merged.config.method = nodeForm.config_method;
+      }
+      if (nodeForm.config_obfs) merged.config.obfs = nodeForm.config_obfs;
+      if (nodeForm.config_password) merged.config.password = nodeForm.config_password;
+      break;
+    case 'ssr':
+      if (nodeForm.config_method) merged.config.method = nodeForm.config_method;
+      if (nodeForm.config_protocol) merged.config.protocol = nodeForm.config_protocol;
+      if (nodeForm.config_obfs) merged.config.obfs = nodeForm.config_obfs;
+      if (nodeForm.config_single_port_type) merged.config.single_port_type = nodeForm.config_single_port_type;
+      if (nodeForm.config_password) merged.config.password = nodeForm.config_password;
+      break;
+    case 'v2ray':
+      merged.config.stream_type = nodeForm.config_stream_type || merged.config.stream_type || 'tcp';
+      merged.config.tls_type = nodeForm.config_tls_type || merged.config.tls_type || 'none';
+      merged.config.path = nodeForm.config_path || merged.config.path || '';
+      merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
+      break;
+    case 'trojan':
+      merged.config.stream_type = nodeForm.config_stream_type || merged.config.stream_type || 'tcp';
+      merged.config.path = nodeForm.config_path || merged.config.path || '';
+      merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
+      if (nodeForm.config_password) merged.config.password = nodeForm.config_password;
+      break;
+    case 'vless':
+      merged.config.stream_type = nodeForm.config_stream_type || merged.config.stream_type || 'tcp';
+      merged.config.tls_type = nodeForm.config_tls_type || merged.config.tls_type || 'tls';
+      merged.config.path = nodeForm.config_path || merged.config.path || '';
+      merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
+      if (nodeForm.config_flow) merged.config.flow = nodeForm.config_flow;
+      if (nodeForm.config_dest) merged.config.dest = nodeForm.config_dest;
+      if (nodeForm.config_server_names) {
+        merged.config.server_names = nodeForm.config_server_names.split(',').map(item => item.trim()).filter(Boolean);
+      }
+      if (nodeForm.config_short_ids) {
+        merged.config.short_ids = nodeForm.config_short_ids.split(',').map(item => item.trim()).filter(Boolean);
+      }
+      if (nodeForm.config_private_key) merged.config.private_key = nodeForm.config_private_key;
+      break;
+    case 'hysteria':
+      if (nodeForm.config_obfs) merged.config.obfs = nodeForm.config_obfs;
+      merged.config.obfs_password = nodeForm.config_obfs_password || merged.config.obfs_password || '';
+      merged.config.up_mbps = Number(nodeForm.config_up_mbps ?? merged.config.up_mbps ?? 1000);
+      merged.config.down_mbps = Number(nodeForm.config_down_mbps ?? merged.config.down_mbps ?? 1000);
+      break;
+    default:
+      if (nodeForm.config_method) merged.config.method = nodeForm.config_method;
+      if (nodeForm.config_password) merged.config.password = nodeForm.config_password;
+      if (nodeForm.config_protocol) merged.config.protocol = nodeForm.config_protocol;
+      if (nodeForm.config_obfs) merged.config.obfs = nodeForm.config_obfs;
+      if (nodeForm.config_single_port_type) merged.config.single_port_type = nodeForm.config_single_port_type;
+      merged.config.stream_type = nodeForm.config_stream_type || merged.config.stream_type || 'tcp';
+      merged.config.tls_type = nodeForm.config_tls_type || merged.config.tls_type || '';
+      merged.config.path = nodeForm.config_path || merged.config.path || '';
+      merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
+  }
+  return merged;
+};
+
+const parseNodeConfigJson = (jsonText: string) => {
+  if (!jsonText) return createDefaultNodeConfig();
+  try {
+    return JSON.parse(jsonText);
+  } catch (error) {
+    console.error('解析节点配置JSON失败:', error);
+    throw new Error('节点配置JSON格式错误');
+  }
+};
+
+const handleViewToggle = (val: boolean) => {
+  if (val) {
+    // 切到高级视图，使用当前状态填充JSON
+    nodeForm.node_config_json = JSON.stringify(normalizeNodeConfig(nodeConfigState), null, 2);
+  } else {
+    // 切回普通视图，尝试解析JSON同步字段
+    try {
+      const parsed = parseNodeConfigJson(nodeForm.node_config_json);
+      applyConfigToState(parsed);
+    } catch {
+      // 保持当前表单状态并提示
+      ElMessage.warning('节点配置JSON解析失败，已保留当前字段值');
+    }
   }
 };
 
@@ -425,13 +1058,15 @@ const handleSelectionChange = () => {
   selectedNodes.value = records;
 };
 
+const handleTypeChange = (value: string) => {
+  applyConfigToState(createDefaultNodeConfig(value));
+  advancedView.value = false;
+};
+
 const editNode = (node: Node) => {
   editingNode.value = node;
   nodeForm.name = node.name;
   nodeForm.type = node.type;
-  nodeForm.server = node.server;
-  nodeForm.server_port = node.server_port;
-  nodeForm.tls_host = node.tls_host || '';
   nodeForm.node_class = node.node_class;
 
   if (node.node_bandwidth_limit && node.node_bandwidth_limit > 0) {
@@ -444,11 +1079,14 @@ const editNode = (node: Node) => {
   nodeForm.bandwidthlimit_resetday = node.bandwidthlimit_resetday || 1;
   nodeForm.traffic_multiplier = Number(node.traffic_multiplier || 1);
 
-  if (node.node_config) {
-    nodeForm.node_config = typeof node.node_config === 'string' ? node.node_config : JSON.stringify(node.node_config, null, 2);
-  } else {
-    nodeForm.node_config = '';
+  try {
+    const rawConfig = node.node_config ? (typeof node.node_config === 'string' ? node.node_config : JSON.stringify(node.node_config)) : '';
+    applyConfigToState(rawConfig ? JSON.parse(rawConfig) : createDefaultNodeConfig(node.type));
+  } catch (error) {
+    console.error('解析节点配置失败，使用默认配置:', error);
+    applyConfigToState(createDefaultNodeConfig(node.type));
   }
+  advancedView.value = false;
 
   showCreateDialog.value = true;
 };
@@ -457,9 +1095,6 @@ const copyNode = (node: Node) => {
   editingNode.value = null;
   nodeForm.name = `${node.name} - 副本`;
   nodeForm.type = node.type;
-  nodeForm.server = node.server;
-  nodeForm.server_port = node.server_port;
-  nodeForm.tls_host = node.tls_host || '';
   nodeForm.node_class = node.node_class;
 
   if (node.node_bandwidth_limit && node.node_bandwidth_limit > 0) {
@@ -472,12 +1107,15 @@ const copyNode = (node: Node) => {
   nodeForm.bandwidthlimit_resetday = node.bandwidthlimit_resetday || 1;
   nodeForm.traffic_multiplier = Number(node.traffic_multiplier || 1);
 
-  if (node.node_config) {
-    nodeForm.node_config = typeof node.node_config === 'string' ? node.node_config : JSON.stringify(node.node_config, null, 2);
-  } else {
-    nodeForm.node_config = '';
+  try {
+    const rawConfig = node.node_config ? (typeof node.node_config === 'string' ? node.node_config : JSON.stringify(node.node_config)) : '';
+    applyConfigToState(rawConfig ? JSON.parse(rawConfig) : createDefaultNodeConfig(node.type));
+  } catch (error) {
+    console.error('复制节点解析配置失败，使用默认配置:', error);
+    applyConfigToState(createDefaultNodeConfig(node.type));
   }
 
+  advancedView.value = false;
   showCreateDialog.value = true;
 };
 
@@ -548,18 +1186,25 @@ const saveNode = async () => {
     await nodeFormRef.value.validate();
     submitting.value = true;
 
+    const finalConfig = advancedView.value
+      ? normalizeNodeConfig(parseNodeConfigJson(nodeForm.node_config_json), nodeForm.type)
+      : buildConfigFromForm();
+
+    // 为兼容后端旧字段，使用 client.server / client.port 进行填充
+    const resolvedServer = finalConfig.client?.server || '';
+    const resolvedPort = Number(finalConfig.client?.port || finalConfig.config?.port || 443);
+
     const formData = {
       name: nodeForm.name,
       type: nodeForm.type,
-      server: nodeForm.server,
-      server_port: nodeForm.server_port,
-      tls_host: nodeForm.tls_host,
+      server: resolvedServer,
+      server_port: resolvedPort,
       node_class: nodeForm.node_class,
       node_bandwidth_limit: nodeForm.node_bandwidth_limit_gb > 0 ? nodeForm.node_bandwidth_limit_gb * 1024 * 1024 * 1024 : 0,
       node_bandwidth: nodeForm.node_bandwidth,
       traffic_multiplier: nodeForm.traffic_multiplier > 0 ? nodeForm.traffic_multiplier : 1,
       bandwidthlimit_resetday: nodeForm.bandwidthlimit_resetday,
-      node_config: nodeForm.node_config
+      node_config: JSON.stringify(finalConfig)
     };
 
     if (editingNode.value) {
@@ -585,15 +1230,35 @@ const resetForm = () => {
   editingNode.value = null;
   nodeForm.name = '';
   nodeForm.type = 'ss';
-  nodeForm.server = '';
-  nodeForm.server_port = 443;
-  nodeForm.tls_host = '';
   nodeForm.node_class = 0;
   nodeForm.node_bandwidth_limit_gb = 0;
   nodeForm.node_bandwidth = 0;
   nodeForm.traffic_multiplier = 1;
   nodeForm.bandwidthlimit_resetday = 1;
-  nodeForm.node_config = '';
+  nodeForm.client_server = '';
+  nodeForm.client_port = null;
+  nodeForm.client_tls_host = '';
+  nodeForm.service_port = null;
+  nodeForm.config_method = '';
+  nodeForm.config_password = '';
+  nodeForm.config_protocol = '';
+  nodeForm.config_obfs = '';
+  nodeForm.config_single_port_type = '';
+  nodeForm.config_stream_type = '';
+  nodeForm.config_tls_type = '';
+  nodeForm.config_path = '';
+  nodeForm.config_service_name = '';
+  nodeForm.config_flow = '';
+  nodeForm.config_server_names = '';
+  nodeForm.config_private_key = '';
+  nodeForm.config_short_ids = '';
+  nodeForm.config_dest = '';
+  nodeForm.config_obfs_password = '';
+  nodeForm.config_up_mbps = 1000;
+  nodeForm.config_down_mbps = 1000;
+  nodeForm.node_config_json = '';
+  applyConfigToState(createDefaultNodeConfig('ss'));
+  advancedView.value = false;
   nodeFormRef.value?.clearValidate();
 };
 
@@ -663,5 +1328,62 @@ onMounted(() => {
     :deep(.el-descriptions-item__label) { width: 120px; }
     h4 { margin: 20px 0 10px 0; color: #303133; }
   }
+}
+
+.node-dialog {
+  :deep(.el-dialog__body) {
+    padding-top: 10px;
+  }
+  .form-scroll {
+    padding-right: 4px;
+  }
+}
+
+.section-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.section-card {
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-weight: 600;
+  color: #303133;
+  margin-right: 8px;
+}
+
+.section-sub {
+  color: #909399;
+  font-size: 12px;
+}
+
+.section-subtitle {
+  font-weight: 600;
+  color: #606266;
+  margin: 6px 0 4px;
+}
+
+.mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: #606266;
+}
+
+.mode-toggle .hint {
+  color: #909399;
+  font-size: 12px;
 }
 </style>

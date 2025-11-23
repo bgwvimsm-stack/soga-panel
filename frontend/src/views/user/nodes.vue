@@ -411,21 +411,46 @@ const wrapIPv6Host = (host: string): string => {
   return trimmed.includes(':') ? `[${trimmed}]` : trimmed;
 };
 
+const parseNodeConfigSafe = (node: any) => {
+  try {
+    if (!node?.node_config || node.node_config === 'undefined') {
+      return { basic: {}, config: {}, client: {} };
+    }
+    const parsed = JSON.parse(node.node_config);
+    return {
+      basic: parsed.basic || {},
+      config: parsed.config || parsed || {},
+      client: parsed.client || {}
+    };
+  } catch (error) {
+    console.warn('解析节点配置失败，返回默认配置', error);
+    return { basic: {}, config: {}, client: {} };
+  }
+};
+
+const resolveConnectionInfo = (node: any) => {
+  const { basic, config, client } = parseNodeConfigSafe(node);
+  const server = client.server || node.server || '';
+  const rawPort = client.port || config.port || node.server_port;
+  const numericPort = Number(rawPort);
+  const port = Number.isFinite(numericPort) && numericPort > 0 ? numericPort : 443;
+  const tlsHost = client.tls_host || node.tls_host || config.host || client.server || server;
+  return { basic, config, client, server, port, tlsHost };
+};
+
 const formatNodeAddress = (node: any): string => {
   if (!node) return '';
-  const host = wrapIPv6Host(node.server);
-  return `${host}:${node.server_port}`;
+  const { server, port } = resolveConnectionInfo(node);
+  if (!server || !port) return '';
+  const host = wrapIPv6Host(server);
+  return `${host}:${port}`;
 };
 
 // 获取节点限速显示
 const getSpeedLimit = (node: any): string => {
-  try {
-    const config = JSON.parse(node.node_config);
-    const speedLimit = config.basic?.speed_limit || 0;
-    return speedLimit === 0 ? '不限制' : `${speedLimit} Mbps`;
-  } catch {
-    return '不限制';
-  }
+  const { basic } = parseNodeConfigSafe(node);
+  const speedLimit = basic?.speed_limit || 0;
+  return speedLimit === 0 ? '不限制' : `${speedLimit} Mbps`;
 };
 
 // 生成连接链接(ss://、vmess:// 等)
@@ -433,57 +458,35 @@ const connectionUrl = computed(() => {
   if (!selectedNode.value) return '';
 
   try {
-    // 检查node_config是否存在且有效
-    if (!selectedNode.value.node_config || selectedNode.value.node_config === 'undefined') {
-      console.warn('节点配置为空或无效，使用默认配置');
-      const defaultConfig = {};
-      switch (selectedNode.value.type.toLowerCase()) {
-        case 'ss':
-        case 'shadowsocks':
-          return generateShadowsocksUrl(selectedNode.value, defaultConfig);
-        case 'ssr':
-        case 'shadowsocksr':
-          return generateShadowsocksRUrl(selectedNode.value, defaultConfig);
-        case 'v2ray':
-          return generateVMessUrl(selectedNode.value, defaultConfig);
-        case 'vless':
-          return generateVLessUrl(selectedNode.value, defaultConfig);
-        case 'trojan':
-          return generateTrojanUrl(selectedNode.value, defaultConfig);
-        case 'hysteria':
-        case 'hysteria2':
-          return generateHysteriaUrl(selectedNode.value, defaultConfig);
-        default:
-          return `${selectedNode.value.type}://${wrapIPv6Host(selectedNode.value.server)}:${selectedNode.value.server_port}`;
-      }
-    }
+    const { config: nodeConfig, server, port, tlsHost } = resolveConnectionInfo(selectedNode.value);
+    if (!server) return '';
+    const finalPort = port || 443;
+    const nodeForUrl = { ...selectedNode.value, server, server_port: finalPort, tls_host: tlsHost };
 
-    const config = JSON.parse(selectedNode.value.node_config);
-    const nodeConfig = config.config || {};
-
-    // 根据节点类型生成相应的配置URL
     switch (selectedNode.value.type.toLowerCase()) {
       case 'ss':
       case 'shadowsocks':
-        return generateShadowsocksUrl(selectedNode.value, nodeConfig);
+        return generateShadowsocksUrl(nodeForUrl, nodeConfig);
       case 'ssr':
       case 'shadowsocksr':
-        return generateShadowsocksRUrl(selectedNode.value, nodeConfig);
+        return generateShadowsocksRUrl(nodeForUrl, nodeConfig);
       case 'v2ray':
-        return generateVMessUrl(selectedNode.value, nodeConfig);
+        return generateVMessUrl(nodeForUrl, nodeConfig);
       case 'vless':
-        return generateVLessUrl(selectedNode.value, nodeConfig);
+        return generateVLessUrl(nodeForUrl, nodeConfig);
       case 'trojan':
-        return generateTrojanUrl(selectedNode.value, nodeConfig);
+        return generateTrojanUrl(nodeForUrl, nodeConfig);
       case 'hysteria':
       case 'hysteria2':
-        return generateHysteriaUrl(selectedNode.value, nodeConfig);
+        return generateHysteriaUrl(nodeForUrl, nodeConfig);
       default:
-        return `${selectedNode.value.type}://${selectedNode.value.server}:${selectedNode.value.server_port}`;
+        return `${selectedNode.value.type}://${wrapIPv6Host(server)}:${finalPort}`;
     }
   } catch (error) {
     console.error('解析节点配置失败:', error);
-    return `${selectedNode.value.type}://${wrapIPv6Host(selectedNode.value.server)}:${selectedNode.value.server_port}`;
+    const { server, port } = resolveConnectionInfo(selectedNode.value);
+    const finalPort = port || 443;
+    return `${selectedNode.value.type}://${wrapIPv6Host(server)}:${finalPort}`;
   }
 });
 
@@ -492,17 +495,8 @@ const nodeConfigJson = computed(() => {
   if (!selectedNode.value) return '';
 
   try {
-    let nodeConfig: Record<string, any> = {};
-
-    // 检查node_config是否存在且有效
-    if (selectedNode.value.node_config && selectedNode.value.node_config !== 'undefined') {
-      try {
-        const config = JSON.parse(selectedNode.value.node_config);
-        nodeConfig = config.config || config || {};
-      } catch (parseError) {
-        console.warn('节点配置JSON解析失败，使用默认配置:', parseError);
-      }
-    }
+    const { basic, config: nodeConfig, client, server, port, tlsHost } = resolveConnectionInfo(selectedNode.value);
+    const finalPort = port || nodeConfig.port || 443;
 
     // 根据节点类型生成相应的JSON配置
     switch (selectedNode.value.type.toLowerCase()) {
@@ -511,8 +505,8 @@ const nodeConfigJson = computed(() => {
         const ssConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "ss",
-          server: selectedNode.value.server,
-          port: selectedNode.value.server_port,
+          server,
+          port: finalPort,
           cipher: nodeConfig.cipher || "aes-256-gcm",
           password: userStore.user?.passwd || '',
           udp: true
@@ -523,7 +517,7 @@ const nodeConfigJson = computed(() => {
           ssConfig.plugin = "obfs";
           ssConfig["plugin-opts"] = {
             mode: nodeConfig.obfs === "simple_obfs_http" ? "http" : "tls",
-            host: selectedNode.value.tls_host || nodeConfig.server || "bing.com"
+            host: tlsHost || nodeConfig.server || "bing.com"
           };
         }
 
@@ -533,8 +527,8 @@ const nodeConfigJson = computed(() => {
       case 'shadowsocksr':
         const ssrCipher = nodeConfig.method || nodeConfig.cipher || "aes-256-cfb";
         const ssrConfig: Record<string, any> = {
-          server: selectedNode.value.server,
-          port: selectedNode.value.server_port,
+          server,
+          port: finalPort,
           type: "ssr",
           cipher: ssrCipher,
           method: ssrCipher,
@@ -542,7 +536,7 @@ const nodeConfigJson = computed(() => {
           protocol: nodeConfig.protocol || "origin",
           "protocol-param": userStore.user?.passwd || "",
           obfs: nodeConfig.obfs || "plain",
-          "obfs-param": selectedNode.value.tls_host || nodeConfig.obfs_param || nodeConfig.obfsparam || "",
+          "obfs-param": tlsHost || nodeConfig.obfs_param || nodeConfig.obfsparam || "",
           remarks: selectedNode.value.name
         };
 
@@ -552,8 +546,8 @@ const nodeConfigJson = computed(() => {
         const vmessConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "vmess",
-          server: selectedNode.value.server,
-          port: selectedNode.value.server_port,
+          server,
+          port: finalPort,
           uuid: userStore.user?.uuid || '',
           alterId: nodeConfig.aid || 0,
           cipher: "auto",
@@ -564,8 +558,8 @@ const nodeConfigJson = computed(() => {
 
         // 添加 TLS 配置
         if (nodeConfig.tls_type === "tls") {
-          if (selectedNode.value.tls_host) {
-            vmessConfig.servername = selectedNode.value.tls_host;
+          if (tlsHost) {
+            vmessConfig.servername = tlsHost;
           }
         }
 
@@ -573,7 +567,7 @@ const nodeConfigJson = computed(() => {
         if (nodeConfig.stream_type === "ws") {
           vmessConfig["ws-opts"] = {
             path: nodeConfig.path || "/",
-            headers: { Host: selectedNode.value.tls_host || nodeConfig.server || selectedNode.value.server }
+            headers: { Host: tlsHost || nodeConfig.server || server }
           };
         }
         // gRPC 配置
@@ -591,7 +585,7 @@ const nodeConfigJson = computed(() => {
           if (nodeConfig.server) {
             vmessConfig["http-opts"].headers = {
               Connection: ["keep-alive"],
-              Host: [selectedNode.value.tls_host || nodeConfig.server]
+              Host: [tlsHost || nodeConfig.server]
             };
           }
         }
@@ -602,8 +596,8 @@ const nodeConfigJson = computed(() => {
         const vlessConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "vless",
-          server: selectedNode.value.server,
-          port: selectedNode.value.server_port,
+          server,
+          port: finalPort,
           uuid: userStore.user?.uuid || '',
           tls: nodeConfig.tls_type === "tls" || nodeConfig.tls_type === "reality",
           "skip-cert-verify": true,
@@ -612,8 +606,8 @@ const nodeConfigJson = computed(() => {
 
         // TLS 配置
         if (nodeConfig.tls_type === "tls") {
-          if (selectedNode.value.tls_host) {
-            vlessConfig.servername = selectedNode.value.tls_host;
+          if (tlsHost) {
+            vlessConfig.servername = tlsHost;
           }
         }
 
@@ -637,7 +631,7 @@ const nodeConfigJson = computed(() => {
         if (nodeConfig.stream_type === "ws") {
           vlessConfig["ws-opts"] = {
             path: nodeConfig.path || "/",
-            headers: { Host: selectedNode.value.tls_host || nodeConfig.server || selectedNode.value.server }
+            headers: { Host: tlsHost || nodeConfig.server || server }
           };
         }
         // gRPC 配置
@@ -653,11 +647,11 @@ const nodeConfigJson = computed(() => {
         const trojanConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "trojan",
-          server: selectedNode.value.server,
-          port: selectedNode.value.server_port,
+          server,
+          port: finalPort,
           password: userStore.user?.passwd || '',
           "skip-cert-verify": true,
-          sni: selectedNode.value.tls_host || selectedNode.value.server
+          sni: tlsHost || server
         };
 
         // 添加 WebSocket 配置
@@ -666,7 +660,7 @@ const nodeConfigJson = computed(() => {
           trojanConfig["ws-opts"] = {
             path: nodeConfig.path || "/",
             headers: {
-              Host: selectedNode.value.tls_host || selectedNode.value.server
+              Host: tlsHost || server
             }
           };
         }
@@ -685,15 +679,15 @@ const nodeConfigJson = computed(() => {
         const hysteriaConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "hysteria2",
-          server: selectedNode.value.server,
-          port: selectedNode.value.server_port,
+          server,
+          port: finalPort,
           password: userStore.user?.passwd || '',
           "skip-cert-verify": true
         };
 
         // 添加 SNI 配置
-        if (selectedNode.value.tls_host) {
-          hysteriaConfig.sni = selectedNode.value.tls_host;
+        if (tlsHost) {
+          hysteriaConfig.sni = tlsHost;
         }
 
         // 添加混淆配置
@@ -716,17 +710,19 @@ const nodeConfigJson = computed(() => {
 
       default:
         return JSON.stringify({
-          server: selectedNode.value.server,
-          server_port: selectedNode.value.server_port,
+          server,
+          server_port: finalPort,
           type: selectedNode.value.type,
+          basic,
+          config: nodeConfig,
+          client,
           remarks: selectedNode.value.name
         }, null, 2);
     }
   } catch (error) {
     console.error('生成节点配置失败:', error);
     return JSON.stringify({
-      server: selectedNode.value.server,
-      server_port: selectedNode.value.server_port,
+      ...resolveConnectionInfo(selectedNode.value),
       type: selectedNode.value.type,
       error: '配置生成失败',
       remarks: selectedNode.value.name
