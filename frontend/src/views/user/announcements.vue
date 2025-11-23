@@ -10,7 +10,7 @@
       <div v-if="loading" class="loading-container">
         <el-skeleton :rows="3" animated />
       </div>
-      
+
       <div v-else-if="error" class="error-container">
         <el-alert
           title="加载失败"
@@ -31,8 +31,8 @@
       </div>
 
       <div v-else class="announcements-list">
-        <div 
-          v-for="announcement in announcements" 
+        <div
+          v-for="announcement in announcements"
           :key="announcement.id"
           class="announcement-item"
           :class="`announcement-type-${announcement.type}`"
@@ -48,9 +48,9 @@
                 <el-icon v-else><Bell /></el-icon>
               </span>
               <h2 class="announcement-title">{{ announcement.title }}</h2>
-              <el-tag 
-                v-if="announcement.is_pinned" 
-                type="warning" 
+              <el-tag
+                v-if="announcement.is_pinned"
+                type="warning"
                 size="small"
                 class="pinned-tag"
               >
@@ -129,7 +129,7 @@ const loadAnnouncements = async (isLoadMore = false) => {
     offset.value = 0;
     announcements.value = [];
   }
-  
+
   error.value = '';
 
   try {
@@ -137,20 +137,20 @@ const loadAnnouncements = async (isLoadMore = false) => {
       limit,
       offset: offset.value
     });
-    
+
     // 过滤掉置顶公告，只显示非置顶公告
     const filteredData = data.filter((announcement: Announcement) => !announcement.is_pinned);
-    
+
     if (isLoadMore) {
       announcements.value.push(...filteredData);
     } else {
       announcements.value = filteredData;
     }
-    
+
     // 如果返回的数据少于限制数量，说明没有更多了
     hasMore.value = filteredData.length === limit;
     offset.value += data.length;
-    
+
   } catch (err: any) {
     error.value = err.message || '加载公告失败';
     ElMessage.error(error.value);
@@ -170,20 +170,20 @@ const formatTime = (timestamp: number): string => {
   const date = new Date(timestamp * 1000);
   const now = new Date();
   const diffInHours = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60));
-  
+
   if (diffInHours < 1) {
     const diffInMinutes = Math.floor((now.getTime() - date.getTime()) / (1000 * 60));
     return diffInMinutes < 1 ? '刚刚' : `${diffInMinutes}分钟前`;
   }
-  
+
   if (diffInHours < 24) {
     return `${diffInHours}小时前`;
   }
-  
+
   if (diffInHours < 168) { // 7天
     return `${Math.floor(diffInHours / 24)}天前`;
   }
-  
+
   return date.toLocaleString('zh-CN', {
     year: 'numeric',
     month: '2-digit',
@@ -203,14 +203,19 @@ onMounted(() => {
 .announcements-page {
   padding: 24px;
   background: #f5f7fa;
-  min-height: calc(100vh - 120px);
-  max-width: 1200px;
-  margin: 0 auto;
+  min-height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  box-sizing: border-box;
 
   .page-header {
-    margin-bottom: 24px;
-    
-    
+    margin: 0 auto 24px;
+    width: 100%;
+    max-width: 1200px;
+
+
     .page-title {
       font-size: 28px;
       font-weight: 600;
@@ -223,6 +228,11 @@ onMounted(() => {
   }
 
   .announcements-container {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    box-sizing: border-box;
+
     .loading-container,
     .error-container,
     .empty-container {
@@ -237,12 +247,14 @@ onMounted(() => {
       .announcement-item {
         background: white;
         border-radius: 8px;
-        margin-bottom: 16px;
+        margin: 0 auto 16px;
         padding: 16px;
         box-shadow: 0 2px 8px 0 rgba(0, 0, 0, 0.1);
         border-left: 3px solid transparent;
         transition: all 0.3s ease;
-        
+        width: 100%;
+        box-sizing: border-box;
+
         &:hover {
           box-shadow: 0 4px 20px 0 rgba(0, 0, 0, 0.15);
           transform: translateY(-2px);
@@ -250,7 +262,7 @@ onMounted(() => {
 
         &.announcement-type-info {
           border-left-color: #409eff;
-          
+
           .announcement-icon {
             color: #409eff;
             background-color: rgba(64, 158, 255, 0.1);
@@ -259,7 +271,7 @@ onMounted(() => {
 
         &.announcement-type-warning {
           border-left-color: #e6a23c;
-          
+
           .announcement-icon {
             color: #e6a23c;
             background-color: rgba(230, 162, 60, 0.1);
@@ -268,7 +280,7 @@ onMounted(() => {
 
         &.announcement-type-success {
           border-left-color: #67c23a;
-          
+
           .announcement-icon {
             color: #67c23a;
             background-color: rgba(103, 194, 58, 0.1);
@@ -277,7 +289,7 @@ onMounted(() => {
 
         &.announcement-type-danger {
           border-left-color: #f56c6c;
-          
+
           .announcement-icon {
             color: #f56c6c;
             background-color: rgba(245, 108, 108, 0.1);
@@ -329,7 +341,7 @@ onMounted(() => {
               color: #909399;
               font-size: 14px;
               white-space: nowrap;
-              
+
               .el-icon {
                 font-size: 16px;
               }
@@ -339,7 +351,7 @@ onMounted(() => {
 
         .announcement-content {
           margin-bottom: 12px;
-          
+
           .content-text {
             color: #606266;
             font-size: 14px;
@@ -347,33 +359,33 @@ onMounted(() => {
             white-space: pre-wrap;
             word-break: break-word;
           }
-          
+
           :deep(p) {
             margin: 0 0 8px 0;
             color: #606266;
             font-size: 14px;
             line-height: 1.5;
-            
+
             &:last-child {
               margin-bottom: 0;
             }
           }
-          
+
           :deep(h1), :deep(h2), :deep(h3), :deep(h4), :deep(h5), :deep(h6) {
             color: #303133;
             margin: 12px 0 6px 0;
-            
+
             &:first-child {
               margin-top: 0;
             }
           }
-          
+
           :deep(ul), :deep(ol) {
             margin: 12px 0;
             padding-left: 24px;
             color: #606266;
           }
-          
+
           :deep(code) {
             background-color: #f1f2f3;
             padding: 2px 6px;
@@ -382,7 +394,7 @@ onMounted(() => {
             font-size: 14px;
             color: #e74c3c;
           }
-          
+
           :deep(pre) {
             background-color: #f8f9fa;
             border: 1px solid #e9ecef;
@@ -390,7 +402,7 @@ onMounted(() => {
             padding: 16px;
             margin: 16px 0;
             overflow-x: auto;
-            
+
             code {
               background: none;
               padding: 0;
@@ -405,16 +417,16 @@ onMounted(() => {
             align-items: center;
             gap: 16px;
             flex-wrap: wrap;
-            
+
             .author, .expires {
               font-size: 14px;
               color: #909399;
             }
-            
+
             .author {
               font-weight: 500;
             }
-            
+
             .expires {
               font-style: italic;
             }

@@ -3,7 +3,6 @@
     <ErrorBoundary>
       <router-view />
     </ErrorBoundary>
-    
   </div>
 </template>
 
@@ -16,7 +15,7 @@ import ErrorBoundary from '@/components/ErrorBoundary.vue';
   font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  height: 100vh;
+  min-height: 100vh;
 }
 
 body, html {

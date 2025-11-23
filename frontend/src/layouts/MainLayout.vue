@@ -59,7 +59,10 @@
             <!-- 面包屑导航 - 管理员页面和用户页面都显示，但仪表板页面不显示 -->
             <Breadcrumb v-if="!isDashboard" />
 
-            <router-view />
+            <div class="page-slot">
+              <router-view />
+            </div>
+            <LayoutFooter class="layout-footer" />
           </el-scrollbar>
         </el-main>
       </el-container>
@@ -76,6 +79,7 @@ import { useUserStore } from "@/store/user";
 import { useNotificationStore } from "@/store/notification";
 import Sidebar from "@/components/Sidebar/index.vue";
 import Breadcrumb from "@/components/Breadcrumb.vue";
+import LayoutFooter from "@/components/LayoutFooter.vue";
 
 const router = useRouter();
 const route = useRoute();
@@ -257,6 +261,9 @@ watch(
 .main-container {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
 }
 
 .header {
@@ -355,21 +362,43 @@ watch(
   background-color: #f5f6fa;
   padding: 0;
   overflow: hidden;
+  flex: 1;
+  min-height: 0;
 
   :deep(.el-scrollbar) {
     height: 100%;
+    display: flex;
+    flex-direction: column;
   }
 
   :deep(.el-scrollbar__wrap) {
     padding: 20px;
     overflow-x: hidden;
     overflow-y: auto;
+    flex: 1;
+    box-sizing: border-box;
   }
 
   :deep(.el-scrollbar__view) {
+    min-height: 100% !important;
     height: auto !important;
-    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
   }
+
+  :deep(.layout-footer) {
+    margin-top: auto;
+  }
+}
+
+.page-slot {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
 }
 
 // 响应式设计
@@ -407,6 +436,8 @@ watch(
     // 确保内容可以撑开容器
     display: flex !important;
     flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 12px !important;
   }
 
   // WebKit专用：确保view的子元素正常显示
