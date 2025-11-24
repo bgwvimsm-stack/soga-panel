@@ -131,6 +131,7 @@
             <el-form-item label="节点类型" prop="type">
               <el-select v-model="nodeForm.type" placeholder="请选择节点类型">
                 <el-option label="Shadowsocks" value="ss" />
+                <el-option label="ShadowsocksR" value="ssr" />
                 <el-option label="V2Ray" value="v2ray" />
                 <el-option label="VLess" value="vless" />
                 <el-option label="Trojan" value="trojan" />
@@ -280,7 +281,7 @@ const columns = [
   { type: 'checkbox', width: 60, fixed: 'left', visible: true },
   { field: 'id', title: 'ID', width: 80, visible: true },
   { field: 'name', title: '节点名称', minWidth: 150, visible: true, slots: { default: 'name' } },
-  { field: 'type', title: '类型', width: 120, visible: true, slots: { default: 'type' } },
+  { field: 'type', title: '类型', width: 130, visible: true, slots: { default: 'type' } },
   { field: 'server', title: '地址', minWidth: 180, visible: true, slots: { default: 'server' } },
   { field: 'server_port', title: '端口', width: 100, visible: true, slots: { default: 'server_port' } },
   { field: 'node_class', title: '等级', width: 100, visible: true, slots: { default: 'node_class' } },
@@ -329,12 +330,12 @@ const nodeRules = {
 };
 
 const getNodeTypeColor = (type: string) => {
-  const colorMap: Record<string, string> = { ss: 'primary', v2ray: 'success', vless: 'info', trojan: 'warning', hysteria: 'danger' };
+  const colorMap: Record<string, string> = { ss: 'primary', ssr: 'primary', v2ray: 'success', vless: 'info', trojan: 'warning', hysteria: 'danger' };
   return colorMap[type] || 'primary';
 };
 
 const getNodeTypeName = (type: string) => {
-  const nameMap: Record<string, string> = { ss: 'Shadowsocks', v2ray: 'V2Ray', vless: 'VLess', trojan: 'Trojan', hysteria: 'Hysteria' };
+  const nameMap: Record<string, string> = { ss: 'Shadowsocks', ssr: 'ShadowsocksR', v2ray: 'V2Ray', vless: 'VLess', trojan: 'Trojan', hysteria: 'Hysteria' };
   return nameMap[type] || type;
 };
 

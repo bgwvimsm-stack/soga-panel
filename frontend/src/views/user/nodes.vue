@@ -50,6 +50,7 @@
         <el-select v-model="filterType" placeholder="节点类型" clearable @change="handleFilterChange" style="width: 150px">
           <el-option label="全部" value="" />
           <el-option label="Shadowsocks" value="ss" />
+          <el-option label="ShadowsocksR" value="ssr" />
           <el-option label="V2Ray" value="v2ray" />
           <el-option label="Trojan" value="trojan" />
           <el-option label="Hysteria" value="hysteria" />
@@ -312,8 +313,8 @@ const getTableHeight = computed(() => (size: string) => {
 });
 
 const columns = [
-  { field: 'name', title: '节点名称', minWidth: 180, visible: true, slots: { default: 'name' } },
-  { field: 'type', title: '类型', width: 120, visible: true, slots: { default: 'type' } },
+  { field: 'name', title: '节点名称', minWidth: 160, visible: true, slots: { default: 'name' } },
+  { field: 'type', title: '类型', width: 130, visible: true, slots: { default: 'type' } },
   { field: 'node_class', title: '等级', width: 100, visible: true, slots: { default: 'node_class' } },
   { field: 'traffic_multiplier', title: '倍率', width: 100, visible: true, slots: { default: 'traffic_multiplier' } },
   { field: 'traffic', title: '流量使用', width: 180, visible: true, slots: { default: 'traffic' } },
@@ -342,6 +343,7 @@ const getNodeStatusClass = (node: any) => {
 const getNodeTypeColor = (type: string) => {
   const colorMap: Record<string, string> = {
     ss: 'primary',
+    ssr: 'primary',
     v2ray: 'success',
     trojan: 'warning',
     hysteria: 'danger',
@@ -354,6 +356,8 @@ const getNodeTypeName = (type: string) => {
   const nameMap: Record<string, string> = {
     ss: 'Shadowsocks',
     shadowsocks: 'Shadowsocks',
+    ssr: 'ShadowsocksR',
+    shadowsocksr: 'ShadowsocksR',
     v2ray: 'V2Ray',
     vmess: 'VMess',
     vless: 'VLESS',
@@ -437,6 +441,9 @@ const connectionUrl = computed(() => {
         case 'ss':
         case 'shadowsocks':
           return generateShadowsocksUrl(selectedNode.value, defaultConfig);
+        case 'ssr':
+        case 'shadowsocksr':
+          return generateShadowsocksRUrl(selectedNode.value, defaultConfig);
         case 'v2ray':
           return generateVMessUrl(selectedNode.value, defaultConfig);
         case 'vless':
@@ -459,6 +466,9 @@ const connectionUrl = computed(() => {
       case 'ss':
       case 'shadowsocks':
         return generateShadowsocksUrl(selectedNode.value, nodeConfig);
+      case 'ssr':
+      case 'shadowsocksr':
+        return generateShadowsocksRUrl(selectedNode.value, nodeConfig);
       case 'v2ray':
         return generateVMessUrl(selectedNode.value, nodeConfig);
       case 'vless':
@@ -518,6 +528,25 @@ const nodeConfigJson = computed(() => {
         }
 
         return JSON.stringify(ssConfig, null, 2);
+
+      case 'ssr':
+      case 'shadowsocksr':
+        const ssrCipher = nodeConfig.method || nodeConfig.cipher || "aes-256-cfb";
+        const ssrConfig: Record<string, any> = {
+          server: selectedNode.value.server,
+          port: selectedNode.value.server_port,
+          type: "ssr",
+          cipher: ssrCipher,
+          method: ssrCipher,
+          password: nodeConfig.password || userStore.user?.passwd || "",
+          protocol: nodeConfig.protocol || "origin",
+          "protocol-param": userStore.user?.passwd || "",
+          obfs: nodeConfig.obfs || "plain",
+          "obfs-param": selectedNode.value.tls_host || nodeConfig.obfs_param || nodeConfig.obfsparam || "",
+          remarks: selectedNode.value.name
+        };
+
+        return JSON.stringify(ssrConfig, null, 2);
 
       case 'v2ray':
         const vmessConfig: Record<string, any> = {
@@ -775,6 +804,36 @@ const generateShadowsocksUrl = (node: any, config: any): string => {
   const auth = `${method}:${password}@${serverHost}:${node.server_port}`;
   const authBase64 = btoa(auth);
   return `ss://${authBase64}#${nodeName}`;
+};
+
+const encodeBase64 = (value: string): string => {
+  try {
+    const encoded = btoa(unescape(encodeURIComponent(value)));
+    // SSR 规范使用 URL 安全的 Base64，避免 + 号在查询参数中被当作空格导致中文乱码
+    return encoded.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  } catch {
+    return '';
+  }
+};
+
+const generateShadowsocksRUrl = (node: any, config: any): string => {
+  const serverHost = wrapIPv6Host(node.server);
+  const port = node.server_port;
+  const method = config.method || config.cipher || 'aes-256-cfb';
+  const password = config.password || userStore.user?.passwd || '';
+  const protocol = config.protocol || 'origin';
+  const obfs = config.obfs || 'plain';
+  const obfsParam = node.tls_host || config.obfs_param || config.obfsparam || '';
+  const protocolParam = userStore.user?.passwd || '';
+
+  const base = `${serverHost}:${port}:${protocol}:${method}:${obfs}:${encodeBase64(password)}`;
+  const params = new URLSearchParams();
+  if (obfsParam) params.set('obfsparam', encodeBase64(obfsParam));
+  if (protocolParam) params.set('protoparam', encodeBase64(protocolParam));
+  params.set('remarks', encodeBase64(node.name || ''));
+
+  const full = `${base}/?${params.toString()}`;
+  return `ssr://${encodeBase64(full)}`;
 };
 
 const generateHysteriaUrl = (node: any, config: any): string => {
