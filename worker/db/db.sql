@@ -98,9 +98,6 @@ CREATE TABLE
 -- id: 节点唯一标识ID（主键）
 -- name: 节点名称（不能为空）
 -- type: 节点类型（如：v2ray, trojan, vless, hysteria等）
--- server: 节点域名或IP地址（不能为空）
--- server_port: 节点端口号（不能为空）
--- tls_host: TLS主机名/SNI参数（可选）
 -- node_class: 节点等级（决定哪些用户等级可以访问此节点）
 -- node_bandwidth: 节点已用流量（字节）
 -- node_bandwidth_limit: 节点流量限制（字节，0表示无限制）
@@ -115,9 +112,6 @@ CREATE TABLE
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         type TEXT NOT NULL,
-        server TEXT NOT NULL,
-        server_port INTEGER NOT NULL,
-        tls_host TEXT DEFAULT '',
         node_class INTEGER DEFAULT 1,
         node_bandwidth INTEGER DEFAULT 0,
         node_bandwidth_limit INTEGER DEFAULT 0,

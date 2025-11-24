@@ -54,8 +54,8 @@
           <template #type="{ row }">
             <el-tag :type="getNodeTypeColor(row.type)" size="small">{{ getNodeTypeName(row.type) }}</el-tag>
           </template>
-          <template #server="{ row }"><span>{{ row.server }}</span></template>
-          <template #server_port="{ row }"><span>{{ row.server_port }}</span></template>
+          <template #server="{ row }"><span>{{ getDisplayServer(row) }}</span></template>
+          <template #server_port="{ row }"><span>{{ getDisplayPort(row) }}</span></template>
           <template #node_class="{ row }">
             <el-tag size="small">{{ row.node_class }}</el-tag>
           </template>
@@ -550,7 +550,7 @@
           <el-descriptions-item label="节点ID">{{ selectedNode.id }}</el-descriptions-item>
           <el-descriptions-item label="节点名称">{{ selectedNode.name }}</el-descriptions-item>
           <el-descriptions-item label="节点类型">{{ selectedNode.type }}</el-descriptions-item>
-          <el-descriptions-item label="节点地址">{{ selectedNode.server }}:{{ selectedNode.server_port }}</el-descriptions-item>
+          <el-descriptions-item label="节点地址">{{ formatDisplayAddress(selectedNode) }}</el-descriptions-item>
           <el-descriptions-item label="节点等级">等级{{ selectedNode.node_class }}</el-descriptions-item>
           <el-descriptions-item label="扣费倍率">
             x{{ Number(selectedNode.traffic_multiplier || 1).toFixed(2) }}
@@ -899,6 +899,37 @@ const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
 });
 
 const nodeConfigState = reactive<NodeConfigState>(createDefaultNodeConfig());
+
+const parseNodeConfigSafe = (node: any) => {
+  try {
+    if (!node?.node_config || node.node_config === 'undefined') {
+      return { basic: {}, config: {}, client: {} };
+    }
+    const parsed = typeof node.node_config === 'string' ? JSON.parse(node.node_config) : node.node_config;
+    return {
+      basic: parsed.basic || {},
+      config: parsed.config || parsed || {},
+      client: parsed.client || {}
+    };
+  } catch {
+    return { basic: {}, config: {}, client: {} };
+  }
+};
+
+const resolveClientInfo = (row: any) => {
+  const { config, client } = parseNodeConfigSafe(row);
+  const server = client.server || row.server || '';
+  const port = client.port || config.port || row.server_port || '';
+  const tlsHost = client.tls_host || row.tls_host || config.host || server;
+  return { server, port, tlsHost };
+};
+
+const getDisplayServer = (row: any) => resolveClientInfo(row).server || '--';
+const getDisplayPort = (row: any) => resolveClientInfo(row).port || '--';
+const formatDisplayAddress = (row: any) => {
+  const { server, port } = resolveClientInfo(row);
+  return server ? `${server}${port ? `:${port}` : ''}` : '--';
+};
 
 const normalizeNodeConfig = (config: any, type = nodeForm.type): NodeConfigState => {
   const normalized = createDefaultNodeConfig(type);

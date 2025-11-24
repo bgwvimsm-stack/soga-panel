@@ -14,6 +14,10 @@ export function generateV2rayConfig(nodes, user) {
   for (const node of nodes) {
     const nodeConfig = JSON.parse(node.node_config || "{}");
     const config = nodeConfig.config || nodeConfig; // 兼容两种格式
+    const client = nodeConfig.client || {};
+    const server = client.server || node.server;
+    const port = client.port || config.port || node.server_port;
+    const tlsHost = client.tls_host || node.tls_host || config.host;
 
     switch (node.type) {
       case "v2ray":
@@ -395,16 +399,16 @@ export function generateQuantumultXConfig(nodes, user) {
 
     switch (node.type) {
       case "v2ray":
-        line = buildQuantumultXVmessEntry(node, config, user);
+        line = buildQuantumultXVmessEntry({ ...node, server, server_port: port, tls_host: tlsHost }, config, user);
         break;
       case "vless":
-        line = buildQuantumultXVlessEntry(node, config, user);
+        line = buildQuantumultXVlessEntry({ ...node, server, server_port: port, tls_host: tlsHost }, config, user);
         break;
       case "trojan":
-        line = buildQuantumultXTrojanEntry(node, config, user);
+        line = buildQuantumultXTrojanEntry({ ...node, server, server_port: port, tls_host: tlsHost }, config, user);
         break;
       case "ss":
-        line = buildQuantumultXSSEntry(node, config, user);
+        line = buildQuantumultXSSEntry({ ...node, server, server_port: port, tls_host: tlsHost }, config, user);
         break;
       default:
         line = "";

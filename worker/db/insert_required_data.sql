@@ -121,30 +121,31 @@ INSERT OR IGNORE INTO nodes (
     id,
     name,
     type,
-    server,
-    server_port,
     node_class,
     node_config
 ) VALUES 
 -- Shadowsocks 节点
-(1, 'ss-tcp', 'ss', 'example.com', 8443, 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"cipher":"aes-128-gcm","password":"","obfs":"plain","path":"/path","host":"www.server.com"}}'),
+(1, 'ss-tcp', 'ss', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"cipher":"aes-128-gcm","obfs":"plain","path":"/path","host":"www.server.com"},"client":{"server":"example.com","port":8443}}'),
+
+-- ShadowsocksR 节点
+(2, 'ssr-tcp', 'ssr', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"method":"chacha20-ietf","protocol":"auth_aes128_sha1","obfs":"plain","single_port_type":"protocol"},"client":{"server":"example.com","port":8443}}'),
 
 -- V2Ray VMess 节点
-(2, 'vmess-tcp', 'v2ray', 'example.com', 8443, 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"none"}}'),
-(3, 'vmess-tcp-tls', 'v2ray', 'example.com', 8443, 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"}}'),
-(4, 'vmess-ws', 'v2ray', 'example.com', 8443, 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"none","path":"/112233"}}'),
-(5, 'vmess-ws-tls', 'v2ray', 'example.com', 8443, 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls","path":"/112233"}}'),
+(3, 'vmess-tcp', 'v2ray', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"none"},"client":{"server":"example.com","port":8443}}'),
+(4, 'vmess-tcp-tls', 'v2ray', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
+(5, 'vmess-ws', 'v2ray', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"none","path":"/112233"},"client":{"server":"example.com","port":8443}}'),
+(6, 'vmess-ws-tls', 'v2ray', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls","path":"/112233"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
 
 -- VLESS 节点
-(6, 'vless-tcp-tls', 'vless', 'example.com', 8443, 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"}}'),
-(7, 'vless-ws-tls', 'vless', 'example.com', 8443, 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls","path":"/112233"}}'),
+(7, 'vless-tcp-tls', 'vless', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
+(8, 'vless-ws-tls', 'vless', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls","path":"/112233"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
 
 -- Trojan 节点
-(8, 'trojan-tcp-tls', 'trojan', 'example.com', 8443, 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"}}'),
-(9, 'trojan-ws-tls', 'trojan', 'example.com', 8443, 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls"}}'),
+(9, 'trojan-tcp-tls', 'trojan', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
+(10, 'trojan-ws-tls', 'trojan', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
 
 -- Hysteria 节点
-(10, 'hysteria', 'hysteria', 'example.com', 8443, 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"obfs":"salamander","obfs_password":"","up_mbps":1000,"down_mbps":1000}}');
+(11, 'hysteria', 'hysteria', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"obfs":"salamander","obfs_password":"","up_mbps":1000,"down_mbps":1000},"client":{"server":"example.com","port":8443}}');
 
 -- 验证必要数据插入
 SELECT 'Required data inserted successfully' as status;
