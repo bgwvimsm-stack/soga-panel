@@ -120,8 +120,9 @@
 
     <!-- 创建/编辑节点对话框 -->
     <el-dialog v-model="showCreateDialog" :title="editingNode ? '编辑节点' : '新增节点'" width="780px" class="node-dialog" @close="resetForm">
-      <el-scrollbar max-height="65vh" class="form-scroll">
-        <div class="section-grid">
+      <el-form ref="nodeFormRef" :model="nodeForm" :rules="nodeRules" label-width="110px">
+        <el-scrollbar max-height="65vh" class="form-scroll">
+          <div class="section-grid">
           <el-card shadow="never" class="section-card">
             <div class="section-header">
               <div>
@@ -179,7 +180,6 @@
               <el-col :span="12">
                 <el-form-item label="流量限制 (GB)">
                   <el-input-number v-model="nodeForm.node_bandwidth_limit_gb" :min="0" placeholder="0表示无限制" style="width: 100%" />
-                  <small>每月流量限制，单位: GB，0表示无限制</small>
                 </el-form-item>
               </el-col>
             </el-row>
@@ -193,13 +193,28 @@
                     :precision="2"
                     style="width: 100%"
                   />
-                  <small>节点流量扣费倍率，1表示不加成，可输入小数</small>
                 </el-form-item>
               </el-col>
               <el-col :span="12">
                 <el-form-item label="流量重置日期">
-                  <el-input-number v-model="nodeForm.bandwidthlimit_resetday" :min="1" :max="31" placeholder="每月重置日期" style="width: 100%" />
-                  <small>每月几号重置流量，1-31</small>
+                  <el-input-number v-model="nodeForm.bandwidthlimit_resetday" :min="1" :max="31" placeholder="每月重置流量日" style="width: 100%" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-row :gutter="16">
+              <el-col :span="8">
+                <el-form-item label="拉取间隔(s)">
+                  <el-input v-model.number="nodeForm.basic_pull_interval" type="number" min="0" placeholder="秒" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="8">
+                <el-form-item label="推送间隔(s)">
+                  <el-input v-model.number="nodeForm.basic_push_interval" type="number" min="0" placeholder="秒" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="8">
+                <el-form-item label="总限速(Mbps)">
+                  <el-input v-model.number="nodeForm.basic_speed_limit" type="number" min="0" placeholder="Mbps" />
                 </el-form-item>
               </el-col>
             </el-row>
@@ -258,6 +273,13 @@
                       <el-select v-model="nodeForm.config_obfs" placeholder="请选择混淆">
                         <el-option v-for="item in ssObfsOptions" :key="item" :label="item" :value="item" />
                       </el-select>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16" v-if="isSS2022">
+                  <el-col :span="12">
+                    <el-form-item label="密码" prop="config_password">
+                      <el-input v-model="nodeForm.config_password" placeholder="ss2022 需要 base64 密码" />
                     </el-form-item>
                   </el-col>
                 </el-row>
@@ -512,8 +534,9 @@
               </el-form-item>
             </el-card>
           </template>
-        </div>
-      </el-scrollbar>
+          </div>
+        </el-scrollbar>
+      </el-form>
       <template #footer>
         <el-button @click="showCreateDialog = false">取消</el-button>
         <el-button type="primary" @click="saveNode" :loading="submitting">{{ editingNode ? '更新' : '创建' }}</el-button>
@@ -572,13 +595,14 @@ const advancedView = ref(false);
 
 const ssCipherOptions = [
   'aes-128-gcm',
-  'chacha20-ietf-poly1305',
   'aes-192-gcm',
   'aes-256-gcm',
+  'chacha20-ietf-poly1305',
   '2022-blake3-aes-128-gcm',
   '2022-blake3-aes-256-gcm'
 ];
 const ssObfsOptions = ['plain', 'simple_obfs_http'];
+const ss2022Ciphers = ['2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm'];
 
 const ssrMethodOptions = [
   'none',
@@ -676,6 +700,9 @@ const nodeForm = reactive({
   client_server: '',
   client_port: null as number | null,
   service_port: null as number | null,
+  basic_pull_interval: 60,
+  basic_push_interval: 60,
+  basic_speed_limit: 0,
   client_tls_host: '',
   config_method: '',
   config_password: '',
@@ -718,7 +745,8 @@ const nodeRules = {
         if (!value) return callback(new Error('请输入节点地址'));
         return callback();
       },
-      trigger: 'blur'
+      required: true,
+      trigger: ['blur', 'change']
     }
   ],
   service_port: [
@@ -729,14 +757,31 @@ const nodeRules = {
         if (value < 1 || value > 65535) return callback(new Error('端口号应在1-65535之间'));
         return callback();
       },
-      trigger: 'blur'
+      required: true,
+      trigger: ['blur', 'change']
     }
   ],
   client_port: [
-    { type: 'number', min: 1, max: 65535, message: '端口号应在1-65535之间', trigger: 'blur' }
+    {
+      validator: (_rule: any, value: number, callback: any) => {
+        if (advancedView.value) return callback();
+        if (value === null || value === undefined) return callback();
+        if (value < 1 || value > 65535) return callback(new Error('端口号应在1-65535之间'));
+        return callback();
+      },
+      trigger: 'blur'
+    }
   ],
   config_method: [{ required: false }],
-  config_password: [{ required: false }],
+  config_password: [
+    {
+      validator: (_rule: any, value: string, callback: any) => {
+        if (isSS2022.value && !value) return callback(new Error('ss2022 需设置密码'));
+        callback();
+      },
+      trigger: 'blur'
+    }
+  ],
   config_protocol: [{ required: false }],
   config_obfs: [{ required: false }],
   config_single_port_type: [{ required: false }],
@@ -881,10 +926,17 @@ const applyConfigToState = (config: any) => {
   nodeForm.client_port = Number.isFinite(clientPort) && clientPort > 0 ? clientPort : null;
   const servicePort = Number(nodeConfigState.config.port);
   nodeForm.service_port = Number.isFinite(servicePort) && servicePort > 0 ? servicePort : null;
+  nodeForm.basic_pull_interval = Number(nodeConfigState.basic.pull_interval ?? 60);
+  nodeForm.basic_push_interval = Number(nodeConfigState.basic.push_interval ?? 60);
+  nodeForm.basic_speed_limit = Number(nodeConfigState.basic.speed_limit ?? 0);
   nodeForm.config_method = nodeConfigState.config.method || nodeConfigState.config.cipher || '';
   nodeForm.config_password = nodeConfigState.config.password || '';
   nodeForm.config_protocol = nodeConfigState.config.protocol || '';
   nodeForm.config_obfs = nodeConfigState.config.obfs || '';
+  // 对于已存的 ss config，优先使用 cipher
+  if (nodeForm.type === 'ss' && nodeConfigState.config.cipher) {
+    nodeForm.config_method = nodeConfigState.config.cipher;
+  }
   nodeForm.config_single_port_type = nodeConfigState.config.single_port_type || '';
   nodeForm.config_stream_type = nodeConfigState.config.stream_type || 'tcp';
   nodeForm.config_tls_type = nodeConfigState.config.tls_type || (nodeForm.type === 'vless' ? 'tls' : 'none');
@@ -907,8 +959,13 @@ const applyConfigToState = (config: any) => {
   nodeForm.node_config_json = JSON.stringify(normalized, null, 2);
 };
 
+const isSS2022 = computed(() => nodeForm.type === 'ss' && ss2022Ciphers.includes(nodeForm.config_method));
+
 const buildConfigFromForm = () => {
   const merged = normalizeNodeConfig(nodeConfigState);
+  merged.basic.pull_interval = Number(nodeForm.basic_pull_interval ?? merged.basic.pull_interval ?? 60);
+  merged.basic.push_interval = Number(nodeForm.basic_push_interval ?? merged.basic.push_interval ?? 60);
+  merged.basic.speed_limit = Number(nodeForm.basic_speed_limit ?? merged.basic.speed_limit ?? 0);
   merged.client.server = nodeForm.client_server || merged.client.server;
   if (!merged.client) merged.client = { server: '', port: null, tls_host: '' } as any;
   (merged.client as any).tls_host = nodeForm.client_tls_host || (merged.client as any).tls_host || '';
@@ -916,14 +973,26 @@ const buildConfigFromForm = () => {
   merged.client.port = clientPort ? Number(clientPort) : null;
   const servicePort = nodeForm.service_port ?? merged.config.port ?? nodeForm.client_port ?? null;
   merged.config.port = servicePort ? Number(servicePort) : null;
+  if (!merged.client.port && merged.config.port) {
+    merged.client.port = merged.config.port;
+  }
   switch (nodeForm.type) {
     case 'ss':
       if (nodeForm.config_method) {
         merged.config.cipher = nodeForm.config_method;
-        merged.config.method = nodeForm.config_method;
       }
+      // SS 不存 method 字段，避免与 cipher 重复
+      if ('method' in merged.config) delete merged.config.method;
       if (nodeForm.config_obfs) merged.config.obfs = nodeForm.config_obfs;
-      if (nodeForm.config_password) merged.config.password = nodeForm.config_password;
+      if (isSS2022.value) {
+        if (!nodeForm.config_password) {
+          throw new Error('ss2022 需要设置密码');
+        }
+        merged.config.password = nodeForm.config_password;
+      } else {
+        // 非 ss2022 移除密码字段，避免存储空串
+        if ('password' in merged.config) delete merged.config.password;
+      }
       break;
     case 'ssr':
       if (nodeForm.config_method) merged.config.method = nodeForm.config_method;
@@ -936,19 +1005,31 @@ const buildConfigFromForm = () => {
       merged.config.stream_type = nodeForm.config_stream_type || merged.config.stream_type || 'tcp';
       merged.config.tls_type = nodeForm.config_tls_type || merged.config.tls_type || 'none';
       merged.config.path = nodeForm.config_path || merged.config.path || '';
-      merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
+      if (merged.config.stream_type === 'grpc') {
+        merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
+      } else {
+        if ('service_name' in merged.config) delete merged.config.service_name;
+      }
       break;
     case 'trojan':
       merged.config.stream_type = nodeForm.config_stream_type || merged.config.stream_type || 'tcp';
       merged.config.path = nodeForm.config_path || merged.config.path || '';
-      merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
+      if (merged.config.stream_type === 'grpc') {
+        merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
+      } else {
+        if ('service_name' in merged.config) delete merged.config.service_name;
+      }
       if (nodeForm.config_password) merged.config.password = nodeForm.config_password;
       break;
     case 'vless':
       merged.config.stream_type = nodeForm.config_stream_type || merged.config.stream_type || 'tcp';
       merged.config.tls_type = nodeForm.config_tls_type || merged.config.tls_type || 'tls';
       merged.config.path = nodeForm.config_path || merged.config.path || '';
-      merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
+      if (merged.config.stream_type === 'grpc') {
+        merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
+      } else {
+        if ('service_name' in merged.config) delete merged.config.service_name;
+      }
       if (nodeForm.config_flow) merged.config.flow = nodeForm.config_flow;
       if (nodeForm.config_dest) merged.config.dest = nodeForm.config_dest;
       if (nodeForm.config_server_names) {
@@ -1183,12 +1264,24 @@ const saveNode = async () => {
   if (!nodeFormRef.value) return;
 
   try {
-    await nodeFormRef.value.validate();
+    try {
+      await nodeFormRef.value.validate();
+    } catch (validateErr) {
+      ElMessage.error('请完善必填项后再提交');
+      return;
+    }
     submitting.value = true;
 
-    const finalConfig = advancedView.value
-      ? normalizeNodeConfig(parseNodeConfigJson(nodeForm.node_config_json), nodeForm.type)
-      : buildConfigFromForm();
+    let finalConfig;
+    try {
+      finalConfig = advancedView.value
+        ? normalizeNodeConfig(parseNodeConfigJson(nodeForm.node_config_json), nodeForm.type)
+        : buildConfigFromForm();
+    } catch (err) {
+      console.error('构建节点配置失败:', err);
+      ElMessage.error(err instanceof Error ? err.message : '配置构建失败');
+      return;
+    }
 
     // 为兼容后端旧字段，使用 client.server / client.port 进行填充
     const resolvedServer = finalConfig.client?.server || '';
@@ -1198,7 +1291,7 @@ const saveNode = async () => {
       name: nodeForm.name,
       type: nodeForm.type,
       server: resolvedServer,
-      server_port: resolvedPort,
+      server_port: resolvedPort || nodeForm.service_port || 443,
       node_class: nodeForm.node_class,
       node_bandwidth_limit: nodeForm.node_bandwidth_limit_gb > 0 ? nodeForm.node_bandwidth_limit_gb * 1024 * 1024 * 1024 : 0,
       node_bandwidth: nodeForm.node_bandwidth,
@@ -1239,6 +1332,9 @@ const resetForm = () => {
   nodeForm.client_port = null;
   nodeForm.client_tls_host = '';
   nodeForm.service_port = null;
+  nodeForm.basic_pull_interval = 60;
+  nodeForm.basic_push_interval = 60;
+  nodeForm.basic_speed_limit = 0;
   nodeForm.config_method = '';
   nodeForm.config_password = '';
   nodeForm.config_protocol = '';
@@ -1260,6 +1356,7 @@ const resetForm = () => {
   applyConfigToState(createDefaultNodeConfig('ss'));
   advancedView.value = false;
   nodeFormRef.value?.clearValidate();
+  submitting.value = false;
 };
 
 const batchOnlineNodes = async () => {
