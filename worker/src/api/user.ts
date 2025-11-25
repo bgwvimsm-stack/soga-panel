@@ -379,12 +379,12 @@ export class UserAPI {
 
       // 处理节点配置
       const processedNodes = await Promise.all(nodes.map(async (node) => {
-        const config = JSON.parse(toString(node.node_config, "{}"));
-        const client = (config as any)?.client || {};
-        const cfg = (config as any)?.config || config || {};
-        const resolvedServer = client.server || node.server;
-        const resolvedPort = client.port || cfg.port || node.server_port;
-        const resolvedTlsHost = client.tls_host || node.tls_host || cfg.host;
+        const parsedConfig = JSON.parse(toString(node.node_config, "{}"));
+        const cfg = (parsedConfig as any)?.config || parsedConfig || {};
+        const client = (parsedConfig as any)?.client || {};
+        const resolvedServer = client.server || '';
+        const resolvedPort = client.port || cfg.port || 443;
+        const resolvedTlsHost = client.tls_host || cfg.host || '';
         
         // 检查节点是否在线（5分钟内有状态更新）
         const isOnline = await this.checkNodeOnlineStatus(node.id);
@@ -413,7 +413,7 @@ export class UserAPI {
           id: node.id,
           name: node.name,
           type: node.type,
-          server: node.server,
+          server: resolvedServer,
           server_port: resolvedPort,
           tls_host: resolvedTlsHost,
           node_class: node.node_class,

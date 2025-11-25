@@ -2,6 +2,34 @@
 import { buildClashTemplate } from "./templates/clashTemplate";
 import { buildSurgeTemplate } from "./templates/surgeTemplate";
 
+function parseNodeConfig(node: any) {
+  try {
+    const parsed = JSON.parse(node.node_config || "{}");
+    return {
+      basic: parsed.basic || {},
+      config: parsed.config || parsed || {},
+      client: parsed.client || {}
+    };
+  } catch {
+    return { basic: {}, config: {}, client: {} };
+  }
+}
+
+function resolveNodeEndpoint(node: any) {
+  const { config, client, basic } = parseNodeConfig(node);
+  const server = client.server || '';
+  const port = client.port || config.port || 443;
+  const tlsHost = client.tls_host || config.host || server;
+  return {
+    server,
+    port,
+    tlsHost,
+    config,
+    client,
+    basic
+  };
+}
+
 /**
  * 生成 V2Ray 订阅配置
  * @param {Array} nodes - 节点列表
@@ -12,28 +40,25 @@ export function generateV2rayConfig(nodes, user) {
   const links = [];
 
   for (const node of nodes) {
-    const nodeConfig = JSON.parse(node.node_config || "{}");
-    const config = nodeConfig.config || nodeConfig; // 兼容两种格式
-    const client = nodeConfig.client || {};
-    const server = client.server || node.server;
-    const port = client.port || config.port || node.server_port;
-    const tlsHost = client.tls_host || node.tls_host || config.host;
+    const endpoint = resolveNodeEndpoint(node);
+    const nodeResolved = { ...node, server: endpoint.server, server_port: endpoint.port, tls_host: endpoint.tlsHost };
+    const config = endpoint.config;
 
     switch (node.type) {
       case "v2ray":
-        links.push(generateVmessLink(node, config, user));
+        links.push(generateVmessLink(nodeResolved, config, user));
         break;
       case "vless":
-        links.push(generateVlessLink(node, config, user));
+        links.push(generateVlessLink(nodeResolved, config, user));
         break;
       case "trojan":
-        links.push(generateTrojanLink(node, config, user));
+        links.push(generateTrojanLink(nodeResolved, config, user));
         break;
       case "ss":
-        links.push(generateShadowsocksLink(node, config, user));
+        links.push(generateShadowsocksLink(nodeResolved, config, user));
         break;
       case "hysteria":
-        links.push(generateHysteriaLink(node, config, user));
+        links.push(generateHysteriaLink(nodeResolved, config, user));
         break;
     }
   }
@@ -147,7 +172,7 @@ function generateHysteriaLink(node, config, user) {
 
   params.set("protocol", "udp");
   params.set("auth", user.passwd);
-  params.set("peer", node.server);
+  params.set("peer", node.tls_host || node.server);
   params.set("insecure", "1");
   params.set("upmbps", config.up_mbps || "100");
   params.set("downmbps", config.down_mbps || "100");
@@ -172,8 +197,7 @@ export function generateClashConfig(nodes, user) {
   const proxyNames = [];
 
   for (const node of nodes) {
-    const nodeConfig = JSON.parse(node.node_config || "{}");
-    const config = nodeConfig.config || nodeConfig; // 兼容两种格式
+    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
     let proxy = null;
 
     switch (node.type) {
@@ -181,8 +205,8 @@ export function generateClashConfig(nodes, user) {
         proxy = {
           name: node.name,
           type: "vmess",
-          server: node.server,
-          port: node.server_port,
+          server,
+          port,
           uuid: user.uuid,
           alterId: config.aid || 0,
           cipher: "auto",
@@ -193,8 +217,8 @@ export function generateClashConfig(nodes, user) {
 
         // 添加 TLS 相关配置
         if (config.tls_type === "tls") {
-          if (node.tls_host || config.sni) {
-            proxy.servername = node.tls_host || config.sni;
+          if (tlsHost || config.sni) {
+            proxy.servername = tlsHost || config.sni;
           }
           if (config.alpn) {
             proxy.alpn = config.alpn.split(',');
@@ -205,7 +229,7 @@ export function generateClashConfig(nodes, user) {
         if (config.stream_type === "ws") {
           proxy["ws-opts"] = {
             path: config.path || "/",
-            headers: { Host: node.tls_host || config.server || node.server },
+            headers: { Host: tlsHost || config.server || server },
           };
         } 
         // gRPC 配置
@@ -233,8 +257,8 @@ export function generateClashConfig(nodes, user) {
         proxy = {
           name: node.name,
           type: "vless",
-          server: node.server,
-          port: node.server_port,
+          server,
+          port,
           uuid: user.uuid,
           tls: config.tls_type === "tls" || config.tls_type === "reality",
           "skip-cert-verify": true,
@@ -243,8 +267,8 @@ export function generateClashConfig(nodes, user) {
 
         // TLS 配置
         if (config.tls_type === "tls") {
-          if (node.tls_host || config.sni) {
-            proxy.servername = node.tls_host || config.sni;
+          if (tlsHost || config.sni) {
+            proxy.servername = tlsHost || config.sni;
           }
           if (config.alpn) {
             proxy.alpn = config.alpn.split(',');
@@ -271,7 +295,7 @@ export function generateClashConfig(nodes, user) {
         if (config.stream_type === "ws") {
           proxy["ws-opts"] = {
             path: config.path || "/",
-            headers: { Host: node.tls_host || config.server || node.server },
+            headers: { Host: tlsHost || config.server || server },
           };
         }
         // gRPC 配置
@@ -286,11 +310,11 @@ export function generateClashConfig(nodes, user) {
         proxy = {
           name: node.name,
           type: "trojan",
-          server: node.server,
-          port: node.server_port,
+          server,
+          port,
           password: user.passwd,
           "skip-cert-verify": true,
-          sni: node.tls_host || config.sni || node.server,
+          sni: tlsHost || config.sni || server,
         };
 
         // 添加 WebSocket 支持
@@ -299,7 +323,7 @@ export function generateClashConfig(nodes, user) {
           proxy["ws-opts"] = {
             path: config.path || "/",
             headers: {
-              Host: node.tls_host || config.sni || node.server
+              Host: tlsHost || config.sni || server
             }
           };
         }
@@ -317,8 +341,8 @@ export function generateClashConfig(nodes, user) {
         proxy = {
           name: node.name,
           type: "ss",
-          server: node.server,
-          port: node.server_port,
+          server,
+          port,
           cipher: config.cipher || "aes-128-gcm",
           password: user.passwd,
           udp: true,
@@ -329,7 +353,7 @@ export function generateClashConfig(nodes, user) {
           proxy.plugin = "obfs";
           proxy["plugin-opts"] = {
             mode: config.obfs === "simple_obfs_http" ? "http" : "tls",
-            host: node.tls_host || config.server || "bing.com",
+            host: tlsHost || config.server || "bing.com",
           };
         }
         break;
@@ -338,15 +362,15 @@ export function generateClashConfig(nodes, user) {
         proxy = {
           name: node.name,
           type: "hysteria2",
-          server: node.server,
-          port: node.server_port,
+          server,
+          port,
           password: user.passwd,
           "skip-cert-verify": true,
         };
 
         // 添加 SNI 配置
-        if (node.tls_host || config.sni) {
-          proxy.sni = node.tls_host || config.sni;
+        if (tlsHost || config.sni) {
+          proxy.sni = tlsHost || config.sni;
         }
 
         // 添加混淆配置
@@ -393,8 +417,7 @@ export function generateQuantumultXConfig(nodes, user) {
   const entries = [];
 
   for (const node of nodes) {
-    const nodeConfig = JSON.parse(node.node_config || "{}");
-    const config = nodeConfig.config || nodeConfig; // 兼容两种格式
+    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
     let line = "";
 
     switch (node.type) {
@@ -577,24 +600,24 @@ export function generateShadowrocketConfig(nodes, user) {
   const links = [];
 
   for (const node of nodes) {
-    const nodeConfig = JSON.parse(node.node_config || "{}");
-    const config = nodeConfig.config || nodeConfig;
+    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const nodeResolved = { ...node, server, server_port: port, tls_host: tlsHost };
 
-    switch (node.type) {
+    switch (nodeResolved.type) {
       case "v2ray":
-        links.push(generateVmessLink(node, config, user));
+        links.push(generateVmessLink(nodeResolved, config, user));
         break;
       case "vless":
-        links.push(generateVlessLink(node, config, user));
+        links.push(generateVlessLink(nodeResolved, config, user));
         break;
       case "trojan":
-        links.push(generateTrojanLink(node, config, user));
+        links.push(generateTrojanLink(nodeResolved, config, user));
         break;
       case "ss":
-        links.push(generateShadowsocksLink(node, config, user));
+        links.push(generateShadowsocksLink(nodeResolved, config, user));
         break;
       case "hysteria":
-        links.push(generateHysteriaLink(node, config, user));
+        links.push(generateHysteriaLink(nodeResolved, config, user));
         break;
     }
   }
@@ -613,42 +636,41 @@ export function generateSurgeConfig(nodes, user) {
   const proxyNames = [];
 
   for (const node of nodes) {
-    const nodeConfig = JSON.parse(node.node_config || "{}");
-    const config = nodeConfig.config || nodeConfig;
+    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
     let proxy = "";
 
     switch (node.type) {
       case "v2ray":
-        proxy = `${node.name} = vmess, ${node.server}, ${node.server_port}, username=${user.uuid}`;
+        proxy = `${node.name} = vmess, ${server}, ${port}, username=${user.uuid}`;
         if (config.tls_type === "tls") {
           proxy += ", tls=true, skip-cert-verify=true";
-          if (config.sni) proxy += `, sni=${config.sni}`;
+          if (tlsHost || config.sni) proxy += `, sni=${tlsHost || config.sni}`;
         }
         if (config.stream_type === "ws") {
           proxy += `, ws=true, ws-path=${config.path || "/"}`;
-          if (config.server) proxy += `, ws-headers=Host:${config.server}`;
+          if (config.server || tlsHost) proxy += `, ws-headers=Host:${config.server || tlsHost}`;
         }
         break;
 
       case "trojan":
-        proxy = `${node.name} = trojan, ${node.server}, ${node.server_port}, password=${user.passwd}`;
+        proxy = `${node.name} = trojan, ${server}, ${port}, password=${user.passwd}`;
         proxy += ", tls=true, skip-cert-verify=true";
-        if (config.sni) proxy += `, sni=${config.sni}`;
+        if (tlsHost || config.sni) proxy += `, sni=${tlsHost || config.sni}`;
         break;
 
       case "ss":
-        proxy = `${node.name} = ss, ${node.server}, ${node.server_port}, encrypt-method=${config.cipher || "aes-128-gcm"}, password=${user.passwd}`;
+        proxy = `${node.name} = ss, ${server}, ${port}, encrypt-method=${config.cipher || "aes-128-gcm"}, password=${user.passwd}`;
         if (config.obfs && config.obfs !== "plain") {
           const obfsMode = config.obfs === "simple_obfs_http" ? "http" : "tls";
           proxy += `, obfs=${obfsMode}`;
-          if (config.server) proxy += `, obfs-host=${config.server}`;
+          if (config.server || tlsHost) proxy += `, obfs-host=${config.server || tlsHost}`;
         }
         break;
 
       case "hysteria":
-        proxy = `${node.name} = hysteria2, ${node.server}, ${node.server_port}, password=${user.passwd}`;
+        proxy = `${node.name} = hysteria2, ${server}, ${port}, password=${user.passwd}`;
         proxy += ", skip-cert-verify=true";
-        if (config.sni) proxy += `, sni=${config.sni}`;
+        if (tlsHost || config.sni) proxy += `, sni=${tlsHost || config.sni}`;
         break;
     }
 
