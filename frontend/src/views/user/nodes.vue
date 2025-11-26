@@ -430,11 +430,11 @@ const parseNodeConfigSafe = (node: any) => {
 
 const resolveConnectionInfo = (node: any) => {
   const { basic, config, client } = parseNodeConfigSafe(node);
-  const server = client.server || node.server || '';
-  const rawPort = client.port || config.port || node.server_port;
+  const server = client.server || '';
+  const rawPort = client.port || config.port;
   const numericPort = Number(rawPort);
-  const port = Number.isFinite(numericPort) && numericPort > 0 ? numericPort : 443;
-  const tlsHost = client.tls_host || node.tls_host || config.host || client.server || server;
+  const port = Number.isFinite(numericPort) && numericPort > 0 ? numericPort : '';
+  const tlsHost = client.tls_host || config.host || client.server || server;
   return { basic, config, client, server, port, tlsHost };
 };
 

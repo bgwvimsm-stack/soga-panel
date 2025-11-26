@@ -918,9 +918,9 @@ const parseNodeConfigSafe = (node: any) => {
 
 const resolveClientInfo = (row: any) => {
   const { config, client } = parseNodeConfigSafe(row);
-  const server = client.server || row.server || '';
-  const port = client.port || config.port || row.server_port || '';
-  const tlsHost = client.tls_host || row.tls_host || config.host || server;
+  const server = client.server || '';
+  const port = client.port || config.port || '';
+  const tlsHost = client.tls_host || config.host || client.server || server;
   return { server, port, tlsHost };
 };
 
