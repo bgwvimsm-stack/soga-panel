@@ -1435,9 +1435,9 @@ export class AdminAPI {
       const params: Array<string | number> = [];
 
       if (keyword) {
-        conditions.push("(name LIKE ? OR server LIKE ?)");
+        conditions.push("(name LIKE ?)");
         const keywordPattern = `%${keyword}%`;
-        params.push(keywordPattern, keywordPattern);
+        params.push(keywordPattern);
       }
 
       if (statusParam !== null && statusParam !== undefined && statusParam !== "") {
@@ -1448,7 +1448,7 @@ export class AdminAPI {
 
       const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
-      const totalRow = await this.db.db
+    const totalRow = await this.db.db
         .prepare(`SELECT COUNT(*) as total FROM nodes ${whereClause}`)
         .bind(...params)
         .first<CountRow>();
@@ -1462,9 +1462,6 @@ export class AdminAPI {
           id,
           name,
           type,
-          server,
-          server_port,
-          tls_host,
           node_class,
           node_bandwidth,
           node_bandwidth_limit,
@@ -1484,16 +1481,23 @@ export class AdminAPI {
         .all<Record<string, unknown>>();
 
       const nodes = nodesResult.results ?? [];
-      const formattedNodes = nodes.map((node) => ({
-        ...node,
-        node_class: ensureNumber(node.node_class),
-        node_bandwidth: ensureNumber(node.node_bandwidth),
-        node_bandwidth_limit: ensureNumber(node.node_bandwidth_limit),
-        traffic_multiplier: ensureNumber(node.traffic_multiplier, 1),
-        bandwidthlimit_resetday: ensureNumber(node.bandwidthlimit_resetday, 1),
-        server_port: ensureNumber(node.server_port),
-        status: ensureNumber(node.status),
-      }));
+      const formattedNodes = nodes.map((node) => {
+        const parsed = this.parseNodeConfig(node.node_config);
+        const client = parsed.client || {};
+        const cfg = parsed.config || {};
+        return {
+          ...node,
+          server: client.server || "",
+          server_port: ensureNumber(client.port || cfg.port || 443),
+          tls_host: client.tls_host || cfg.host || "",
+          node_class: ensureNumber(node.node_class),
+          node_bandwidth: ensureNumber(node.node_bandwidth),
+          node_bandwidth_limit: ensureNumber(node.node_bandwidth_limit),
+          traffic_multiplier: ensureNumber(node.traffic_multiplier, 1),
+          bandwidthlimit_resetday: ensureNumber(node.bandwidthlimit_resetday, 1),
+          status: ensureNumber(node.status),
+        };
+      });
 
       return successResponse({
         data: formattedNodes,
@@ -1537,6 +1541,19 @@ export class AdminAPI {
     }
   }
 
+  private parseNodeConfig(raw: unknown) {
+    try {
+      const parsed = typeof raw === "string" ? JSON.parse(raw || "{}") : (raw || {});
+      return {
+        basic: (parsed as any).basic || {},
+        config: (parsed as any).config || (parsed as any) || {},
+        client: (parsed as any).client || {}
+      };
+    } catch {
+      return { basic: {}, config: {}, client: {} };
+    }
+  }
+
   // 重置节点流量
   async resetNodeTraffic(request) {
     try {
@@ -1571,8 +1588,8 @@ export class AdminAPI {
       }
 
       const nodes = await this.db.db.prepare(`
-        SELECT name, type, server, server_port, node_class, status, node_bandwidth, node_bandwidth_limit,
-               traffic_multiplier, bandwidthlimit_resetday, created_at, updated_at
+        SELECT name, type, node_class, status, node_bandwidth, node_bandwidth_limit,
+               traffic_multiplier, bandwidthlimit_resetday, node_config, created_at, updated_at
         FROM nodes
         ORDER BY id DESC
       `).all();
@@ -1586,11 +1603,14 @@ export class AdminAPI {
       let csv = headers.join(',') + '\n';
 
       for (const node of nodes.results) {
+        const parsed = this.parseNodeConfig(node.node_config);
+        const client = parsed.client || {};
+        const cfg = parsed.config || {};
         const row = [
           node.name || '',
           node.type || '',
-          node.server || '',
-          node.server_port || 0,
+          client.server || '',
+          client.port || cfg.port || 0,
           node.node_class || 0,
           node.status === 1 ? 'Online' : 'Offline',
           node.node_bandwidth || 0,
@@ -1625,21 +1645,16 @@ export class AdminAPI {
       const nodeData = await request.json();
 
       // 验证必填字段
-      if (
-        !nodeData.name ||
-        !nodeData.type ||
-        !nodeData.server ||
-        !nodeData.server_port
-      ) {
-        return errorResponse("Name, type, server and server_port are required", 400);
+      if (!nodeData.name || !nodeData.type) {
+        return errorResponse("Name and type are required", 400);
       }
 
       const stmt = this.db.db.prepare(`
         INSERT INTO nodes (
-          name, type, server, server_port, tls_host, node_class, 
+          name, type, node_class, 
           node_bandwidth_limit, traffic_multiplier, bandwidthlimit_resetday,
           node_config, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       // 处理节点配置，避免双重JSON编码
@@ -1664,9 +1679,6 @@ export class AdminAPI {
         .bind(
           nodeData.name,
           nodeData.type,
-          nodeData.server,
-          nodeData.server_port,
-          nodeData.tls_host || '',
           nodeData.node_class || 1,
           nodeData.node_bandwidth_limit || 0,
           nodeData.traffic_multiplier && Number(nodeData.traffic_multiplier) > 0
@@ -1713,9 +1725,6 @@ export class AdminAPI {
       const allowedFields = [
         "name",
         "type",
-        "server",
-        "server_port",
-        "tls_host",
         "node_class",
         "node_bandwidth_limit",
         "traffic_multiplier",
@@ -1787,7 +1796,15 @@ export class AdminAPI {
         "SELECT * FROM nodes WHERE id = ?"
       ).bind(nodeId).first();
 
-      return successResponse(updatedNode);
+      const parsed = this.parseNodeConfig(updatedNode?.node_config);
+      const client = parsed.client || {};
+      const cfg = parsed.config || {};
+      return successResponse({
+        ...updatedNode,
+        server: client.server || "",
+        server_port: client.port || cfg.port || 443,
+        tls_host: client.tls_host || cfg.host || ""
+      });
     } catch (error) {
       return errorResponse(error.message, 500);
     }

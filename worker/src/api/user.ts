@@ -377,15 +377,15 @@ export class UserAPI {
       // 获取节点统计信息
       const nodeStats = await this.getNodeStatistics(userClass);
 
-      // 处理节点配置
       const processedNodes = await Promise.all(nodes.map(async (node) => {
-        const parsedConfig = JSON.parse(toString(node.node_config, "{}"));
+        const parsedConfig = this.safeParseNodeConfig(node.node_config);
         const cfg = (parsedConfig as any)?.config || parsedConfig || {};
         const client = (parsedConfig as any)?.client || {};
         const resolvedServer = client.server || '';
         const resolvedPort = client.port || cfg.port || 443;
         const resolvedTlsHost = client.tls_host || cfg.host || '';
-        
+        const configForClient = parsedConfig || {};
+
         // 检查节点是否在线（5分钟内有状态更新）
         const isOnline = await this.checkNodeOnlineStatus(node.id);
 
@@ -422,7 +422,7 @@ export class UserAPI {
           traffic_multiplier: node.traffic_multiplier ?? 1,
           status: node.status,
           node_config: node.node_config,
-          config: config,
+          config: configForClient,
           created_at: node.created_at,
           updated_at: node.updated_at,
           // 用户在该节点的流量使用情况
@@ -514,6 +514,16 @@ export class UserAPI {
         offline: 0,
         accessible: 0
       };
+    }
+  }
+
+  private safeParseNodeConfig(raw: unknown) {
+    try {
+      const parsed = typeof raw === "string" ? JSON.parse(raw || "{}") : (raw || {});
+      return parsed;
+    } catch (error) {
+      console.warn("parse node_config failed, using empty config:", error);
+      return {};
     }
   }
 
