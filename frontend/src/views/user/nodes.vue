@@ -413,15 +413,13 @@ const wrapIPv6Host = (host: string): string => {
 
 const parseNodeConfigSafe = (node: any) => {
   try {
-    if (!node?.node_config || node.node_config === 'undefined') {
-      return { basic: {}, config: {}, client: {} };
-    }
-    const parsed = JSON.parse(node.node_config);
-    return {
-      basic: parsed.basic || {},
-      config: parsed.config || parsed || {},
-      client: parsed.client || {}
-    };
+    const raw = node?.node_config;
+    if (!raw || raw === 'undefined') return { basic: {}, config: {}, client: {} };
+    const parsed = typeof raw === 'string' ? (raw.trim() ? JSON.parse(raw) : {}) : raw;
+    const basic = (parsed as any).basic || {};
+    const config = (parsed as any).config || (parsed as any) || {};
+    const client = (parsed as any).client || {};
+    return { basic, config, client };
   } catch (error) {
     console.warn('解析节点配置失败，返回默认配置', error);
     return { basic: {}, config: {}, client: {} };
