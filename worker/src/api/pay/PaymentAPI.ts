@@ -6,8 +6,8 @@ import { DatabaseService } from "../../services/database";
 import { CouponService } from "../../services/couponService";
 import { errorResponse, successResponse } from "../../utils/response";
 import { getLogger, type Logger } from "../../utils/logger";
-import { PaymentProviderFactory } from "./PaymentProviderFactory";
-import type { PaymentProvider, PaymentCreateResult, PaymentParams } from "./types";
+import { PaymentProviderFactory, type MethodProviderMap, type PaymentMethod } from "./PaymentProviderFactory";
+import type { PaymentParams } from "./types";
 import { ensureNumber, ensureString, getChanges, toRunResult } from "../../utils/d1";
 import { ReferralService } from "../../services/referralService";
 import { createSystemConfigManager, type SystemConfigManager } from "../../utils/systemConfig";
@@ -20,6 +20,7 @@ interface RechargeRecordRow {
   user_id: number;
   amount?: number;
   price?: number;
+  payment_method?: string | null;
   created_at?: string;
 }
 
@@ -76,8 +77,8 @@ export class PaymentAPI {
   private readonly db: DatabaseService;
   private readonly dbRaw: D1Database;
   private readonly logger: Logger;
-  private readonly currentProvider: string;
-  private readonly paymentProvider: PaymentProvider | null;
+  private readonly methodProviders: MethodProviderMap;
+  private readonly defaultPaymentMethod: PaymentMethod | null;
   private readonly couponService: CouponService;
   private readonly configManager: SystemConfigManager;
   private readonly referralService: ReferralService;
@@ -91,43 +92,139 @@ export class PaymentAPI {
     this.configManager = createSystemConfigManager(env);
     this.referralService = new ReferralService(this.db, this.configManager, this.logger);
 
-    this.currentProvider = ensureString(env.PAYMENT_PROVIDER) || "epay";
+    this.methodProviders = PaymentProviderFactory.createMethodProviderMap(env, this.logger);
+    this.defaultPaymentMethod = PaymentProviderFactory.getDefaultMethod(this.methodProviders);
+  }
 
-    try {
-      this.paymentProvider = PaymentProviderFactory.createProvider(
-        this.currentProvider,
-        env
-      );
-    } catch (error) {
-      this.logger.error("支付提供者初始化失败", error);
-      this.paymentProvider = null;
+  private getActiveMethodProviders() {
+    return Object.entries(this.methodProviders)
+      .map(([method, info]) => ({
+        method: method as PaymentMethod,
+        providerType: info.providerType,
+        provider: info.provider
+      }))
+      .filter((item) => item.provider.isConfigured());
+  }
+
+  private pickDefaultMethod(): PaymentMethod | null {
+    const preferred = this.defaultPaymentMethod;
+    if (preferred) {
+      const matched = PaymentProviderFactory.getProviderByMethod(preferred, this.methodProviders);
+      if (matched?.provider.isConfigured()) {
+        return matched.method;
+      }
     }
+
+    const active = this.getActiveMethodProviders();
+    return active.length > 0 ? active[0].method : null;
+  }
+
+  private getProviderForMethod(method?: string | null, allowFallback = true) {
+    const matched = PaymentProviderFactory.getProviderByMethod(method, this.methodProviders);
+    if (matched && matched.provider.isConfigured()) {
+      return matched;
+    }
+
+    if (!allowFallback) {
+      return null;
+    }
+
+    const fallbackMethod = this.pickDefaultMethod();
+    if (!fallbackMethod) return null;
+
+    const fallback = PaymentProviderFactory.getProviderByMethod(
+      fallbackMethod,
+      this.methodProviders
+    );
+    if (fallback && fallback.provider.isConfigured()) {
+      return fallback;
+    }
+
+    return null;
+  }
+
+  private extractPaymentMethod(orderInfo: OrderLookupResult): PaymentMethod | null {
+    if (!orderInfo.found || !orderInfo.data) return null;
+
+    if (orderInfo.type === "recharge") {
+      const record = orderInfo.data as RechargeRecordRow;
+      return PaymentProviderFactory.normalizeMethod(ensureString(record.payment_method));
+    }
+
+    if (orderInfo.type === "purchase") {
+      const record = orderInfo.data as PurchaseRecordRow;
+      const purchaseType = ensureString(record.purchase_type);
+      if (purchaseType.startsWith("balance_")) {
+        return PaymentProviderFactory.normalizeMethod(purchaseType.replace("balance_", ""));
+      }
+      return PaymentProviderFactory.normalizeMethod(purchaseType);
+    }
+
+    return null;
+  }
+
+  private resolveProviderForOrder(orderInfo: OrderLookupResult, requestedMethod?: string | null) {
+    const methodFromParams = PaymentProviderFactory.normalizeMethod(requestedMethod);
+    if (methodFromParams) {
+      return this.getProviderForMethod(methodFromParams, false);
+    }
+
+    const methodFromOrder = this.extractPaymentMethod(orderInfo);
+    if (methodFromOrder) {
+      return this.getProviderForMethod(methodFromOrder, false);
+    }
+
+    return this.getProviderForMethod(null, true);
   }
 
   // 获取支付配置
   async getPaymentConfig() {
     try {
       const availableProviders = PaymentProviderFactory.getAvailableProviders(this.env);
+      const activeProviders = this.getActiveMethodProviders();
 
-      if (!this.paymentProvider || !this.paymentProvider.isConfigured()) {
+      if (activeProviders.length === 0) {
         return successResponse({
           payment_methods: [],
           available_providers: availableProviders,
-          current_provider: this.currentProvider,
+          current_provider: null,
+          method_providers: {},
           enabled: false,
           message: "支付功能未配置或配置不完整"
         });
       }
 
-      const availableMethods =
-        ensureString((this.env as Record<string, unknown>).EPAY_PAYMENT_METHODS) ||
-        "alipay,wxpay";
-      const paymentMethods = this.paymentProvider.getSupportedMethods(availableMethods);
+      const paymentMethods = activeProviders.map(({ method, providerType, provider }) => {
+        const option =
+          provider
+            .getSupportedMethods(method)
+            .find(
+              (item) =>
+                item.value === method ||
+                (method === "wxpay" && item.value === "wechat")
+            ) ??
+          {
+            value: method,
+            label: method === "alipay" ? "支付宝" : "微信支付",
+            icon: method === "alipay" ? "CreditCard" : "Money"
+          };
+
+        return { ...option, provider: providerType };
+      });
+
+      const methodProviderMap = activeProviders.reduce<Record<string, string>>(
+        (acc, item) => {
+          acc[item.method] = item.providerType;
+          return acc;
+        },
+        {}
+      );
 
       return successResponse({
         payment_methods: paymentMethods,
         available_providers: availableProviders,
-        current_provider: this.currentProvider,
+        current_provider: paymentMethods.length === 1 ? paymentMethods[0].provider : "multiple",
+        method_providers: methodProviderMap,
         enabled: true
       });
     } catch (error) {
@@ -143,10 +240,6 @@ export class PaymentAPI {
     request: Request | null = null
   ) {
     try {
-      if (!this.paymentProvider) {
-        return { code: 1, message: "支付服务未配置" };
-      }
-
       if (!tradeNo) {
         return { code: 1, message: "缺少交易号" };
       }
@@ -176,12 +269,28 @@ export class PaymentAPI {
         return { code: 1, message: "订单不存在或状态异常" };
       }
 
+      const provider = this.resolveProviderForOrder(
+        orderInfo,
+        paymentParams.payment_method
+      );
+
+      if (!provider) {
+        return { code: 1, message: "支付通道未配置，请联系管理员" };
+      }
+
+      const normalizedMethod =
+        PaymentProviderFactory.normalizeMethod(paymentParams.payment_method) ??
+        this.extractPaymentMethod(orderInfo) ??
+        provider.method;
+
+      paymentParams.payment_method = normalizedMethod ?? paymentParams.payment_method;
+
       // 创建支付订单，传递支付参数（如 payment_method, return_url）
       const orderPayload: Record<string, unknown> = orderInfo.data
         ? { ...(orderInfo.data as any) }
         : {};
 
-      const result = await this.paymentProvider.createPayment(
+      const result = await provider.provider.createPayment(
         orderPayload,
         orderInfo.type ?? "recharge",
         paymentParams
@@ -203,12 +312,11 @@ export class PaymentAPI {
   // 创建支付订单（HTTP接口，保持向后兼容）
   async createPayment(request) {
     try {
-      if (!this.paymentProvider) {
-        return errorResponse("支付服务未配置", 500);
-      }
-
       const url = new URL(request.url);
       const tradeNo = ensureString(url.searchParams.get('trade_no'));
+      const paymentMethod = PaymentProviderFactory.normalizeMethod(
+        ensureString(url.searchParams.get("payment_method"))
+      );
 
       if (!tradeNo) {
         return errorResponse("缺少交易号", 400);
@@ -221,14 +329,23 @@ export class PaymentAPI {
         return errorResponse("订单不存在或状态异常", 404);
       }
 
+      const provider = this.resolveProviderForOrder(orderInfo, paymentMethod);
+      if (!provider) {
+        return errorResponse("支付通道未配置，请联系管理员", 500);
+      }
+
+      const normalizedMethod =
+        paymentMethod ?? this.extractPaymentMethod(orderInfo) ?? provider.method;
+
       // 使用支付提供者创建支付订单
       const orderPayload: Record<string, unknown> = orderInfo.data
         ? { ...(orderInfo.data as any) }
         : {};
 
-      const paymentResult = await this.paymentProvider.createPayment(
+      const paymentResult = await provider.provider.createPayment(
         orderPayload,
-        orderInfo.type ?? "recharge"
+        orderInfo.type ?? "recharge",
+        normalizedMethod ? { payment_method: normalizedMethod } : undefined
       );
 
       return successResponse(paymentResult, "支付订单创建成功");
@@ -242,19 +359,36 @@ export class PaymentAPI {
   // 支付回调处理
   async paymentCallback(request) {
     try {
-      if (!this.paymentProvider) {
+      const body = await request.json();
+      const tradeNo =
+        ensureString(body?.out_trade_no) ||
+        ensureString(body?.trade_no) ||
+        ensureString(body?.tradeNo);
+
+      if (!tradeNo) {
         return new Response('fail');
       }
 
-      const body = await request.json();
+      const orderInfo = await this.findOrderInfo(tradeNo);
+      const methodFromOrder = this.extractPaymentMethod(orderInfo);
+      const provider =
+        this.resolveProviderForOrder(
+          orderInfo,
+          PaymentProviderFactory.normalizeMethod(ensureString(body?.type))
+        ) ?? (!methodFromOrder ? this.getProviderForMethod(null) : null);
+
+      if (!provider) {
+        this.logger.error("支付回调未找到可用的支付通道", { trade_no: tradeNo });
+        return new Response('fail');
+      }
 
       // 验证回调签名
-      if (!(await this.paymentProvider.verifyCallback(body))) {
+      if (!(await provider.provider.verifyCallback(body))) {
         return new Response('fail');
       }
 
       // 处理支付结果
-      const callbackResult = this.paymentProvider.processCallback(body);
+      const callbackResult = provider.provider.processCallback(body);
 
       if (callbackResult.success) {
         await this.processSuccessPayment(callbackResult.trade_no, callbackResult.amount);
@@ -273,10 +407,6 @@ export class PaymentAPI {
   // 支付通知处理（GET/POST方式）
   async paymentNotify(request) {
     try {
-      if (!this.paymentProvider) {
-        return new Response('fail');
-      }
-
       let params: Record<string, unknown> = {};
 
       if (request.method === 'GET') {
@@ -299,13 +429,26 @@ export class PaymentAPI {
         return new Response('fail');
       }
 
+      const orderInfo = await this.findOrderInfo(outTradeNo);
+      const methodFromOrder = this.extractPaymentMethod(orderInfo);
+      const provider =
+        this.resolveProviderForOrder(
+          orderInfo,
+          PaymentProviderFactory.normalizeMethod(ensureString(params.type))
+        ) ?? (!methodFromOrder ? this.getProviderForMethod(null) : null);
+
+      if (!provider) {
+        this.logger.error("支付通知未找到可用的支付通道", { trade_no: outTradeNo });
+        return new Response('fail');
+      }
+
       // 验证回调签名
-      if (!(await this.paymentProvider.verifyCallback(params))) {
+      if (!(await provider.provider.verifyCallback(params))) {
         return new Response('fail');
       }
 
       // 处理支付结果
-      const callbackResult = this.paymentProvider.processCallback(params);
+      const callbackResult = provider.provider.processCallback(params);
 
       if (callbackResult.success) {
         await this.processSuccessPayment(

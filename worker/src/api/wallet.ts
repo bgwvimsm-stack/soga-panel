@@ -3,14 +3,13 @@
 import type { Env } from "../types";
 import type { Logger } from "../utils/logger";
 import type { SystemConfigManager } from "../utils/systemConfig";
-import type { PaymentProvider } from "./pay/types";
 import { DatabaseService } from "../services/database";
 import { CouponService } from "../services/couponService";
 import { validateUserAuth } from "../middleware/auth";
 import { errorResponse, successResponse } from "../utils/response";
 import { getLogger } from "../utils/logger";
 import { createSystemConfigManager } from "../utils/systemConfig";
-import { PaymentProviderFactory } from "./pay/PaymentProviderFactory";
+import { PaymentProviderFactory, type MethodProviderMap, type PaymentMethod } from "./pay/PaymentProviderFactory";
 import { ensureNumber, ensureString, getLastRowId, toRunResult } from "../utils/d1";
 import { fixMoneyPrecision } from "../utils/money";
 import { GiftCardService, GiftCardType } from "../services/giftCardService";
@@ -86,6 +85,7 @@ type RechargeRecordEntity = {
   amount: number;
   status: number;
   trade_no: string;
+  payment_method?: string | null;
   package_price?: number;
   purchase_type?: string | null;
 };
@@ -144,7 +144,8 @@ export class WalletAPI {
   private readonly db: DatabaseService;
   private readonly logger: Logger;
   private readonly configManager: SystemConfigManager;
-  private readonly paymentProvider: PaymentProvider | null;
+  private readonly methodProviders: MethodProviderMap;
+  private readonly defaultPaymentMethod: PaymentMethod | null;
   private readonly couponService: CouponService;
   private readonly giftCardService: GiftCardService;
   private storeApiInstance: StoreAPI | null = null;
@@ -159,14 +160,50 @@ export class WalletAPI {
     this.giftCardService = new GiftCardService(this.db.db);
     this.referralService = new ReferralService(this.db, this.configManager, this.logger);
 
-    let provider: PaymentProvider | null = null;
-    try {
-      const providerType = (this.env.PAYMENT_PROVIDER as string) || "epay";
-      provider = PaymentProviderFactory.createProvider(providerType, this.env);
-    } catch (error) {
-      this.logger.error("初始化支付提供者失败", error);
+    this.methodProviders = PaymentProviderFactory.createMethodProviderMap(env, this.logger);
+    this.defaultPaymentMethod = PaymentProviderFactory.getDefaultMethod(this.methodProviders);
+  }
+
+  private getActiveMethodProviders() {
+    return Object.entries(this.methodProviders)
+      .map(([method, info]) => ({
+        method: method as PaymentMethod,
+        providerType: info.providerType,
+        provider: info.provider
+      }))
+      .filter((item) => item.provider.isConfigured());
+  }
+
+  private pickDefaultMethod(): PaymentMethod | null {
+    const preferred = this.defaultPaymentMethod;
+    if (preferred) {
+      const matched = PaymentProviderFactory.getProviderByMethod(preferred, this.methodProviders);
+      if (matched?.provider.isConfigured()) {
+        return matched.method;
+      }
     }
-    this.paymentProvider = provider;
+    const active = this.getActiveMethodProviders();
+    return active.length > 0 ? active[0].method : null;
+  }
+
+  private getProviderForMethod(method?: string | null, allowFallback = true) {
+    const matched = PaymentProviderFactory.getProviderByMethod(method, this.methodProviders);
+    if (matched && matched.provider.isConfigured()) {
+      return matched;
+    }
+    if (!allowFallback) {
+      return null;
+    }
+    const fallbackMethod = this.pickDefaultMethod();
+    if (!fallbackMethod) return null;
+    const fallback = PaymentProviderFactory.getProviderByMethod(
+      fallbackMethod,
+      this.methodProviders
+    );
+    if (fallback && fallback.provider.isConfigured()) {
+      return fallback;
+    }
+    return null;
   }
 
   private getStoreApi(): StoreAPI {
@@ -321,7 +358,19 @@ export class WalletAPI {
 
       const body = (await request.json()) as CreateRechargeBody;
       const amount = ensureNumber(body.amount);
-      const payment_method = ensureString(body.payment_method ?? 'alipay') || 'alipay';
+      const paymentMethodRaw = ensureString(body.payment_method ?? 'alipay') || 'alipay';
+      const normalizedPaymentMethod =
+        PaymentProviderFactory.normalizeMethod(paymentMethodRaw) || this.pickDefaultMethod();
+
+      if (!normalizedPaymentMethod) {
+        return errorResponse("支付通道未配置，请联系管理员", 500);
+      }
+
+      const provider = this.getProviderForMethod(normalizedPaymentMethod, false);
+      if (!provider) {
+        this.logger.error("未找到可用的支付通道", { payment_method: paymentMethodRaw });
+        return errorResponse("支付通道未配置，请联系管理员", 500);
+      }
 
       // 验证充值金额
       if (amount <= 0) {
@@ -341,7 +390,7 @@ export class WalletAPI {
           INSERT INTO recharge_records (user_id, amount, payment_method, trade_no, status)
           VALUES (?, ?, ?, ?, 0)
         `)
-        .bind(userId, amount, payment_method, trade_no)
+        .bind(userId, amount, normalizedPaymentMethod, trade_no)
         .run();
 
       if (!insertResult.success) {
@@ -351,19 +400,9 @@ export class WalletAPI {
       this.logger.info(`用户 ${user.email ?? "unknown"} 创建充值订单`, {
         user_id: userId,
         amount,
-        payment_method,
+        payment_method: normalizedPaymentMethod,
         trade_no
       });
-
-      if (!this.paymentProvider || !this.paymentProvider.isConfigured()) {
-        this.logger.error("支付提供者未正确配置", { provider: this.env.PAYMENT_PROVIDER });
-        // 删除充值记录
-        await this.db.db
-          .prepare("DELETE FROM recharge_records WHERE trade_no = ?")
-          .bind(trade_no)
-          .run();
-        return errorResponse("支付通道配置异常，请联系管理员", 500);
-      }
 
       let returnUrl = ensureString(this.env.EPAY_RETURN_URL, "").trim();
 
@@ -395,11 +434,11 @@ export class WalletAPI {
       }
 
       const paymentParams = {
-        payment_method,
+        payment_method: normalizedPaymentMethod,
         ...(returnUrl ? { return_url: returnUrl } : {})
       };
 
-      const paymentResult = await this.paymentProvider.createPayment(
+      const paymentResult = await provider.provider.createPayment(
         {
           trade_no,
           amount,
@@ -415,7 +454,7 @@ export class WalletAPI {
           user_id: userId,
           trade_no,
           amount,
-          payment_method,
+          payment_method: normalizedPaymentMethod,
           error: paymentResult?.message
         });
 
@@ -433,7 +472,7 @@ export class WalletAPI {
         {
           trade_no,
           amount,
-          payment_method,
+          payment_method: normalizedPaymentMethod,
           status: 0,
           status_text: '待支付',
           payment_url: paymentResult.pay_url,
@@ -469,24 +508,30 @@ export class WalletAPI {
         return errorResponse("缺少必要参数", 400);
       }
 
-      if (!this.paymentProvider || !this.paymentProvider.isConfigured()) {
-        this.logger.error("支付提供者未配置，无法验证回调");
+      const rechargeRecord = await this.db.db
+        .prepare("SELECT * FROM recharge_records WHERE trade_no = ?")
+        .bind(outTradeNo)
+        .first<RechargeRecordEntity>();
+
+      const provider =
+        this.getProviderForMethod(
+          rechargeRecord?.payment_method ??
+          PaymentProviderFactory.normalizeMethod(ensureString(params["type"])),
+          !rechargeRecord?.payment_method
+        );
+
+      if (!provider) {
+        this.logger.error("支付回调未找到可用的支付通道", { trade_no: outTradeNo });
         return new Response('fail');
       }
 
-      const verified = await this.paymentProvider.verifyCallback(params);
+      const verified = await provider.provider.verifyCallback(params);
       if (!verified) {
         this.logger.warn("易支付回调签名验证失败", { out_trade_no: outTradeNo });
         return new Response('fail');
       }
 
-      const callbackResult = this.paymentProvider.processCallback(params) as PaymentProviderResult;
-
-      // 查找充值记录
-      const rechargeRecord = await this.db.db
-        .prepare("SELECT * FROM recharge_records WHERE trade_no = ?")
-        .bind(outTradeNo)
-        .first<RechargeRecordEntity>();
+      const callbackResult = provider.provider.processCallback(params) as PaymentProviderResult;
 
       if (!rechargeRecord) {
         this.logger.error("充值记录不存在", { out_trade_no: outTradeNo });

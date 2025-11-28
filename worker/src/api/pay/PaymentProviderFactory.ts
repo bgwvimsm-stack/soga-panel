@@ -1,12 +1,19 @@
 import type { Env } from "../../types";
 import type { PaymentProvider } from "./types";
 import { EpayProvider } from "./epay/EpayProvider";
+import type { Logger } from "../../utils/logger";
 
 interface ProviderInfo {
   type: string;
   name: string;
   description: string;
 }
+
+export type PaymentMethod = "alipay" | "wxpay";
+
+export type MethodProviderMap = Partial<
+  Record<PaymentMethod, { providerType: string; provider: PaymentProvider }>
+>;
 
 export class PaymentProviderFactory {
   static createProvider(providerType: string, env: Env): PaymentProvider {
@@ -30,5 +37,86 @@ export class PaymentProviderFactory {
     }
 
     return providers;
+  }
+
+  static normalizeMethod(method: string | null | undefined): PaymentMethod | null {
+    const value = (method ?? "").toString().toLowerCase().trim();
+    if (!value) return null;
+    if (value === "wechat" || value === "wxpay") return "wxpay";
+    if (value === "alipay") return "alipay";
+    return null;
+  }
+
+  private static getMethodEnvKey(method: PaymentMethod): string {
+    return `PAYMENT_${method}`;
+  }
+
+  private static getMethodProviderType(
+    env: Env,
+    method: PaymentMethod
+  ): string | null {
+    const key = this.getMethodEnvKey(method);
+    const value =
+      (env as Record<string, unknown>)[key] ??
+      (env as Record<string, unknown>)[key.toUpperCase()];
+    if (typeof value !== "string") return null;
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || normalized === "none") return null;
+    return normalized;
+  }
+
+  static createMethodProviderMap(
+    env: Env,
+    logger?: Logger
+  ): MethodProviderMap {
+    const providerCache = new Map<string, PaymentProvider>();
+    const methodProviders: MethodProviderMap = {} as MethodProviderMap;
+    const methods: PaymentMethod[] = ["alipay", "wxpay"];
+
+    for (const method of methods) {
+      const providerType = this.getMethodProviderType(env, method);
+      if (!providerType) continue;
+
+      try {
+        let provider = providerCache.get(providerType);
+        if (!provider) {
+          provider = this.createProvider(providerType, env);
+          providerCache.set(providerType, provider);
+        }
+
+        methodProviders[method] = {
+          providerType,
+          provider,
+        };
+      } catch (error) {
+        logger?.error?.("初始化支付通道失败", { method, providerType, error });
+      }
+    }
+
+    return methodProviders;
+  }
+
+  static getDefaultMethod(methodProviders: MethodProviderMap): PaymentMethod | null {
+    if (methodProviders.alipay) return "alipay";
+    if (methodProviders.wxpay) return "wxpay";
+    const firstMethod = Object.keys(methodProviders)[0] as PaymentMethod | undefined;
+    return firstMethod ?? null;
+  }
+
+  static getProviderByMethod(
+    method: string | null | undefined,
+    methodProviders: MethodProviderMap
+  ):
+    | {
+        providerType: string;
+        provider: PaymentProvider;
+        method: PaymentMethod;
+      }
+    | null {
+    const normalizedMethod = this.normalizeMethod(method);
+    if (!normalizedMethod) return null;
+    const providerInfo = methodProviders[normalizedMethod];
+    if (!providerInfo) return null;
+    return { ...providerInfo, method: normalizedMethod };
   }
 }
