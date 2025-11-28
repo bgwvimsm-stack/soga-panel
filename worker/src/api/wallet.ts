@@ -404,7 +404,10 @@ export class WalletAPI {
         trade_no
       });
 
-      let returnUrl = ensureString(this.env.EPAY_RETURN_URL, "").trim();
+      const returnUrlEnv = normalizedPaymentMethod === "crypto"
+        ? ensureString(this.env.EPUSDT_RETURN_URL, "").trim()
+        : ensureString(this.env.EPAY_RETURN_URL, "").trim();
+      let returnUrl = returnUrlEnv;
 
       if (!returnUrl) {
         const originHeader = request.headers.get('Origin') || request.headers.get('Referer');
@@ -435,7 +438,10 @@ export class WalletAPI {
 
       const paymentParams = {
         payment_method: normalizedPaymentMethod,
-        ...(returnUrl ? { return_url: returnUrl } : {})
+        ...(returnUrl ? { return_url: returnUrl } : {}),
+        ...(normalizedPaymentMethod === "crypto" && this.env.EPUSDT_NOTIFY_URL
+          ? { notify_url: ensureString(this.env.EPUSDT_NOTIFY_URL) }
+          : {})
       };
 
       const paymentResult = await provider.provider.createPayment(

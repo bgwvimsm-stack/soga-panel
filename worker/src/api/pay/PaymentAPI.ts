@@ -278,9 +278,21 @@ export class PaymentAPI {
         return { code: 1, message: "支付通道未配置，请联系管理员" };
       }
 
-      const normalizedMethod =
+      const resolvedMethod =
         PaymentProviderFactory.normalizeMethod(paymentParams.payment_method) ??
         this.extractPaymentMethod(orderInfo) ??
+        provider.method;
+
+      if (!paymentParams.return_url) {
+        if (resolvedMethod === "crypto" && this.env.EPUSDT_RETURN_URL) {
+          paymentParams.return_url = ensureString(this.env.EPUSDT_RETURN_URL);
+        } else if (this.env.EPAY_RETURN_URL) {
+          paymentParams.return_url = ensureString(this.env.EPAY_RETURN_URL);
+        }
+      }
+
+      const normalizedMethod =
+        resolvedMethod ??
         provider.method;
 
       paymentParams.payment_method = normalizedMethod ?? paymentParams.payment_method;
@@ -359,11 +371,18 @@ export class PaymentAPI {
   // 支付回调处理
   async paymentCallback(request) {
     try {
-      const body = await request.json();
+      let body: Record<string, unknown> = {};
+      try {
+        body = await request.json();
+      } catch (e) {
+        const text = await request.text();
+        body = Object.fromEntries(new URLSearchParams(text));
+      }
       const tradeNo =
         ensureString(body?.out_trade_no) ||
         ensureString(body?.trade_no) ||
-        ensureString(body?.tradeNo);
+        ensureString(body?.tradeNo) ||
+        ensureString(body?.order_id);
 
       if (!tradeNo) {
         return new Response('fail');
@@ -392,7 +411,8 @@ export class PaymentAPI {
 
       if (callbackResult.success) {
         await this.processSuccessPayment(callbackResult.trade_no, callbackResult.amount);
-        return new Response('success');
+        const successBody = provider.providerType === "epusdt" ? "ok" : "success";
+        return new Response(successBody);
       } else {
         await this.processFailedPayment(callbackResult.trade_no);
         return new Response('fail');
@@ -455,7 +475,8 @@ export class PaymentAPI {
           callbackResult.trade_no,
           callbackResult.amount
         );
-        return new Response('success');
+        const successBody = provider.providerType === "epusdt" ? "ok" : "success";
+        return new Response(successBody);
       } else {
         await this.processFailedPayment(callbackResult.trade_no);
         return new Response('fail');

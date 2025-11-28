@@ -39,9 +39,10 @@ GITHUB_CLIENT_SECRET = "ABCDEFG123456"
 
 # ------------------------------------------------------------------------
 # 支付系统配置
-# 各支付方式对应的通道（支持：epay；不配置或为 none 时不启用）
+# 各支付方式对应的通道（支持：epay / epusdt；不配置或为 none 时不启用）
 PAYMENT_alipay = "none" # 例如 epay
 PAYMENT_wxpay = "none"  # 例如 epay
+PAYMENT_crypto = "none" # 例如 epusdt
 
 # 易支付配置
 EPAY_PID="114514"
@@ -50,6 +51,20 @@ EPAY_API_URL="http://localhost:3001"
 EPAY_NOTIFY_URL="http://localhost:18787/api/payment/notify"
 # 可不填，不填就按照前端地址跳转
 # EPAY_RETURN_URL="http://localhost:8848/user/wallet"
+
+# Epusdt 数字货币支付配置
+# API 地址（需指向 BEpusdt 服务）
+EPUSDT_API_URL="http://localhost:9000"
+# 签名 token（BEpusdt 配置中的 api token）
+EPUSDT_TOKEN="your_epusdt_token"
+# 回调通知地址
+EPUSDT_NOTIFY_URL="http://localhost:18787/api/payment/callback"
+# 支付完成跳转地址（可选）
+EPUSDT_RETURN_URL="http://localhost:8848/user/wallet"
+# 交易类型（默认 usdt.trc20）
+EPUSDT_TRADE_TYPE="usdt.trc20"
+# 订单超时时间（秒，>=60）
+EPUSDT_TIMEOUT=900
 
 # ------------------------------------------------------------------------
 # 邮件发送配置

@@ -1,6 +1,7 @@
 import type { Env } from "../../types";
 import type { PaymentProvider } from "./types";
 import { EpayProvider } from "./epay/EpayProvider";
+import { EpusdtProvider } from "./epusdt/EpusdtProvider";
 import type { Logger } from "../../utils/logger";
 
 interface ProviderInfo {
@@ -9,7 +10,7 @@ interface ProviderInfo {
   description: string;
 }
 
-export type PaymentMethod = "alipay" | "wxpay";
+export type PaymentMethod = "alipay" | "wxpay" | "crypto";
 
 export type MethodProviderMap = Partial<
   Record<PaymentMethod, { providerType: string; provider: PaymentProvider }>
@@ -20,6 +21,8 @@ export class PaymentProviderFactory {
     switch (providerType) {
       case "epay":
         return new EpayProvider(env);
+      case "epusdt":
+        return new EpusdtProvider(env);
       default:
         throw new Error(`不支持的支付提供者: ${providerType}`);
     }
@@ -36,6 +39,14 @@ export class PaymentProviderFactory {
       });
     }
 
+    if (env.EPUSDT_API_URL && env.EPUSDT_TOKEN) {
+      providers.push({
+        type: "epusdt",
+        name: "Epusdt",
+        description: "数字货币支付 (USDT)",
+      });
+    }
+
     return providers;
   }
 
@@ -44,6 +55,16 @@ export class PaymentProviderFactory {
     if (!value) return null;
     if (value === "wechat" || value === "wxpay") return "wxpay";
     if (value === "alipay") return "alipay";
+    if (
+      value === "crypto" ||
+      value === "usdt" ||
+      value === "usdt.trc20" ||
+      value === "usdt-trc20" ||
+      value === "usdt_trc20" ||
+      value === "trc20"
+    ) {
+      return "crypto";
+    }
     return null;
   }
 
@@ -71,7 +92,7 @@ export class PaymentProviderFactory {
   ): MethodProviderMap {
     const providerCache = new Map<string, PaymentProvider>();
     const methodProviders: MethodProviderMap = {} as MethodProviderMap;
-    const methods: PaymentMethod[] = ["alipay", "wxpay"];
+    const methods: PaymentMethod[] = ["alipay", "wxpay", "crypto"];
 
     for (const method of methods) {
       const providerType = this.getMethodProviderType(env, method);
@@ -99,6 +120,7 @@ export class PaymentProviderFactory {
   static getDefaultMethod(methodProviders: MethodProviderMap): PaymentMethod | null {
     if (methodProviders.alipay) return "alipay";
     if (methodProviders.wxpay) return "wxpay";
+    if (methodProviders.crypto) return "crypto";
     const firstMethod = Object.keys(methodProviders)[0] as PaymentMethod | undefined;
     return firstMethod ?? null;
   }
