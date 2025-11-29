@@ -202,7 +202,7 @@
             <el-radio-group v-model="purchaseForm.purchase_type">
               <!-- 当余额足够时显示余额支付 -->
               <el-radio
-                v-if="userBalance >= selectedPackage.price"
+                v-if="finalPriceDisplay <= 0 || userBalance >= selectedPackage.price"
                 value="balance"
               >
                 <div class="payment-option">
@@ -210,24 +210,15 @@
                   <span>余额支付</span>
                 </div>
               </el-radio>
-              <!-- 当余额不足时显示支付宝 -->
               <el-radio
-                v-if="userBalance < selectedPackage.price"
-                value="alipay"
+                v-for="method in paymentMethods"
+                :key="method.value"
+                v-if="finalPriceDisplay > 0"
+                :value="method.value"
               >
                 <div class="payment-option">
-                  <Alipay class="payment-icon" />
-                  <span>支付宝</span>
-                </div>
-              </el-radio>
-              <!-- 当余额不足时显示微信支付 -->
-              <el-radio
-                v-if="userBalance < selectedPackage.price"
-                value="wechat"
-              >
-                <div class="payment-option">
-                  <Wechat class="payment-icon" />
-                  <span>微信支付</span>
+                  <component :is="getPaymentIcon(method.value)" class="payment-icon" v-if="getPaymentIcon(method.value)" />
+                  <span>{{ method.label }}</span>
                 </div>
               </el-radio>
             </el-radio-group>
@@ -264,6 +255,7 @@ import {
 } from '@element-plus/icons-vue';
 import Alipay from '@/components/PaymentIcons/Alipay.vue';
 import Wechat from '@/components/PaymentIcons/Wechat.vue';
+import Crypto from '@/components/PaymentIcons/Crypto.vue';
 import http from '@/api/http';
 
 // 响应式数据
@@ -291,6 +283,10 @@ const purchaseForm = reactive({
   package_id: 0,
   purchase_type: 'balance'
 });
+const paymentMethods = ref<{ value: string; label: string }[]>([
+  { value: 'alipay', label: '支付宝' },
+  { value: 'wechat', label: '微信支付' }
+]);
 
 const couponCode = ref('');
 const couponInfo = ref<any>(null);
@@ -336,9 +332,20 @@ const syncPurchaseType = () => {
   }
   if (userBalance.value >= finalPriceDisplay.value) {
     purchaseForm.purchase_type = 'balance';
-  } else if (purchaseForm.purchase_type === 'balance') {
-    purchaseForm.purchase_type = 'alipay';
+  } else if (!paymentMethods.value.find((m) => m.value === purchaseForm.purchase_type)) {
+    purchaseForm.purchase_type = getPrimaryOnlineMethod();
   }
+};
+
+const getPrimaryOnlineMethod = () =>
+  paymentMethods.value[0]?.value || 'alipay';
+
+const getPaymentIcon = (method: string) => {
+  const key = method.toLowerCase();
+  if (key === 'alipay') return Alipay;
+  if (key === 'wechat' || key === 'wxpay') return Wechat;
+  if (key === 'crypto' || key === 'usdt') return Crypto;
+  return null;
 };
 
 // 加载用户余额
@@ -354,6 +361,27 @@ const loadUserBalance = async () => {
     }
   } catch (error) {
     console.error('加载用户余额失败:', error);
+  }
+};
+
+const loadPaymentMethods = async () => {
+  try {
+    const response = await http.get('/payment/config');
+    if (response.code === 0 && Array.isArray(response.data?.payment_methods)) {
+      const methods = response.data.payment_methods as Array<{ value: string; label: string }>;
+      if (methods.length > 0) {
+        paymentMethods.value = methods.map((item) => ({
+          value: item.value,
+          label: item.label || item.value
+        }));
+      }
+    }
+  } catch (error) {
+    console.error('获取支付方式失败:', error);
+  } finally {
+    if (!paymentMethods.value.find((m) => m.value === purchaseForm.purchase_type)) {
+      purchaseForm.purchase_type = getPrimaryOnlineMethod();
+    }
   }
 };
 
@@ -393,7 +421,9 @@ const showPurchaseDialog = async (pkg: any) => {
   await loadUserBalance();
 
   // 根据最新余额设置支付方式(余额需>=0.01才认为有余额)
-  purchaseForm.purchase_type = (userBalance.value >= 0.01 && userBalance.value >= pkg.price) ? 'balance' : 'alipay';
+  purchaseForm.purchase_type = (userBalance.value >= 0.01 && userBalance.value >= pkg.price)
+    ? 'balance'
+    : getPrimaryOnlineMethod();
   syncPurchaseType();
 
   showPurchaseDialogVisible.value = true;
@@ -519,6 +549,7 @@ const confirmPurchase = async () => {
 onMounted(() => {
   loadPackages();
   loadUserBalance();
+  loadPaymentMethods();
 });
 </script>
 

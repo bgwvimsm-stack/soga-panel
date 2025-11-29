@@ -180,13 +180,13 @@
         </el-form-item>
         <el-form-item label="支付方式" required>
           <el-radio-group v-model="rechargeForm.payment_method">
-            <el-radio value="alipay">
-              <Alipay class="payment-icon" />
-              支付宝
-            </el-radio>
-            <el-radio value="wechat">
-              <Wechat class="payment-icon" />
-              微信支付
+            <el-radio
+              v-for="method in paymentMethods"
+              :key="method.value"
+              :value="method.value"
+            >
+              <component :is="getPaymentIcon(method.value)" class="payment-icon" v-if="getPaymentIcon(method.value)" />
+              <span>{{ method.label }}</span>
             </el-radio>
           </el-radio-group>
         </el-form-item>
@@ -224,9 +224,10 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
-import { Wallet, CreditCard, ShoppingCart, Clock, Plus, Shop, ChatDotRound } from '@element-plus/icons-vue';
+import { Wallet, CreditCard, ShoppingCart, Clock, Plus, Shop, ChatDotRound, Coin } from '@element-plus/icons-vue';
 import Alipay from '@/components/PaymentIcons/Alipay.vue';
 import Wechat from '@/components/PaymentIcons/Wechat.vue';
+import Crypto from '@/components/PaymentIcons/Crypto.vue';
 import http from '@/api/http';
 import { redeemGiftCard } from '@/api/user';
 
@@ -253,6 +254,10 @@ const rechargeForm = reactive({
   amount: '',
   payment_method: 'alipay'
 });
+const paymentMethods = ref<{ value: string; label: string }[]>([
+  { value: 'alipay', label: '支付宝' },
+  { value: 'wechat', label: '微信支付' }
+]);
 
 const giftCardForm = reactive({
   code: ''
@@ -300,6 +305,8 @@ const getPaymentMethodText = (method: string) => {
     'alipay': '支付宝',
     'wechat': '微信',
     'wxpay': '微信',
+    'crypto': '数字货币',
+    'usdt': '数字货币',
     'balance': '余额支付',
     'gift_card': '礼品卡'
   };
@@ -314,6 +321,14 @@ const getStatusType = (status: number) => {
 const getStatusText = (status: number) => {
   const textMap: Record<number, string> = { 0: '待支付', 1: '已支付', 2: '已取消' };
   return textMap[status] || '未知';
+};
+
+const getPaymentIcon = (method: string) => {
+  const key = method.toLowerCase();
+  if (key === 'alipay') return Alipay;
+  if (key === 'wechat' || key === 'wxpay') return Wechat;
+  if (key === 'crypto' || key === 'usdt') return Crypto;
+  return null;
 };
 
 const getPurchaseStatusType = (status: number) => {
@@ -334,6 +349,7 @@ const getPurchaseTypeText = (type: string) => {
   if (normalized === 'direct') return '在线支付';
   if (normalized === 'alipay') return '支付宝';
   if (normalized === 'wechat' || normalized === 'wxpay') return '微信';
+  if (normalized === 'crypto' || normalized === 'usdt' || normalized === 'usdt.trc20') return '数字货币';
   if (normalized === 'qqpay') return 'QQ支付';
   if (normalized === 'gift_card') return '礼品卡';
   if (normalized.startsWith('balance_')) return '混合支付';
@@ -390,6 +406,7 @@ const getMixedPaymentMethodLabel = (type: string) => {
   const normalized = String(type);
   if (normalized.endsWith('alipay')) return '支付宝';
   if (normalized.endsWith('wxpay') || normalized.endsWith('wechat')) return '微信';
+  if (normalized.endsWith('crypto')) return '数字货币';
   if (normalized.endsWith('qqpay')) return 'QQ支付';
   return '在线支付';
 };
@@ -413,6 +430,7 @@ const getPaymentChipClass = (type: string) => {
   if (!normalized || normalized === 'balance') return 'chip-balance';
   if (normalized === 'alipay' || normalized.endsWith('alipay')) return 'chip-alipay';
   if (normalized === 'wechat' || normalized === 'wxpay' || normalized.endsWith('wxpay')) return 'chip-wechat';
+  if (normalized === 'crypto' || normalized.endsWith('crypto')) return 'chip-online';
   if (normalized === 'qqpay' || normalized.endsWith('qqpay')) return 'chip-qq';
   if (normalized === 'smart_topup' || normalized.startsWith('balance_')) return 'chip-mixed';
   if (normalized === 'gift_card') return 'chip-gift';
@@ -481,6 +499,27 @@ const loadPurchaseRecords = async () => {
     ElMessage.error('加载购买记录失败');
   } finally {
     purchaseLoading.value = false;
+  }
+};
+
+const loadPaymentMethods = async () => {
+  try {
+    const response = await http.get('/payment/config');
+    if (response.code === 0 && Array.isArray(response.data?.payment_methods)) {
+      const methods = response.data.payment_methods as Array<{ value: string; label: string }>;
+      if (methods.length > 0) {
+        paymentMethods.value = methods.map((m) => ({
+          value: m.value,
+          label: m.label || m.value
+        }));
+      }
+    }
+  } catch (error) {
+    console.error('获取支付方式失败:', error);
+  } finally {
+    if (!paymentMethods.value.find((m) => m.value === rechargeForm.payment_method)) {
+      rechargeForm.payment_method = paymentMethods.value[0]?.value || 'alipay';
+    }
   }
 };
 
@@ -573,6 +612,7 @@ const submitRecharge = async () => {
 onMounted(() => {
   loadBalanceInfo();
   loadRechargeRecords();
+  loadPaymentMethods();
 });
 </script>
 

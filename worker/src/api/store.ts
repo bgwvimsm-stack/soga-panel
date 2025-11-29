@@ -342,6 +342,16 @@ export class StoreAPI {
         if (lower === "wechat" || lower === "wxpay") return "wxpay";
         if (lower === "alipay") return "alipay";
         if (lower === "qqpay") return "qqpay";
+        if (
+          lower === "crypto" ||
+          lower === "usdt" ||
+          lower === "usdt.trc20" ||
+          lower === "usdt-trc20" ||
+          lower === "usdt_trc20" ||
+          lower === "trc20"
+        ) {
+          return "crypto";
+        }
         return lower;
       };
 
