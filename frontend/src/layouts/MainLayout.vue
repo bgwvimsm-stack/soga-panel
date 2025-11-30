@@ -404,11 +404,11 @@ watch(
 // 响应式设计
 // 移动端样式 - 使用全局样式确保优先级
 @media (max-width: 768px) {
-  // 禁用HTML和BODY的滚动
+  // 恢复移动端原生滚动，避免内容被锁定
   :global(html),
   :global(body) {
-    overflow: hidden !important;
-    height: 100% !important;
+    overflow: auto !important;
+    height: auto !important;
   }
 
   // 移动端el-scrollbar强制样式 - 针对WebKit优化
@@ -450,12 +450,13 @@ watch(
   }
 
   .layout-container {
-    height: 100%;
-    overflow: hidden;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
 
     .main-container {
       width: 100%;
-      height: 100%;
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
 
@@ -482,7 +483,7 @@ watch(
 
       .main-content {
         flex: 1;
-        overflow: hidden !important;
+        overflow: auto !important;
         position: relative;
         min-height: 0;
       }
