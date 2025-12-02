@@ -937,7 +937,7 @@ const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
     speed_limit: 0
   },
   config: {
-    port: type === 'anytls' ? 12345 : 443,
+    port: type === 'anytls' ? 443 : 443,
     ...(type === 'ss'
       ? { cipher: 'aes-128-gcm', obfs: 'plain' }
       : {}),
@@ -979,7 +979,7 @@ const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
   },
   client: {
     server: '',
-    port: type === 'anytls' ? 12345 : null,
+    port: type === 'anytls' ? 443 : null,
     tls_host: ''
   }
 });
