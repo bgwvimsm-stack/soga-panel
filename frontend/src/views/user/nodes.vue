@@ -371,6 +371,62 @@ const getNodeTypeName = (type: string) => {
   return nameMap[type?.toLowerCase()] || type?.toUpperCase() || 'Unknown';
 };
 
+const isSS2022Cipher = (cipher?: string) => {
+  if (!cipher) return false;
+  const lower = cipher.toLowerCase();
+  return lower.includes('2022-blake3');
+};
+
+const deriveSS2022UserKey = (cipher: string, userPassword: string) => {
+  const needs = cipher.toLowerCase().includes('aes-128') ? 16 : 32;
+  const decodeBase64 = (value: string) => {
+    try {
+      const cleaned = value.trim();
+      if (!cleaned) return null;
+      const decoded = atob(cleaned);
+      return Uint8Array.from(decoded, (c) => c.charCodeAt(0));
+    } catch {
+      return null;
+    }
+  };
+  const toUtf8 = (value: string) => {
+    try {
+      return new TextEncoder().encode(value);
+    } catch {
+      return Uint8Array.from([]);
+    }
+  };
+
+  let bytes = decodeBase64(userPassword) || toUtf8(userPassword);
+  if (!bytes || bytes.length === 0) {
+    bytes = Uint8Array.from([0]);
+  }
+
+  // 重复填充或截断到所需长度
+  const out = new Uint8Array(needs);
+  for (let i = 0; i < needs; i++) {
+    out[i] = bytes[i % bytes.length];
+  }
+
+  let binary = '';
+  out.forEach((b) => {
+    binary += String.fromCharCode(b);
+  });
+  return btoa(binary);
+};
+
+const buildSSPassword = (nodeConfig: any, userPassword: string) => {
+  const cipher = nodeConfig.cipher || nodeConfig.method || '';
+  const serverPassword = nodeConfig.password || '';
+  if (isSS2022Cipher(cipher)) {
+    const derivedUser = deriveSS2022UserKey(cipher, userPassword || serverPassword);
+    const parts = [serverPassword, derivedUser].filter(Boolean);
+    return parts.join(':');
+  }
+  // 非 SS2022 保持用户密码优先，缺省回退节点密码
+  return userPassword || serverPassword;
+};
+
 const formatTraffic = (bytes: number): string => {
   if (!bytes || bytes === 0) return '0 B';
   const k = 1024;
@@ -509,7 +565,7 @@ const nodeConfigJson = computed(() => {
           server,
           port: finalPort,
           cipher: nodeConfig.cipher || "aes-256-gcm",
-          password: userStore.user?.passwd || '',
+          password: buildSSPassword(nodeConfig, userStore.user?.passwd || ''),
           udp: true
         };
 
@@ -793,7 +849,7 @@ const generateTrojanUrl = (node: any, config: any): string => {
 };
 
 const generateShadowsocksUrl = (node: any, config: any): string => {
-  const password = userStore.user?.passwd || '';
+  const password = buildSSPassword(config, userStore.user?.passwd || '');
   const method = config.cipher || 'aes-256-gcm';
   const nodeName = encodeURIComponent(node.name);
 

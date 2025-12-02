@@ -142,9 +142,47 @@ function generateTrojanLink(node, config, user) {
 /**
  * 生成 Shadowsocks 链接
  */
+function deriveSS2022UserKey(method: string, userPassword: string) {
+  const needs = method.toLowerCase().includes('aes-128') ? 16 : 32;
+  const decodeBase64 = (value: string) => {
+    try {
+      const cleaned = value.trim();
+      if (!cleaned) return null;
+      const decoded = atob(cleaned);
+      return Uint8Array.from(decoded, (c) => c.charCodeAt(0));
+    } catch {
+      return null;
+    }
+  };
+  const toUtf8 = (value: string) => {
+    try {
+      return new TextEncoder().encode(value);
+    } catch {
+      return Uint8Array.from([]);
+    }
+  };
+
+  let bytes = decodeBase64(userPassword) || toUtf8(userPassword);
+  if (!bytes || bytes.length === 0) {
+    bytes = Uint8Array.from([0]);
+  }
+
+  const out = new Uint8Array(needs);
+  for (let i = 0; i < needs; i++) {
+    out[i] = bytes[i % bytes.length];
+  }
+
+  let binary = '';
+  out.forEach((b) => {
+    binary += String.fromCharCode(b);
+  });
+  return btoa(binary);
+}
+
 function generateShadowsocksLink(node, config, user) {
   const method = config.cipher || 'aes-128-gcm';
-  const userInfo = `${method}:${user.passwd}`;
+  const password = buildSS2022Password(config, user.passwd || config.password || "");
+  const userInfo = `${method}:${password}`;
   const encoded = btoa(userInfo);
 
   const host = formatHostForUrl(node.server);
@@ -162,6 +200,17 @@ function generateShadowsocksLink(node, config, user) {
   }
 
   return `${link}#${encodeURIComponent(node.name)}`;
+}
+
+function buildSS2022Password(config: any, userPassword: string) {
+  const method = config.cipher || config.method || '';
+  const serverPassword = config.password || '';
+  const isSS2022 = String(method).toLowerCase().includes('2022-blake3');
+  if (!isSS2022) {
+    return userPassword || serverPassword;
+  }
+  const userPart = deriveSS2022UserKey(method, userPassword || serverPassword);
+  return [serverPassword, userPart].filter(Boolean).join(':');
 }
 
 /**
@@ -344,7 +393,7 @@ export function generateClashConfig(nodes, user) {
           server,
           port,
           cipher: config.cipher || "aes-128-gcm",
-          password: user.passwd,
+          password: buildSS2022Password(config, user.passwd || ""),
           udp: true,
         };
 
@@ -448,7 +497,8 @@ export function generateQuantumultXConfig(nodes, user) {
 function buildQuantumultXSSEntry(node, config, user) {
   const options = [];
   pushOption(options, "method", config.cipher || "aes-128-gcm");
-  pushOption(options, "password", user.passwd);
+  const ssPassword = buildSS2022Password(config, user.passwd || "");
+  pushOption(options, "password", ssPassword);
   pushOption(options, "fast-open", false);
   pushOption(options, "udp-relay", true);
 
@@ -659,7 +709,8 @@ export function generateSurgeConfig(nodes, user) {
         break;
 
       case "ss":
-        proxy = `${node.name} = ss, ${server}, ${port}, encrypt-method=${config.cipher || "aes-128-gcm"}, password=${user.passwd}`;
+        const ssPassword = buildSS2022Password(config, user.passwd || "");
+        proxy = `${node.name} = ss, ${server}, ${port}, encrypt-method=${config.cipher || "aes-128-gcm"}, password=${ssPassword}`;
         if (config.obfs && config.obfs !== "plain") {
           const obfsMode = config.obfs === "simple_obfs_http" ? "http" : "tls";
           proxy += `, obfs=${obfsMode}`;

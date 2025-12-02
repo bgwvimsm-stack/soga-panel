@@ -11,6 +11,7 @@ import {
   hashPassword,
   generateUUID,
   generateRandomString,
+  generateBase64Random,
   getUtc8Timestamp,
   getUtc8IsoString,
 } from "../utils/crypto";
@@ -1138,7 +1139,7 @@ export class AdminAPI {
       // 创建用户
       const hashedPassword = await hashPassword(userData.password);
       const uuid = generateUUID();
-      const proxyPassword = userData.proxy_password || generateRandomString(16);
+      const proxyPassword = userData.proxy_password || generateBase64Random(32);
       const subscriptionToken = generateRandomString(32);
 
       const stmt = this.db.db.prepare(`
@@ -3841,7 +3842,7 @@ export class AdminAPI {
         try {
           // 生成新的UUID和节点密码
           const newUUID = generateUUID();
-          const newPassword = generateRandomString(16);
+          const newPassword = generateBase64Random(32);
           
           // 更新用户UUID和节点密码
           await this.db.db.prepare(`

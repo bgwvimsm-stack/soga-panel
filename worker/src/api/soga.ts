@@ -100,6 +100,55 @@ export class SogaAPI {
     }
   }
 
+  private decodeBase64Safe(value: string | null | undefined) {
+    try {
+      if (!value) return null;
+      const cleaned = value.trim();
+      if (!cleaned) return null;
+      const decoded = atob(cleaned);
+      return Uint8Array.from(decoded, (c) => c.charCodeAt(0));
+    } catch {
+      return null;
+    }
+  }
+
+  private deriveSS2022UserKey(cipher: string, userPassword: string) {
+    const lower = cipher.toLowerCase();
+    const needs = lower.includes("aes-128") ? 16 : 32;
+    const decoded = this.decodeBase64Safe(userPassword);
+    let bytes = decoded;
+
+    if (!bytes || bytes.length === 0) {
+      try {
+        bytes = new TextEncoder().encode(userPassword);
+      } catch {
+        bytes = new Uint8Array([0]);
+      }
+    }
+
+    const out = new Uint8Array(needs);
+    for (let i = 0; i < needs; i++) {
+      out[i] = bytes[i % bytes.length];
+    }
+
+    let binary = "";
+    out.forEach((b) => {
+      binary += String.fromCharCode(b);
+    });
+    return btoa(binary);
+  }
+
+  private buildSSPassword(nodeConfig: any, userPassword: string) {
+    const cipher = (nodeConfig?.cipher || nodeConfig?.method || "").toLowerCase();
+    const nodePassword = nodeConfig?.password || "";
+    if (cipher.includes("2022-blake3")) {
+      const userPart = this.deriveSS2022UserKey(cipher, userPassword || nodePassword);
+      // Soga 仅需要用户段，节点端密码已在节点配置中
+      return userPart;
+    }
+    return userPassword || nodePassword;
+  }
+
   // 获取用户信息
   async getUsers(request) {
     try {
@@ -119,6 +168,15 @@ export class SogaAPI {
 
       const nodeId = authResult.nodeId;
       const nodeType = authResult.nodeType;
+      const nodeRecord = (await this.db.getNode(nodeId)) as NodeRecord | null;
+      const nodeConfigRaw = ensureString(nodeRecord?.node_config, "{}") || "{}";
+      let nodeConfigJson: Record<string, any> = {};
+      try {
+        nodeConfigJson = JSON.parse(nodeConfigRaw);
+      } catch {
+        nodeConfigJson = {};
+      }
+      const ssConfig = (nodeConfigJson as any).config || nodeConfigJson || {};
 
       // 直接查询有权限访问此节点的用户（不使用缓存）
       const users = await this.db.getNodeUsers(nodeId);
@@ -135,6 +193,12 @@ export class SogaAPI {
         // 根据节点类型返回不同字段
         if (nodeType === "v2ray" || nodeType === "vless") {
           return { ...baseUser, uuid: user.uuid };
+        } else if (nodeType === "ss" || nodeType === "shadowsocks") {
+          const password = this.buildSSPassword(
+            ssConfig,
+            String(user.password ?? user.passwd ?? "")
+          );
+          return { ...baseUser, password };
         } else {
           // trojan, ss, hysteria 使用 password
           return { ...baseUser, password: user.password };

@@ -768,9 +768,9 @@ const generateSS2022Password = (method: string) => {
   return btoa(binary);
 };
 
-const ensureSS2022Password = () => {
+const ensureSS2022Password = (forceRegenerate = false) => {
   if (nodeForm.type !== 'ss') return;
-  if (ss2022Ciphers.includes(nodeForm.config_method) && !nodeForm.config_password) {
+  if (ss2022Ciphers.includes(nodeForm.config_method) && (forceRegenerate || !nodeForm.config_password)) {
     nodeForm.config_password = generateSS2022Password(nodeForm.config_method);
   }
 };
@@ -1083,7 +1083,8 @@ const isSS2022 = computed(() => nodeForm.type === 'ss' && ss2022Ciphers.includes
 
 watch(() => nodeForm.config_method, (val, oldVal) => {
   if (val !== oldVal && nodeForm.type === 'ss' && ss2022Ciphers.includes(val)) {
-    ensureSS2022Password();
+    // 切换 SS2022 加密方式时强制重新生成匹配长度的密码
+    ensureSS2022Password(true);
   }
 });
 
