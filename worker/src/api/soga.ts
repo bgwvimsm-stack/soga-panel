@@ -53,11 +53,6 @@ export class SogaAPI {
         return errorResponse("Node not found", 404);
       }
 
-      // 检查节点状态：如果节点被禁用，返回404
-      if (ensureNumber(node.status, 1) === 0) {
-        return errorResponse("Node is disabled", 404);
-      }
-
       // 检查节点流量限制：如果已用流量超过限制，返回404
       const bandwidthLimit = ensureNumber(node.node_bandwidth_limit, 0);
       if (bandwidthLimit > 0) {

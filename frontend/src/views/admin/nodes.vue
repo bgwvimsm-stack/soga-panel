@@ -11,10 +11,10 @@
           <el-icon><Plus /></el-icon>新增节点
         </el-button>
         <el-button type="success" @click="batchOnlineNodes" :disabled="selectedNodes.length === 0">
-          <el-icon><CircleCheck /></el-icon>批量启用({{ selectedNodes.length }})
+          <el-icon><CircleCheck /></el-icon>批量显示({{ selectedNodes.length }})
         </el-button>
         <el-button type="warning" @click="batchOfflineNodes" :disabled="selectedNodes.length === 0">
-          <el-icon><CircleClose /></el-icon>批量禁用({{ selectedNodes.length }})
+          <el-icon><CircleClose /></el-icon>批量隐藏({{ selectedNodes.length }})
         </el-button>
         <el-input
           v-model="searchKeyword"
@@ -27,9 +27,9 @@
         >
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
-        <el-select v-model="statusFilter" placeholder="节点状态" clearable @change="handleStatusFilterChange" style="width: 120px; margin-left: 12px;">
-          <el-option label="启用" :value="1" />
-          <el-option label="禁用" :value="0" />
+        <el-select v-model="statusFilter" placeholder="显示状态" clearable @change="handleStatusFilterChange" style="width: 120px; margin-left: 12px;">
+          <el-option label="显示" :value="1" />
+          <el-option label="隐藏" :value="0" />
         </el-select>
       </template>
 
@@ -72,8 +72,8 @@
             <span>{{ formatTraffic(row.node_bandwidth || 0) }}</span>
           </template>
           <template #status="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
-              {{ row.status === 1 ? '启用' : '禁用' }}
+            <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
+              {{ row.status === 1 ? '显示' : '隐藏' }}
             </el-tag>
           </template>
           <template #created_at="{ row }"><span>{{ formatDateTime(row.created_at) }}</span></template>
@@ -95,7 +95,7 @@
                     </el-dropdown-item>
                     <el-dropdown-item command="toggle">
                       <el-icon><SwitchButton /></el-icon>
-                      {{ row.status === 1 ? '禁用节点' : '启用节点' }}
+                      {{ row.status === 1 ? '隐藏节点' : '显示节点' }}
                     </el-dropdown-item>
                     <el-dropdown-item command="copy">
                       <el-icon><CopyDocument /></el-icon>
@@ -574,7 +574,7 @@
             x{{ Number(selectedNode.traffic_multiplier || 1).toFixed(2) }}
           </el-descriptions-item>
           <el-descriptions-item label="当前状态">
-            <el-tag :type="selectedNode.status === 1 ? 'success' : 'danger'">{{ selectedNode.status === 1 ? '启用' : '禁用' }}</el-tag>
+            <el-tag :type="selectedNode.status === 1 ? 'success' : 'info'">{{ selectedNode.status === 1 ? '显示' : '隐藏' }}</el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="已用流量">{{ formatTraffic(selectedNode.node_bandwidth || 0) }}</el-descriptions-item>
           <el-descriptions-item label="流量限制">
@@ -1375,7 +1375,7 @@ const handleRowCommand = (command: string, row: Node) => {
 const toggleNodeStatus = async (node: Node) => {
   try {
     const newStatus = node.status === 1 ? 0 : 1;
-    const action = newStatus === 1 ? '启用' : '禁用';
+    const action = newStatus === 1 ? '显示' : '隐藏';
 
     await ElMessageBox.confirm(`确定要${action}节点"${node.name}"吗？`, '确认操作', { type: 'warning' });
 
@@ -1509,7 +1509,7 @@ const batchOnlineNodes = async () => {
   try {
     const nodeIds = selectedNodes.value.map(node => node.id);
 
-    await ElMessageBox.confirm(`确定要批量启用选中的 ${selectedNodes.value.length} 个节点吗？`, '确认操作', { type: 'warning' });
+    await ElMessageBox.confirm(`确定要批量显示选中的 ${selectedNodes.value.length} 个节点吗？`, '确认操作', { type: 'warning' });
 
     const { data } = await batchUpdateNodes({ action: 'enable', node_ids: nodeIds });
 
@@ -1517,11 +1517,11 @@ const batchOnlineNodes = async () => {
       node.status = 1;
     });
 
-    ElMessage.success(data.message || `成功启用 ${data.affected_count} 个节点`);
+    ElMessage.success(data.message || `成功显示 ${data.affected_count} 个节点`);
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('批量启用节点失败:', error);
-      ElMessage.error('批量启用失败，请重试');
+      console.error('批量显示节点失败:', error);
+      ElMessage.error('批量显示失败，请重试');
     }
   }
 };
@@ -1530,7 +1530,7 @@ const batchOfflineNodes = async () => {
   try {
     const nodeIds = selectedNodes.value.map(node => node.id);
 
-    await ElMessageBox.confirm(`确定要批量禁用选中的 ${selectedNodes.value.length} 个节点吗？`, '确认操作', { type: 'warning' });
+    await ElMessageBox.confirm(`确定要批量隐藏选中的 ${selectedNodes.value.length} 个节点吗？`, '确认操作', { type: 'warning' });
 
     const { data } = await batchUpdateNodes({ action: 'disable', node_ids: nodeIds });
 
@@ -1538,11 +1538,11 @@ const batchOfflineNodes = async () => {
       node.status = 0;
     });
 
-    ElMessage.success(data.message || `成功禁用 ${data.affected_count} 个节点`);
+    ElMessage.success(data.message || `成功隐藏 ${data.affected_count} 个节点`);
   } catch (error) {
     if (error !== 'cancel') {
-      console.error('批量禁用节点失败:', error);
-      ElMessage.error('批量禁用失败，请重试');
+      console.error('批量隐藏节点失败:', error);
+      ElMessage.error('批量隐藏失败，请重试');
     }
   }
 };
