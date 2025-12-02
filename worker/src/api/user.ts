@@ -635,9 +635,9 @@ export class UserAPI {
 
       const authUser = authResult.user;
       // 生成新的UUID、passwd和token
-      const { generateRandomString, generateUUID } = await import("../utils/crypto");
+      const { generateRandomString, generateUUID, generateBase64Random } = await import("../utils/crypto");
       const newUUID = generateUUID();
-      const newPassword = generateRandomString(16);
+      const newPassword = generateBase64Random(32);
       const newToken = generateRandomString(32);
 
       // 更新用户的UUID、passwd和token

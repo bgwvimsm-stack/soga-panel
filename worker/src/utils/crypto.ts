@@ -137,6 +137,23 @@ export function generateRandomString(length = 32) {
 }
 
 /**
+ * 生成指定字节长度的随机值并以 Base64 返回
+ * 等价于 `openssl rand -base64 <length>`
+ */
+export function generateBase64Random(length = 32) {
+  if (length <= 0) {
+    throw new Error("Invalid random byte length");
+  }
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+/**
  * 生成数字验证码
  * @param {number} length - 验证码长度
  * @returns {string} - 数字验证码

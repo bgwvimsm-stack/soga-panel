@@ -11,6 +11,7 @@ import {
   verifyPassword,
   generateUUID,
   generateRandomString,
+  generateBase64Random,
   generateNumericCode,
   sha256Hex,
 } from "../utils/crypto";
@@ -733,10 +734,10 @@ export class AuthAPI {
     passwordEmailSent: boolean;
   }> {
     await this.db.ensureUsersRegisterIpColumn();
-    const tempPassword = generateRandomString(16);
+    const tempPassword = generateRandomString(32);
     const hashedPassword = await hashPassword(tempPassword);
     const uuid = generateUUID();
-    const proxyPassword = generateRandomString(16);
+    const proxyPassword = generateBase64Random(32);
     const subscriptionToken = generateRandomString(32);
 
     const defaults = await this.getDefaultUserProvisioning();
@@ -2469,7 +2470,7 @@ export class AuthAPI {
       // 创建用户
       const hashedPassword = await hashPassword(password);
       const uuid = generateUUID();
-      const proxyPassword = generateRandomString(16);
+      const proxyPassword = generateBase64Random(32);
       const subscriptionToken = generateRandomString(32);
 
       const stmt = this.db.db.prepare(`

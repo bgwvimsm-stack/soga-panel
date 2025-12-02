@@ -146,6 +146,7 @@
                     <el-option label="VLess" value="vless" />
                     <el-option label="Trojan" value="trojan" />
                     <el-option label="Hysteria" value="hysteria" />
+                    <el-option label="AnyTLS" value="anytls" />
                   </el-select>
                 </el-form-item>
               </el-col>
@@ -512,6 +513,23 @@
                   </el-col>
                 </el-row>
               </template>
+
+              <!-- AnyTLS 配置 -->
+              <template v-else-if="nodeForm.type === 'anytls'">
+                <div class="section-subtitle">AnyTLS</div>
+                <el-row :gutter="16">
+                  <el-col :span="24">
+                    <el-form-item label="Padding Scheme">
+                      <el-input
+                        v-model="nodeForm.config_padding_scheme"
+                        type="textarea"
+                        :rows="4"
+                        placeholder="每行一条，如 stop=8 或 1=100-400"
+                      />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+              </template>
             </el-card>
           </template>
 
@@ -578,7 +596,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue';
+import { ref, reactive, onMounted, computed, watch } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus';
 import { Plus, Search, CircleCheck, CircleClose, EditPen, SwitchButton, ArrowDown, CopyDocument, View, Delete } from '@element-plus/icons-vue';
 import { VxeTableBar } from '@/components/ReVxeTableBar';
@@ -599,10 +617,20 @@ const ssCipherOptions = [
   'aes-256-gcm',
   'chacha20-ietf-poly1305',
   '2022-blake3-aes-128-gcm',
-  '2022-blake3-aes-256-gcm'
+  '2022-blake3-aes-256-gcm',
+  '2022-blake3-chacha20-poly1305'
 ];
 const ssObfsOptions = ['plain', 'simple_obfs_http'];
-const ss2022Ciphers = ['2022-blake3-aes-128-gcm', '2022-blake3-aes-256-gcm'];
+const ss2022Ciphers = [
+  '2022-blake3-aes-128-gcm',
+  '2022-blake3-aes-256-gcm',
+  '2022-blake3-chacha20-poly1305'
+];
+const ss2022KeyLengths: Record<string, number> = {
+  '2022-blake3-aes-128-gcm': 16,
+  '2022-blake3-aes-256-gcm': 32,
+  '2022-blake3-chacha20-poly1305': 32
+};
 
 const ssrMethodOptions = [
   'none',
@@ -719,10 +747,33 @@ const nodeForm = reactive({
   config_short_ids: '',
   config_dest: '',
   config_obfs_password: '',
+  config_padding_scheme: '',
   config_up_mbps: 1000,
   config_down_mbps: 1000,
   node_config_json: ''
 });
+
+const generateSS2022Password = (method: string) => {
+  const length = ss2022KeyLengths[method] || 32;
+  const bytes = new Uint8Array(length);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  let binary = '';
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+};
+
+const ensureSS2022Password = (forceRegenerate = false) => {
+  if (nodeForm.type !== 'ss') return;
+  if (ss2022Ciphers.includes(nodeForm.config_method) && (forceRegenerate || !nodeForm.config_password)) {
+    nodeForm.config_password = generateSS2022Password(nodeForm.config_method);
+  }
+};
 
 const nodeRules = {
   name: [
@@ -776,7 +827,9 @@ const nodeRules = {
   config_password: [
     {
       validator: (_rule: any, value: string, callback: any) => {
-        if (isSS2022.value && !value) return callback(new Error('ss2022 需设置密码'));
+        if (isSS2022.value && !value) {
+          ensureSS2022Password();
+        }
         callback();
       },
       trigger: 'blur'
@@ -803,13 +856,31 @@ const nodeRules = {
 };
 
 const getNodeTypeColor = (type: string) => {
-  const colorMap: Record<string, string> = { ss: 'primary', ssr: 'primary', v2ray: 'success', vless: 'info', trojan: 'warning', hysteria: 'danger' };
-  return colorMap[type] || 'primary';
+  const colorMap: Record<string, string> = {
+    ss: 'primary',
+    ssr: 'primary',
+    v2ray: 'success',
+    vless: 'info',
+    trojan: 'warning',
+    hysteria: 'danger',
+    anytls: 'info'
+  };
+  const key = typeof type === 'string' ? type.toLowerCase() : type;
+  return colorMap[key] || 'primary';
 };
 
 const getNodeTypeName = (type: string) => {
-  const nameMap: Record<string, string> = { ss: 'Shadowsocks', ssr: 'ShadowsocksR', v2ray: 'V2Ray', vless: 'VLess', trojan: 'Trojan', hysteria: 'Hysteria' };
-  return nameMap[type] || type;
+  const nameMap: Record<string, string> = {
+    ss: 'Shadowsocks',
+    ssr: 'ShadowsocksR',
+    v2ray: 'V2Ray',
+    vless: 'VLess',
+    trojan: 'Trojan',
+    hysteria: 'Hysteria',
+    anytls: 'AnyTLS'
+  };
+  const key = typeof type === 'string' ? type.toLowerCase() : type;
+  return nameMap[key] || type;
 };
 
 const formatTraffic = (bytes: number): string => {
@@ -866,7 +937,7 @@ const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
     speed_limit: 0
   },
   config: {
-    port: type === 'hysteria' ? 443 : 443,
+    port: type === 'anytls' ? 12345 : 443,
     ...(type === 'ss'
       ? { cipher: 'aes-128-gcm', obfs: 'plain' }
       : {}),
@@ -889,11 +960,26 @@ const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
       : {}),
     ...(type === 'hysteria'
       ? { obfs: 'plain', obfs_password: '', up_mbps: 1000, down_mbps: 1000 }
+      : {}),
+    ...(type === 'anytls'
+      ? {
+        padding_scheme: [
+          'stop=8',
+          '0=30-30',
+          '1=100-400',
+          '2=400-500,c,500-1000,c,500-1000,c,500-1000,c,500-1000',
+          '3=9-9,500-1000',
+          '4=500-1000',
+          '5=500-1000',
+          '6=500-1000',
+          '7=500-1000'
+        ]
+      }
       : {})
   },
   client: {
     server: '',
-    port: null,
+    port: type === 'anytls' ? 12345 : null,
     tls_host: ''
   }
 });
@@ -983,6 +1069,9 @@ const applyConfigToState = (config: any) => {
     : nodeConfigState.config.short_ids || '';
   nodeForm.config_dest = nodeConfigState.config.dest || '';
   nodeForm.config_obfs_password = nodeConfigState.config.obfs_password || '';
+  nodeForm.config_padding_scheme = Array.isArray((nodeConfigState.config as any).padding_scheme)
+    ? (nodeConfigState.config as any).padding_scheme.join('\n')
+    : ((nodeConfigState.config as any).padding_scheme || '');
   const upMbps = Number(nodeConfigState.config.up_mbps);
   nodeForm.config_up_mbps = Number.isFinite(upMbps) ? upMbps : 1000;
   const downMbps = Number(nodeConfigState.config.down_mbps);
@@ -991,6 +1080,19 @@ const applyConfigToState = (config: any) => {
 };
 
 const isSS2022 = computed(() => nodeForm.type === 'ss' && ss2022Ciphers.includes(nodeForm.config_method));
+
+watch(() => nodeForm.config_method, (val, oldVal) => {
+  if (val !== oldVal && nodeForm.type === 'ss' && ss2022Ciphers.includes(val)) {
+    // 切换 SS2022 加密方式时强制重新生成匹配长度的密码
+    ensureSS2022Password(true);
+  }
+});
+
+watch(() => nodeForm.type, (val, oldVal) => {
+  if (val === 'ss' && oldVal !== 'ss') {
+    ensureSS2022Password();
+  }
+});
 
 const buildConfigFromForm = () => {
   const merged = normalizeNodeConfig(nodeConfigState);
@@ -1016,9 +1118,7 @@ const buildConfigFromForm = () => {
       if ('method' in merged.config) delete merged.config.method;
       if (nodeForm.config_obfs) merged.config.obfs = nodeForm.config_obfs;
       if (isSS2022.value) {
-        if (!nodeForm.config_password) {
-          throw new Error('ss2022 需要设置密码');
-        }
+        ensureSS2022Password();
         merged.config.password = nodeForm.config_password;
       } else {
         // 非 ss2022 移除密码字段，避免存储空串
@@ -1076,6 +1176,19 @@ const buildConfigFromForm = () => {
       merged.config.obfs_password = nodeForm.config_obfs_password || merged.config.obfs_password || '';
       merged.config.up_mbps = Number(nodeForm.config_up_mbps ?? merged.config.up_mbps ?? 1000);
       merged.config.down_mbps = Number(nodeForm.config_down_mbps ?? merged.config.down_mbps ?? 1000);
+      break;
+    case 'anytls':
+      if (nodeForm.config_padding_scheme) {
+        merged.config.padding_scheme = nodeForm.config_padding_scheme
+          .split(/\r?\n/)
+          .map(item => item.trim())
+          .filter(Boolean);
+      } else if (Array.isArray(merged.config.padding_scheme)) {
+        merged.config.padding_scheme = merged.config.padding_scheme.filter(Boolean);
+        if (merged.config.padding_scheme.length === 0) {
+          delete merged.config.padding_scheme;
+        }
+      }
       break;
     default:
       if (nodeForm.config_method) merged.config.method = nodeForm.config_method;
@@ -1173,6 +1286,7 @@ const handleSelectionChange = () => {
 const handleTypeChange = (value: string) => {
   applyConfigToState(createDefaultNodeConfig(value));
   advancedView.value = false;
+  ensureSS2022Password();
 };
 
 const editNode = (node: Node) => {
@@ -1381,6 +1495,7 @@ const resetForm = () => {
   nodeForm.config_short_ids = '';
   nodeForm.config_dest = '';
   nodeForm.config_obfs_password = '';
+  nodeForm.config_padding_scheme = '';
   nodeForm.config_up_mbps = 1000;
   nodeForm.config_down_mbps = 1000;
   nodeForm.node_config_json = '';
