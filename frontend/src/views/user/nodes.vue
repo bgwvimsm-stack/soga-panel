@@ -54,6 +54,7 @@
           <el-option label="V2Ray" value="v2ray" />
           <el-option label="Trojan" value="trojan" />
           <el-option label="Hysteria" value="hysteria" />
+          <el-option label="AnyTLS" value="anytls" />
         </el-select>
         <el-select v-model="filterStatus" placeholder="节点状态" clearable @change="handleFilterChange" style="width: 120px; margin-left: 12px;">
           <el-option label="全部" value="" />
@@ -347,7 +348,8 @@ const getNodeTypeColor = (type: string) => {
     v2ray: 'success',
     trojan: 'warning',
     hysteria: 'danger',
-    vless: 'success'
+    vless: 'success',
+    anytls: 'info'
   };
   return colorMap[type?.toLowerCase()] || 'info';
 };
@@ -363,7 +365,8 @@ const getNodeTypeName = (type: string) => {
     vless: 'VLESS',
     trojan: 'Trojan',
     hysteria: 'Hysteria',
-    hysteria2: 'Hysteria2'
+    hysteria2: 'Hysteria2',
+    anytls: 'AnyTLS'
   };
   return nameMap[type?.toLowerCase()] || type?.toUpperCase() || 'Unknown';
 };
