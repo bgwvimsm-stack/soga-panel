@@ -125,28 +125,32 @@ INSERT OR IGNORE INTO nodes (
     node_config
 ) VALUES 
 -- Shadowsocks 节点
-(1, 'ss-tcp', 'ss', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"cipher":"aes-128-gcm","obfs":"plain","path":"/path","host":"www.server.com"},"client":{"server":"example.com","port":8443}}'),
+(1, 'ss-tcp', 'ss', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"cipher":"aes-128-gcm","obfs":"plain","path":"/path","host":"www.server.com"},"client":{"server":"example.com","port":8443}}'),
+(2, 'ss2022-aes128', 'ss', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"cipher":"2022-blake3-aes-128-gcm","password":"o5DWBXipV4BgFk11m6PiMg==","obfs":"plain"},"client":{"server":"example.com","port":8443}}'),
+(3, 'ss2022-aes256', 'ss', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"cipher":"2022-blake3-aes-256-gcm","password":"VJ96gVvktH8ZcTsSHo4at9Ef8lavE/dW/WL1kRAoIlE=","obfs":"plain"},"client":{"server":"example.com","port":8443}}'),
 
 -- ShadowsocksR 节点
-(2, 'ssr-tcp', 'ssr', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"method":"chacha20-ietf","protocol":"auth_aes128_sha1","obfs":"plain","single_port_type":"protocol"},"client":{"server":"example.com","port":8443}}'),
+(4, 'ssr-tcp', 'ssr', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"method":"chacha20-ietf","protocol":"auth_aes128_sha1","obfs":"plain","single_port_type":"protocol"},"client":{"server":"example.com","port":8443}}'),
 
 -- V2Ray VMess 节点
-(3, 'vmess-tcp', 'v2ray', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"none"},"client":{"server":"example.com","port":8443}}'),
-(4, 'vmess-tcp-tls', 'v2ray', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
-(5, 'vmess-ws', 'v2ray', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"none","path":"/112233"},"client":{"server":"example.com","port":8443}}'),
-(6, 'vmess-ws-tls', 'v2ray', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls","path":"/112233"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
+(5, 'vmess-tcp', 'v2ray', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"none"},"client":{"server":"example.com","port":8443}}'),
+(6, 'vmess-tcp-tls', 'v2ray', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
+(7, 'vmess-ws', 'v2ray', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"none","path":"/112233"},"client":{"server":"example.com","port":8443}}'),
+(8, 'vmess-ws-tls', 'v2ray', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls","path":"/112233"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
 
 -- VLESS 节点
-(7, 'vless-tcp-tls', 'vless', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
-(8, 'vless-ws-tls', 'vless', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls","path":"/112233"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
+(9, 'vless-tcp-tls', 'vless', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
+(10, 'vless-ws-tls', 'vless', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls","path":"/112233"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
 
 -- Trojan 节点
-(9, 'trojan-tcp-tls', 'trojan', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
-(10, 'trojan-ws-tls', 'trojan', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
+(11, 'trojan-tcp-tls', 'trojan', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"stream_type":"tcp","tls_type":"tls"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
+(12, 'trojan-ws-tls', 'trojan', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"stream_type":"ws","tls_type":"tls","path":"/112233"},"client":{"server":"example.com","port":8443,"tls_host":"example.com"}}'),
 
 -- Hysteria 节点
-(11, 'hysteria', 'hysteria', 1, '{"basic":{"pull_interval":120,"push_interval":120,"speed_limit":0},"config":{"port":8443,"obfs":"salamander","obfs_password":"","up_mbps":1000,"down_mbps":1000},"client":{"server":"example.com","port":8443}}');
+(13, 'hysteria', 'hysteria', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":8443,"obfs":"salamander","obfs_password":"","up_mbps":1000,"down_mbps":1000},"client":{"server":"example.com","port":8443}}'),
 
+-- AnyTLS 节点
+(14, 'anytls-demo', 'anytls', 1, '{"basic":{"pull_interval":60,"push_interval":60,"speed_limit":0},"config":{"port":12345,"padding_scheme":["stop=8","0=30-30","1=100-400","2=400-500,c,500-1000,c,500-1000,c,500-1000,c,500-1000","3=9-9,500-1000","4=500-1000","5=500-1000","6=500-1000","7=500-1000"]},"client":{"server":"example.com","port":12345}}');
 -- 验证必要数据插入
 SELECT 'Required data inserted successfully' as status;
 SELECT 'Admin user created: ' || email as admin FROM users WHERE id = 1;
