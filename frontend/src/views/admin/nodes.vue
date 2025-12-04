@@ -512,11 +512,25 @@
                     </el-form-item>
                   </el-col>
                 </el-row>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="TLS Host">
+                      <el-input v-model="nodeForm.client_tls_host" placeholder="SNI/ServerName" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
               </template>
 
               <!-- AnyTLS 配置 -->
               <template v-else-if="nodeForm.type === 'anytls'">
                 <div class="section-subtitle">AnyTLS</div>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="TLS Host">
+                      <el-input v-model="nodeForm.client_tls_host" placeholder="可选 SNI/ServerName" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
                 <el-row :gutter="16">
                   <el-col :span="24">
                     <el-form-item label="Padding Scheme">
@@ -772,6 +786,26 @@ const ensureSS2022Password = (forceRegenerate = false) => {
   if (nodeForm.type !== 'ss') return;
   if (ss2022Ciphers.includes(nodeForm.config_method) && (forceRegenerate || !nodeForm.config_password)) {
     nodeForm.config_password = generateSS2022Password(nodeForm.config_method);
+  }
+};
+
+const generateHysteriaObfsPassword = (byteLength = 8) => {
+  const bytes = new Uint8Array(byteLength);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < byteLength; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  let binary = '';
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+};
+
+const ensureHysteriaObfsPassword = (forceRegenerate = false) => {
+  if (nodeForm.type !== 'hysteria') return;
+  const needAuto = nodeForm.config_obfs === 'salamander';
+  if (needAuto && (forceRegenerate || !nodeForm.config_obfs_password)) {
+    nodeForm.config_obfs_password = generateHysteriaObfsPassword();
   }
 };
 
@@ -1069,6 +1103,7 @@ const applyConfigToState = (config: any) => {
     : nodeConfigState.config.short_ids || '';
   nodeForm.config_dest = nodeConfigState.config.dest || '';
   nodeForm.config_obfs_password = nodeConfigState.config.obfs_password || '';
+  ensureHysteriaObfsPassword();
   nodeForm.config_padding_scheme = Array.isArray((nodeConfigState.config as any).padding_scheme)
     ? (nodeConfigState.config as any).padding_scheme.join('\n')
     : ((nodeConfigState.config as any).padding_scheme || '');
@@ -1091,6 +1126,12 @@ watch(() => nodeForm.config_method, (val, oldVal) => {
 watch(() => nodeForm.type, (val, oldVal) => {
   if (val === 'ss' && oldVal !== 'ss') {
     ensureSS2022Password();
+  }
+});
+
+watch(() => nodeForm.config_obfs, (val, oldVal) => {
+  if (val !== oldVal && nodeForm.type === 'hysteria') {
+    ensureHysteriaObfsPassword(true);
   }
 });
 
