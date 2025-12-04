@@ -553,6 +553,10 @@ function buildQuantumultXVlessEntry(node, config, user) {
 function buildQuantumultXTrojanEntry(node, config, user) {
   const options = [];
   const streamType = String(config.stream_type || "tcp").toLowerCase();
+  if (streamType === "grpc") {
+    // Quantumult X 尚不支持 Trojan gRPC，直接跳过避免生成无效节点
+    return "";
+  }
   const isWebsocket = streamType === "ws";
   const tlsEnabled = config.tls_type === "tls" || isWebsocket;
   const host = getHeaderHost(node, config);
