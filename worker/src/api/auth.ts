@@ -287,16 +287,17 @@ export class AuthAPI {
     userAgent: string,
     extra: Record<string, unknown> = {}
   ) {
+    const sessionTTL = remember ? 604800 : 172800;
     const token = await generateToken(
       {
         userId: user.id,
         email: user.email,
         isAdmin: user.is_admin === 1,
       },
-      this.env.JWT_SECRET
+      this.env.JWT_SECRET,
+      sessionTTL
     );
 
-    const sessionTTL = remember ? 604800 : 86400;
     await this.cache.set(
       `session_${token}`,
       JSON.stringify(this.buildSessionPayload(user)),
@@ -2612,8 +2613,9 @@ export class AuthAPI {
         status: ensureNumber(newUser.status),
       });
 
+      const defaultSessionTTL = 172800;
       try {
-        await this.cache.set(`session_${token}`, sessionPayload, 86400);
+        await this.cache.set(`session_${token}`, sessionPayload, defaultSessionTTL);
       } catch (cacheError) {
         console.error("register session cache error:", cacheError);
       }
