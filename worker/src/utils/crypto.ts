@@ -31,7 +31,7 @@ export async function verifyPassword(password, hash) {
  * @param {number} expiresIn - 过期时间（秒）
  * @returns {Promise<string>} - JWT Token
  */
-export async function generateToken(payload, secret, expiresIn = 86400) {
+export async function generateToken(payload, secret, expiresIn = 172800) {
   const header = {
     alg: "HS256",
     typ: "JWT",
