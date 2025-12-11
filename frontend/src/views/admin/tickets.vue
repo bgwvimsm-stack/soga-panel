@@ -105,17 +105,22 @@
           </el-tag>
         </div>
 
-        <el-card class="user-card" shadow="never">
-          <div class="user-card-title">用户信息</div>
-          <p><strong>ID：</strong>{{ activeTicket.user?.id ?? "未知" }}</p>
-          <p><strong>昵称：</strong>{{ activeTicket.user?.username || "未知" }}</p>
-          <p><strong>邮箱：</strong>{{ activeTicket.user?.email || "未提供" }}</p>
-        </el-card>
-
-        <el-card class="markdown-card" shadow="never">
-          <div class="card-title">工单内容</div>
-          <div class="markdown-block" v-html="detailContentHtml"></div>
-        </el-card>
+        <div class="detail-sections">
+          <div class="info-block user-info">
+            <div class="block-title">用户信息</div>
+            <div class="block-content">
+              <p><strong>ID：</strong>{{ activeTicket.user?.id ?? "未知" }}</p>
+              <p><strong>昵称：</strong>{{ activeTicket.user?.username || "未知" }}</p>
+              <p><strong>邮箱：</strong>{{ activeTicket.user?.email || "未提供" }}</p>
+            </div>
+          </div>
+          <div class="info-block ticket-content">
+            <div class="block-title">工单内容</div>
+            <div class="block-content">
+              <div class="markdown-block" v-html="detailContentHtml"></div>
+            </div>
+          </div>
+        </div>
 
         <el-form inline label-width="80px" class="status-form">
           <el-form-item label="当前状态">
@@ -498,26 +503,6 @@ onMounted(() => {
   margin: 4px 0 0;
 }
 
-.user-card {
-  background: #f8f9fb;
-
-  .user-card-title {
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
-
-  p {
-    margin: 4px 0;
-  }
-}
-
-.markdown-card {
-  .card-title {
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
-}
-
 .markdown-editor {
   display: flex;
   flex-direction: column;
@@ -650,6 +635,32 @@ onMounted(() => {
 
   .status-filter {
     flex: 1;
+  }
+}
+
+.detail-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.info-block {
+  background: #f8f9fb;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  padding: 12px 16px;
+
+  .block-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  .block-content {
+    color: #303133;
+
+    p {
+      margin: 4px 0;
+    }
   }
 }
 </style>
