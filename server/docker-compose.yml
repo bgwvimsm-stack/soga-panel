@@ -1,0 +1,46 @@
+version: "3.9"
+
+services:
+  mariadb:
+    image: mariadb:10.11
+    container_name: soga-mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: soga_panel
+      MYSQL_USER: soga
+      MYSQL_PASSWORD: changeme
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./data/mariadb:/var/lib/mysql
+    command:
+      [
+        "--character-set-server=utf8mb4",
+        "--collation-server=utf8mb4_unicode_ci",
+        "--default-time-zone=+08:00"
+      ]
+
+  redis:
+    image: redis:7.2
+    container_name: soga-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: soga-phpmyadmin
+    environment:
+      PMA_HOST: mariadb
+      PMA_USER: soga
+      PMA_PASSWORD: changeme
+      PMA_ARBITRARY: "1"
+    ports:
+      - "8080:80"
+    depends_on:
+      - mariadb

@@ -1,0 +1,4 @@
+# dist files
+dist
+.env
+data
