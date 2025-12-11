@@ -9,6 +9,7 @@ import { createAdminTrafficRouter } from "./admin-traffic";
 import { createAdminRebateRouter } from "./admin-rebate";
 import { createAdminSharedIdRouter } from "./admin-sharedid";
 import { createAdminExportRouter } from "./admin-export";
+import { generateRandomString, generateUUID } from "../../utils/crypto";
 
 export function createAdminRouter(ctx: AppContext) {
   const router = Router();
@@ -22,6 +23,85 @@ export function createAdminRouter(ctx: AppContext) {
     }
     return user;
   };
+
+  // 手动执行每日定时任务（重置今日流量）
+  router.post("/trigger-traffic-reset", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    await ctx.dbService.resetTodayBandwidth();
+    return successResponse(res, { success: true, message: "已触发每日流量重置" }, "已触发每日流量重置");
+  });
+
+  // 重置所有用户 UUID 和节点密码
+  router.post("/reset-all-passwords", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const users = await ctx.db.prepare("SELECT id FROM users WHERE status = 1").all<{ id: number }>();
+    let count = 0;
+    for (const row of users.results || []) {
+      const uuid = generateUUID();
+      const passwd = generateRandomString(16);
+      await ctx.db
+        .prepare(
+          `
+          UPDATE users 
+          SET uuid = ?, passwd = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `
+        )
+        .bind(uuid, passwd, row.id)
+        .run();
+      count += 1;
+    }
+    return successResponse(res, { count, message: `已重置 ${count} 个用户的 UUID/节点密码` }, "已重置所有用户 UUID/密码");
+  });
+
+  // 重置所有用户订阅令牌
+  router.post("/reset-all-subscriptions", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const users = await ctx.db.prepare("SELECT id FROM users WHERE status = 1").all<{ id: number }>();
+    let count = 0;
+    for (const row of users.results || []) {
+      const token = generateRandomString(32);
+      await ctx.db
+        .prepare("UPDATE users SET token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .bind(token, row.id)
+        .run();
+      count += 1;
+    }
+    return successResponse(res, { count, message: `已重置 ${count} 个用户的订阅链接` }, "已重置所有用户订阅链接");
+  });
+
+  // 重置全部用户邀请码
+  router.post("/invite-codes/reset", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const users = await ctx.db.prepare("SELECT id FROM users WHERE status = 1").all<{ id: number }>();
+    let count = 0;
+    for (const row of users.results || []) {
+      await ctx.dbService.ensureUserInviteCode(row.id, () => generateRandomString(8));
+      count += 1;
+    }
+    return successResponse(res, { count, message: `已重置 ${count} 个用户的邀请码` }, "已重置所有邀请码");
+  });
+
+  // 删除待支付记录（充值/购买）
+  router.delete("/pending-records", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    await ctx.db.prepare("DELETE FROM recharge_records WHERE status = 0").run();
+    await ctx.db.prepare("DELETE FROM package_purchase_records WHERE status = 0").run();
+    return successResponse(res, { message: "已清理待支付记录" }, "已清理待支付记录");
+  });
+
+  // 清理缓存占位实现
+  router.post("/clear-cache/audit-rules", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    await ctx.cache.deleteByPrefix("audit_rules");
+    return successResponse(res, { message: "已清理审计规则缓存" }, "已清理审计规则缓存");
+  });
+
+  router.post("/clear-cache/whitelist", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    await ctx.cache.deleteByPrefix("whitelist");
+    return successResponse(res, { message: "已清理白名单缓存" }, "已清理白名单缓存");
+  });
 
   router.get("/system-stats", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;

@@ -15,6 +15,14 @@ export function createApp(ctx: AppContext) {
     next();
   });
 
+  // 兼容部分代理重复追加 /api 前缀的情况（例如将 /api/health 转发到 /api/api/health）
+  app.use((req, _res, next) => {
+    if (req.url.startsWith("/api/api/")) {
+      req.url = req.url.replace(/^\/api\/api\//, "/api/");
+    }
+    next();
+  });
+
   app.use(
     cors({
       origin: "*",

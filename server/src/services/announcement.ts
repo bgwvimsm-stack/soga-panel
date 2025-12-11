@@ -9,6 +9,23 @@ export class AnnouncementService {
     this.db = db;
   }
 
+  // 简易 Markdown -> HTML，用于公告展示
+  private markdownToHtml(markdown: string | undefined): string {
+    if (!markdown) return "";
+    let html = markdown
+      .replace(/^### (.*$)/gim, "<h3>$1</h3>")
+      .replace(/^## (.*$)/gim, "<h2>$1</h2>")
+      .replace(/^# (.*$)/gim, "<h1>$1</h1>")
+      .replace(/\*\*(.*)\*\*/gim, "<strong>$1</strong>")
+      .replace(/\*(.*)\*/gim, "<em>$1</em>")
+      .replace(/^\- (.*$)/gim, "<li>$1</li>")
+      .replace(/\n\n/gim, "</p><p>")
+      .replace(/\n/gim, "<br/>");
+    html = "<p>" + html + "</p>";
+    html = html.replace(/(<li>.*<\/li>)/s, "<ul>$1</ul>");
+    return html;
+  }
+
   async listPublic(limit = 10, offset = 0) {
     const now = getUtc8Timestamp();
     const result = await this.db.db
@@ -85,6 +102,7 @@ export class AnnouncementService {
     created_by: number;
   }) {
     const now = getUtc8Timestamp();
+    const contentHtml = this.markdownToHtml(data.content);
     const result = toRunResult(
       await this.db.db
         .prepare(
@@ -96,7 +114,7 @@ export class AnnouncementService {
         .bind(
           ensureString(data.title),
           ensureString(data.content),
-          ensureString(data.content), // markdown->html 可后续处理
+          contentHtml,
           ensureString(data.type ?? "notice"),
           Number(data.status ?? 1),
           data.is_pinned ? 1 : 0,
@@ -126,7 +144,7 @@ export class AnnouncementService {
       fields.push("content = ?");
       values.push(payload.content);
       fields.push("content_html = ?");
-      values.push(payload.content); // 后续可加入 markdown->html
+      values.push(this.markdownToHtml(payload.content));
     }
     if (payload.type !== undefined) {
       fields.push("type = ?");
