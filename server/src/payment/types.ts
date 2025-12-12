@@ -13,6 +13,8 @@ export type PaymentOrder = {
 export type PaymentCreateResult = {
   method: PaymentMethod;
   payUrl?: string;
+  success: boolean;
+  message?: string;
 };
 
 export type PaymentCallbackResult = {

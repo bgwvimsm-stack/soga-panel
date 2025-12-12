@@ -347,7 +347,7 @@ export function createStoreRouter(ctx: AppContext) {
       discountAmount: discount
     });
 
-    const pay = payment.create(
+    const pay = await payment.create(
       {
         tradeNo,
         amount: paymentAmount,
@@ -358,7 +358,12 @@ export function createStoreRouter(ctx: AppContext) {
       channelToUse
     );
 
-    const payUrl = pay.payUrl || (pay as any).pay_url;
+    if (!pay.success || !pay.payUrl) {
+      const msg = pay.message || "创建支付订单失败";
+      return errorResponse(res, msg, 500);
+    }
+
+    const payUrl = pay.payUrl;
 
     const isMixed = storedPurchaseType.startsWith("balance_");
     const statusText = isMixed ? "待支付差额" : "待支付";

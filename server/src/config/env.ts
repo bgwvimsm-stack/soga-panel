@@ -51,6 +51,8 @@ const envSchema = z.object({
   EPUSDT_API_URL: z.string().optional(),
   EPUSDT_NOTIFY_URL: z.string().optional(),
   EPUSDT_RETURN_URL: z.string().optional(),
+  EPUSDT_TRADE_TYPE: z.string().optional(),
+  EPUSDT_TIMEOUT: z.coerce.number().int().positive().optional(),
   SITE_NAME: z.string().optional(),
   SITE_URL: z.string().optional(),
   MAIL_VERIFICATION_EXPIRE_MINUTES: z.string().optional(),

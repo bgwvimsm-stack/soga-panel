@@ -25,7 +25,7 @@ export class EpayProvider {
     return !!(this.env.EPAY_API_URL && this.env.EPAY_PID && this.env.EPAY_KEY);
   }
 
-  createPayment(order: PaymentOrder): PaymentCreateResult {
+  async createPayment(order: PaymentOrder): Promise<PaymentCreateResult> {
     const apiUrl = (this.env.EPAY_API_URL || "").replace(/\/$/, "");
     const channel = (order.channel || "").toLowerCase();
     const type = channel === "wechat" || channel === "wxpay" ? "wxpay" : "alipay";
@@ -50,7 +50,7 @@ export class EpayProvider {
     payParams.sign_type = "MD5";
 
     const payUrl = `${apiUrl}/submit.php?${new URLSearchParams(payParams).toString()}`;
-    return { method: "epay", payUrl };
+    return { method: "epay", payUrl, success: true };
   }
 
   verifyCallback(body: EpayCallbackParams): PaymentCallbackResult {

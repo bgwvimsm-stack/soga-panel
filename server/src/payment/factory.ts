@@ -91,7 +91,7 @@ export function createPaymentProviders(env: AppEnv) {
     getActiveChannels() {
       return availableChannels;
     },
-    create(order: PaymentOrder, prefer?: string | null): PaymentCreateResult {
+    async create(order: PaymentOrder, prefer?: string | null): Promise<PaymentCreateResult> {
       const channel = normalizeChannel(prefer);
       const pickedChannel = pickChannel(channel);
       const providerInfo = getProviderByChannel(pickedChannel);
@@ -99,7 +99,7 @@ export function createPaymentProviders(env: AppEnv) {
         throw new Error("支付通道未配置");
       }
       const payload = { ...order, channel: pickedChannel, method: providerInfo.providerKey };
-      return providerInfo.provider.createPayment(payload);
+      return await providerInfo.provider.createPayment(payload);
     },
     verifyCallback(body: any): PaymentCallbackResult | null {
       if (body?.token || body?.payType === "epusdt") {

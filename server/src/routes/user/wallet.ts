@@ -178,7 +178,7 @@ export function createWalletRouter(ctx: AppContext) {
       }
     }
 
-    const created = payment.create(
+    const created = await payment.create(
       {
         tradeNo,
         amount: amt,
@@ -188,6 +188,10 @@ export function createWalletRouter(ctx: AppContext) {
       },
       channel
     );
+    if (!created.success || !created.payUrl) {
+      const msg = created.message || "创建支付订单失败";
+      return errorResponse(res, msg, 500);
+    }
     return successResponse(
       res,
       { trade_no: tradeNo, amount: amt, status: 0, method: created.method, pay_url: created.payUrl },
