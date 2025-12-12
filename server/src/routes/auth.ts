@@ -387,20 +387,75 @@ export function createAuthRouter(ctx: AppContext) {
   });
 
   router.post("/login", async (req: Request, res: Response) => {
-    const { email, password, two_factor_code, backup_code, remember, twoFactorTrustToken } = req.body || {};
+    const {
+      email,
+      password,
+      two_factor_code,
+      backup_code,
+      remember,
+      twoFactorTrustToken,
+      turnstileToken,
+      ["cf-turnstile-response"]: cfTurnstileResponse
+    } = (req.body || {}) as any;
     if (!email || !password) {
       return errorResponse(res, "参数缺失", 400);
     }
     try {
+      const clientIp =
+        (req.headers["cf-connecting-ip"] as string | undefined) ||
+        (req.headers["x-forwarded-for"] as string | undefined) ||
+        (req.headers["x-real-ip"] as string | undefined) ||
+        req.ip ||
+        "unknown";
+      const userAgent = (req.headers["user-agent"] as string | undefined) || "";
+
+      const turnstileSecret = (ctx.env.TURNSTILE_SECRET_KEY || "").trim();
+      const turnstileEnabled = turnstileSecret.length > 0;
+      const tokenValue =
+        typeof turnstileToken === "string" && turnstileToken.trim()
+          ? turnstileToken.trim()
+          : typeof cfTurnstileResponse === "string" && cfTurnstileResponse.trim()
+          ? cfTurnstileResponse.trim()
+          : "";
+
+      if (turnstileEnabled) {
+        if (!tokenValue) {
+          return errorResponse(res, "请完成人机验证后再登录", 400);
+        }
+        try {
+          const params = new URLSearchParams();
+          params.set("secret", turnstileSecret);
+          params.set("response", tokenValue);
+          if (clientIp && clientIp !== "unknown") {
+            params.set("remoteip", clientIp);
+          }
+
+          const resp = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+            method: "POST",
+            body: params
+          });
+
+          if (!resp.ok) {
+            return errorResponse(res, "人机验证失败，请稍后重试", 400);
+          }
+          const verifyResult = (await resp.json()) as { success?: boolean; ["error-codes"]?: string[] };
+          if (!verifyResult.success) {
+            return errorResponse(res, "人机验证未通过，请重试", 400);
+          }
+        } catch (e) {
+          return errorResponse(res, "人机验证异常，请稍后重试", 400);
+        }
+      }
+
       const result = await authService.login(
         email,
         password,
-        req.ip,
+        clientIp,
         Boolean(remember),
         typeof twoFactorTrustToken === "string" ? twoFactorTrustToken : null,
         two_factor_code,
         backup_code,
-        req.headers["user-agent"] as string | undefined
+        userAgent
       );
       if (!result.success) {
         if ((result as any).twoFactorRequired && (result as any).challengeId) {

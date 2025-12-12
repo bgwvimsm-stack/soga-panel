@@ -47,7 +47,11 @@ export class AuthService {
     this.trustTTL = 60 * 60 * 24 * 30; // 30 天记住设备
     this.twoFactorChallengeTTL = 60 * 5; // 5 分钟验证窗口
     this.env = env;
-    this.emailCodeService = new EmailCodeService(db);
+    const expireMinutesEnv = env.MAIL_VERIFICATION_EXPIRE_MINUTES;
+    const expireMinutes = expireMinutesEnv
+      ? Math.max(1, Number.parseInt(expireMinutesEnv, 10) || 15)
+      : 15;
+    this.emailCodeService = new EmailCodeService(db, expireMinutes * 60);
     this.emailService = new EmailService(env);
     this.twoFactorService = new TwoFactorService(env);
   }

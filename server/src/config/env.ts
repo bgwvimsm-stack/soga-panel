@@ -20,10 +20,15 @@ const envSchema = z.object({
   MAIL_PROVIDER: z.string().optional(),
   MAIL_FROM: z.string().optional(),
   MAIL_RESEND_KEY: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  SENDGRID_API_KEY: z.string().optional(),
   MAIL_SMTP_HOST: z.string().optional(),
   MAIL_SMTP_PORT: z.coerce.number().int().positive().optional(),
   MAIL_SMTP_USER: z.string().optional(),
   MAIL_SMTP_PASS: z.string().optional(),
+  SMTP_SECURE: z.string().optional(),
+  SMTP_STARTTLS: z.string().optional(),
+  SMTP_AUTH_TYPE: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().optional(),
@@ -32,6 +37,7 @@ const envSchema = z.object({
   GITHUB_REDIRECT_URI: z.string().optional(),
   JWT_SECRET: z.string().optional(),
   TWO_FACTOR_SECRET_KEY: z.string().optional(),
+  TURNSTILE_SECRET_KEY: z.string().optional(),
   NODE_API_KEY: z.string().optional(),
   EPAY_KEY: z.string().optional(),
   EPAY_PID: z.string().optional(),
@@ -46,7 +52,12 @@ const envSchema = z.object({
   EPUSDT_NOTIFY_URL: z.string().optional(),
   EPUSDT_RETURN_URL: z.string().optional(),
   SITE_NAME: z.string().optional(),
-  SITE_URL: z.string().optional()
+  SITE_URL: z.string().optional(),
+  MAIL_VERIFICATION_EXPIRE_MINUTES: z.string().optional(),
+  MAIL_VERIFICATION_COOLDOWN_SECONDS: z.string().optional(),
+  MAIL_VERIFICATION_DAILY_LIMIT: z.string().optional(),
+  MAIL_VERIFICATION_IP_HOURLY_LIMIT: z.string().optional(),
+  MAIL_VERIFICATION_ATTEMPT_LIMIT: z.string().optional()
 });
 
 export type AppEnv = z.infer<typeof envSchema>;
