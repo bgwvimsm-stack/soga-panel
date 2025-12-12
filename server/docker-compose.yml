@@ -44,3 +44,23 @@ services:
       - "8080:80"
     depends_on:
       - mariadb
+
+  node-server:
+    image: oven/bun:1
+    container_name: soga-node-server
+    restart: unless-stopped
+    working_dir: /app/server
+    volumes:
+      - ..:/app
+    env_file:
+      - .env
+    environment:
+      DB_HOST: mariadb
+      REDIS_HOST: redis
+    depends_on:
+      - mariadb
+      - redis
+    ports:
+      - "18787:18787"
+    command: >
+      sh -c "bun install && bun run dev"
