@@ -174,7 +174,9 @@ loadRechargeRecords();
 
         <template #payment_method="{ row }">
           <el-tag v-if="row.payment_method === 'alipay'" type="primary">支付宝</el-tag>
-          <el-tag v-else-if="row.payment_method === 'wechat'" type="success">微信</el-tag>
+          <el-tag v-else-if="row.payment_method === 'wxpay'" type="success">微信</el-tag>
+          <el-tag v-else-if="row.payment_method === 'crypto'" type="success">数字货币</el-tag>
+          <el-tag v-else-if="row.payment_method === 'gift_card'" type="success">礼品卡</el-tag>
           <el-tag v-else>{{ row.payment_method }}</el-tag>
         </template>
 
