@@ -30,6 +30,7 @@ import { createAdminPackageRouter } from "./admin/admin-package";
 import { createPaymentConfigRouter } from "./payment/config";
 import { createAdminTicketRouter } from "./admin/admin-ticket";
 import { createAdminAnnouncementRouter } from "./admin/admin-announcement";
+import { createConfigRouter as createAdminConfigRouter } from "./admin/config";
 
 type RouteDeps = AppContext;
 
@@ -114,8 +115,11 @@ export function registerRoutes(app: Express, deps: RouteDeps) {
   app.use("/api/admin/command", createAdminCommandRouter(deps));
   app.use("/api/admin/log", createAdminLogRouter(deps));
   app.use("/api/admin/store", createAdminStoreRouter(deps));
+   // 兼容前端 /admin/package-stats
+  app.use("/api/admin/package-stats", createAdminStoreRouter(deps));
   app.use("/api/admin/tickets", createAdminTicketRouter(deps));
   app.use("/api/admin/announcements", createAdminAnnouncementRouter(deps));
+  app.use("/api/admin/system-configs", createAdminConfigRouter(deps));
   app.use("/api/rebate", createRebateRouter(deps));
   app.use("/api/user/rebate", createRebateRouter(deps)); // 兼容前端路径
   app.use("/api/store", createStoreRouter(deps));

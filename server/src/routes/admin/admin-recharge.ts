@@ -31,7 +31,10 @@ export function createAdminRechargeRouter(ctx: AppContext) {
     const amt = Number(amount);
     if (!uid || Number.isNaN(uid)) return errorResponse(res, "user_id 无效", 400);
     if (!amt || amt <= 0) return errorResponse(res, "金额无效", 400);
-    const tradeNo = `adm_rc_${Date.now()}`;
+    const tradeNo = `ADM${Date.now().toString().slice(-8)}${Math.random()
+      .toString(36)
+      .slice(2, 6)
+      .toUpperCase()}`;
     await ctx.dbService.createRechargeRecord(uid, amt, tradeNo, method || "manual");
     if (mark_paid) {
       const record = await ctx.dbService.markRechargePaid(tradeNo);

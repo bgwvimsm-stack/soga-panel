@@ -9,7 +9,7 @@ import { TrafficService } from "../../services/traffic";
 import { TicketService } from "../../services/ticket";
 import { UserAuditService } from "../../services/userAudit";
 import { TwoFactorService } from "../../services/twoFactor";
-import { ensureString } from "../../utils/d1";
+import { ensureNumber, ensureString } from "../../utils/d1";
 
 export function createUserRouter(ctx: AppContext) {
   const router = Router();
@@ -19,6 +19,9 @@ export function createUserRouter(ctx: AppContext) {
   const ticketService = new TicketService(ctx.dbService);
   const auditService = new UserAuditService(ctx.dbService);
   const twoFactorService = new TwoFactorService(ctx.env);
+
+  const toNumber = (value: unknown, fallback = 0): number => ensureNumber(value, fallback);
+  const toText = (value: unknown, fallback = ""): string => ensureString(value, fallback);
 
   const verifyUserTwoFactorCode = async (userRow: any, code: string) => {
     if (!code) return { success: false, usedBackup: false };
@@ -109,13 +112,59 @@ export function createUserRouter(ctx: AppContext) {
 
   router.put("/profile", async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { username } = req.body || {};
-    if (!username) return errorResponse(res, "用户名不能为空", 400);
-    const exists = await ctx.dbService.getUserByUsername(username);
-    if (exists && Number(exists.id) !== Number(user.id)) {
-      return errorResponse(res, "用户名已被占用", 400);
+    const { username, email } = req.body || {};
+
+    const current = await ctx.dbService.getUserById(Number(user.id));
+    if (!current) {
+      return errorResponse(res, "用户不存在", 404);
     }
-    await ctx.dbService.updateUserProfile(Number(user.id), { username });
+
+    const currentUsername = ensureString(current.username);
+    const currentEmail = ensureString(current.email);
+
+    const hasUsernameInput = typeof username === "string";
+    const hasEmailInput = typeof email === "string";
+
+    const nextUsername = hasUsernameInput ? ensureString(username).trim() : currentUsername;
+    const nextEmailRaw = hasEmailInput ? ensureString(email).trim() : currentEmail;
+    const nextEmail = nextEmailRaw ? nextEmailRaw.toLowerCase() : nextEmailRaw;
+
+    const isUsernameChanged = hasUsernameInput && nextUsername !== currentUsername;
+    const isEmailChanged = hasEmailInput && nextEmail !== currentEmail.toLowerCase();
+
+    if (isUsernameChanged && isEmailChanged) {
+      return errorResponse(res, "不能同时修改用户名和邮箱，请分别修改", 400);
+    }
+
+    const updates: { username?: string; email?: string } = {};
+
+    if (isUsernameChanged) {
+      if (!nextUsername) {
+        return errorResponse(res, "用户名不能为空", 400);
+      }
+      const exists = await ctx.dbService.getUserByUsername(nextUsername);
+      if (exists && Number(exists.id) !== Number(user.id)) {
+        return errorResponse(res, "用户名已被占用", 400);
+      }
+      updates.username = nextUsername;
+    }
+
+    if (isEmailChanged) {
+      if (!nextEmail) {
+        return errorResponse(res, "邮箱不能为空", 400);
+      }
+      const existsEmail = await ctx.dbService.getUserByEmail(nextEmail);
+      if (existsEmail && Number(existsEmail.id) !== Number(user.id)) {
+        return errorResponse(res, "该邮箱已被使用，请选择其他邮箱", 400);
+      }
+      updates.email = nextEmail;
+    }
+
+    if (!updates.username && !updates.email) {
+      return errorResponse(res, "没有需要更新的字段", 400);
+    }
+
+    await ctx.dbService.updateUserProfile(Number(user.id), updates);
     return successResponse(res, null, "资料已更新");
   });
 
@@ -512,6 +561,86 @@ export function createUserRouter(ctx: AppContext) {
     return successResponse(res, null, "Bark 设置已更新");
   });
 
+  // Bark 通知测试（对齐 Worker 版 /api/user/bark-test）
+  router.post("/bark-test", async (req: Request, res: Response) => {
+    const user = (req as any).user;
+    const userId = Number(user.id);
+    if (!userId) return errorResponse(res, "未登录", 401);
+
+    let testBarkKey: string | undefined;
+    const body = req.body || {};
+    if (typeof body.bark_key === "string") {
+      testBarkKey = body.bark_key.trim();
+    }
+
+    try {
+      if (!testBarkKey) {
+        const row = await ctx.dbService.db
+          .prepare("SELECT bark_key FROM users WHERE id = ?")
+          .bind(userId)
+          .first<{ bark_key?: string | null } | null>();
+        if (row?.bark_key) {
+          testBarkKey = String(row.bark_key);
+        }
+      }
+
+      if (!testBarkKey) {
+        return errorResponse(res, "请先设置 Bark Key", 400);
+      }
+
+      const title = encodeURIComponent("Bark通知测试");
+      const content = encodeURIComponent("如果您收到这条消息，说明Bark配置正确！");
+
+      let testUrl: string;
+      if (testBarkKey.startsWith("http://") || testBarkKey.startsWith("https://")) {
+        const base = testBarkKey.endsWith("/") ? testBarkKey.slice(0, -1) : testBarkKey;
+        testUrl = `${base}/${title}/${content}`;
+      } else {
+        testUrl = `https://api.day.app/${testBarkKey}/${title}/${content}`;
+      }
+
+      const response = await fetch(testUrl, {
+        method: "GET",
+        headers: {
+          "User-Agent": "Soga-Panel-Server/1.0"
+        }
+      });
+
+      if (!response.ok) {
+        // 测试失败，自动禁用 Bark
+        await ctx.dbService.updateUserBarkSettings(userId, testBarkKey, false);
+        return errorResponse(res, `测试失败，HTTP 状态码: ${response.status}，已自动禁用 Bark 通知`, 400);
+      }
+
+      let result: any = null;
+      try {
+        result = await response.json();
+      } catch {
+        // 部分 Bark 服务可能不返回 JSON，忽略解析错误
+      }
+
+      const okCode = result && (result.code === 200 || result.message === "success");
+      if (!okCode && result) {
+        await ctx.dbService.updateUserBarkSettings(userId, testBarkKey, false);
+        return errorResponse(
+          res,
+          `Bark 服务器返回错误: ${String(result.message || "未知错误")}，已自动禁用 Bark 通知`,
+          400
+        );
+      }
+
+      return successResponse(res, {
+        message: "Bark 通知测试成功，请检查您的设备是否收到测试消息",
+        success: true,
+        bark_response: result ?? null
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await ctx.dbService.updateUserBarkSettings(userId, testBarkKey ?? null, false);
+      return errorResponse(res, `网络请求失败: ${message}，已自动禁用 Bark 通知`, 400);
+    }
+  });
+
   router.get("/invite", async (req: Request, res: Response) => {
     const user = (req as any).user;
     const stats = await ctx.dbService.getUserInviteStats(Number(user.id));
@@ -717,11 +846,17 @@ export function createUserRouter(ctx: AppContext) {
     return successResponse(res, data);
   });
 
-  // 手动触发流量更新（占位实现）
+  // 手动触发流量更新（同步当日 traffic_logs 到 daily_traffic / system_traffic_summary）
   router.post("/traffic/manual-update", async (req: Request, res: Response) => {
-    const user = (req as any).user;
-    // 此处可对接实时统计逻辑，当前返回占位成功
-    return successResponse(res, { user_id: user.id, updated: true }, "已触发手动同步");
+    try {
+      const now = new Date(Date.now() + 8 * 60 * 60 * 1000);
+      const recordDate = now.toISOString().slice(0, 10);
+      await ctx.dbService.aggregateTrafficForDate(recordDate);
+      return successResponse(res, null, "已触发手动同步");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return errorResponse(res, message || "手动同步失败", 500);
+    }
   });
 
   // 审计：规则列表
@@ -750,6 +885,25 @@ export function createUserRouter(ctx: AppContext) {
 
   // 用户共享账号（苹果账号等）
   router.get("/shared-ids", async (_req: Request, res: Response) => {
+    type SharedIdRow = {
+      id: number;
+      name: string | null;
+      fetch_url: string | null;
+      remote_account_id: number | null;
+      status: number | null;
+    };
+
+    type SharedIdPayload = {
+      id: number;
+      name: string;
+      remote_account_id: number;
+      status: "ok" | "missing" | "error";
+      account: unknown;
+      fetched_at?: string;
+      message?: string | null;
+      error?: string;
+    };
+
     const rows = await ctx.dbService.db
       .prepare(
         `
@@ -759,24 +913,84 @@ export function createUserRouter(ctx: AppContext) {
         ORDER BY id DESC
       `
       )
-      .all();
-    const now = new Date().toISOString();
-    const items =
-      rows.results?.map((row: any) => {
-        const enabled = Number(row.status ?? 0) === 1;
-        const hasUrl = Boolean(row.fetch_url);
-        const status: "ok" | "missing" | "error" = enabled ? (hasUrl ? "ok" : "missing") : "error";
+      .all<SharedIdRow>();
+
+    const list = rows.results ?? [];
+
+    const fetchAccount = async (record: SharedIdRow): Promise<SharedIdPayload> => {
+      const id = toNumber(record.id);
+      const base: SharedIdPayload = {
+        id,
+        name: toText(record.name),
+        remote_account_id: toNumber(record.remote_account_id),
+        status: "error",
+        account: null,
+        error: undefined
+      };
+
+      if (!record.fetch_url) {
         return {
-          id: row.id,
-          name: row.name,
-          remote_account_id: row.remote_account_id,
-          status,
-          account: null,
-          fetched_at: now,
-          message: hasUrl ? undefined : "未配置拉取地址",
-          error: enabled ? undefined : "账号已禁用"
+          ...base,
+          status: "missing",
+          fetched_at: new Date().toISOString(),
+          message: "未配置拉取地址",
+          error: "未配置拉取地址"
         };
-      }) ?? [];
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+      try {
+        const response = await fetch(record.fetch_url, {
+          method: "GET",
+          headers: { Accept: "application/json" },
+          signal: controller.signal
+        });
+
+        if (!response.ok) {
+          throw new Error(`远程接口返回状态 ${response.status}`);
+        }
+
+        const payload = (await response.json()) as Record<string, unknown>;
+        const rawAccounts = (payload as { accounts?: unknown }).accounts;
+        const accounts = Array.isArray(rawAccounts) ? rawAccounts : [];
+
+        const matched =
+          accounts.find((item) => {
+            const rowObj = item as Record<string, unknown>;
+            return Number(rowObj?.id) === toNumber(record.remote_account_id);
+          }) ?? null;
+
+        const isMatched = Boolean(matched);
+        const message =
+          toText((payload as { msg?: unknown }).msg) ||
+          toText((payload as { message?: unknown }).message);
+
+        return {
+          ...base,
+          status: isMatched ? "ok" : "missing",
+          fetched_at: new Date().toISOString(),
+          account: matched,
+          message,
+          error: isMatched ? undefined : "未找到匹配的ID"
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "远程拉取失败";
+        return {
+          ...base,
+          status: "error",
+          fetched_at: new Date().toISOString(),
+          account: null,
+          error: message
+        };
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    const items = await Promise.all(list.map((row) => fetchAccount(row)));
     return successResponse(res, { items, count: items.length });
   });
 

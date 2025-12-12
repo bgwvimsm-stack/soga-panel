@@ -355,20 +355,80 @@ export class DatabaseService {
     return result.results || [];
   }
 
-  async listUsers(params: { page: number; pageSize: number }) {
-    const offset = (params.page - 1) * params.pageSize;
+  async listUsers(params: {
+    page: number;
+    pageSize: number;
+    search?: string;
+    class?: number;
+    status?: number;
+  }) {
+    const page = params.page > 0 ? params.page : 1;
+    const pageSize = params.pageSize > 0 ? params.pageSize : 20;
+    const offset = (page - 1) * pageSize;
+
+    const conditions: string[] = [];
+    const values: any[] = [];
+
+    if (params.search && params.search.trim()) {
+      const keyword = `%${params.search.trim()}%`;
+      conditions.push("(email LIKE ? OR username LIKE ?)");
+      values.push(keyword, keyword);
+    }
+
+    if (typeof params.class === "number" && !Number.isNaN(params.class)) {
+      conditions.push("class = ?");
+      values.push(params.class);
+    }
+
+    if (typeof params.status === "number" && !Number.isNaN(params.status)) {
+      conditions.push("status = ?");
+      values.push(params.status);
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
     const rows = await this.db.db
       .prepare(
         `
-        SELECT id, email, username, status, class, expire_time, class_expire_time, transfer_total, transfer_enable, money, rebate_available, created_at, updated_at
+        SELECT 
+          id,
+          email,
+          username,
+          uuid,
+          class,
+          class_expire_time,
+          upload_traffic,
+          download_traffic,
+          (upload_today + download_today) AS transfer_today,
+          transfer_enable,
+          transfer_total,
+          expire_time,
+          status,
+          is_admin,
+          reg_date,
+          last_login_time,
+          created_at,
+          bark_key,
+          bark_enabled,
+          speed_limit,
+          device_limit,
+          money,
+          register_ip,
+          invite_code,
+          invite_limit,
+          invite_used
         FROM users
+        ${where}
         ORDER BY id DESC
         LIMIT ? OFFSET ?
       `
       )
-      .bind(params.pageSize, offset)
+      .bind(...values, pageSize, offset)
       .all();
-    const count = await this.db.db.prepare("SELECT COUNT(*) as total FROM users").first<{ total?: number }>();
+    const count = await this.db.db
+      .prepare(`SELECT COUNT(*) as total FROM users ${where}`)
+      .bind(...values)
+      .first<{ total?: number }>();
     return {
       data: rows.results || [],
       total: Number(count?.total ?? 0)
@@ -784,10 +844,19 @@ export class DatabaseService {
     const rows = await this.db.db
       .prepare(
         `
-        SELECT id, amount, payment_method, trade_no, status, created_at, paid_at
-        FROM recharge_records
-        WHERE user_id = ?
-        ORDER BY created_at DESC
+        SELECT 
+          rr.id,
+          rr.amount,
+          rr.payment_method,
+          rr.trade_no,
+          rr.status,
+          rr.created_at,
+          rr.paid_at,
+          gcr.code AS gift_card_code
+        FROM recharge_records rr
+        LEFT JOIN gift_card_redemptions gcr ON gcr.recharge_record_id = rr.id
+        WHERE rr.user_id = ?
+        ORDER BY rr.created_at DESC
         LIMIT ? OFFSET ?
       `
       )
@@ -1275,20 +1344,59 @@ export class DatabaseService {
     await this.db.db.prepare("DELETE FROM system_configs WHERE `key` = ?").bind(key).run();
   }
 
-  async listNodes(params: { page: number; pageSize: number }) {
-    const offset = (params.page - 1) * params.pageSize;
+  async listNodes(params: {
+    page: number;
+    pageSize: number;
+    keyword?: string;
+    status?: number | null;
+  }) {
+    const page = params.page > 0 ? params.page : 1;
+    const pageSize = params.pageSize > 0 ? params.pageSize : 20;
+    const offset = (page - 1) * pageSize;
+
+    const conditions: string[] = [];
+    const values: any[] = [];
+
+    if (params.keyword && params.keyword.trim()) {
+      conditions.push("name LIKE ?");
+      values.push(`%${params.keyword.trim()}%`);
+    }
+
+    if (typeof params.status === "number" && !Number.isNaN(params.status)) {
+      conditions.push("status = ?");
+      values.push(params.status);
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
     const rows = await this.db.db
       .prepare(
         `
-        SELECT id, name, type, node_class, status, node_bandwidth, node_bandwidth_limit, traffic_multiplier, created_at, updated_at
+        SELECT 
+          id,
+          name,
+          type,
+          node_class,
+          node_bandwidth,
+          node_bandwidth_limit,
+          traffic_multiplier,
+          bandwidthlimit_resetday,
+          node_config,
+          status,
+          created_at,
+          updated_at
         FROM nodes
+        ${where}
         ORDER BY id DESC
         LIMIT ? OFFSET ?
       `
       )
-      .bind(params.pageSize, offset)
+      .bind(...values, pageSize, offset)
       .all();
-    const total = await this.db.db.prepare("SELECT COUNT(*) as total FROM nodes").first<{ total?: number }>();
+    const total = await this.db.db
+      .prepare(`SELECT COUNT(*) as total FROM nodes ${where}`)
+      .bind(...values)
+      .first<{ total?: number }>();
     return { data: rows.results || [], total: Number(total?.total ?? 0) };
   }
 
@@ -1362,14 +1470,19 @@ export class DatabaseService {
     amount: number;
     method: string;
     accountPayload?: Record<string, unknown>;
-  }) {
+    feeRate?: number;
+    feeAmount?: number;
+  }): Promise<number> {
     const now = new Date();
-    await this.db.db
+    const feeRate = typeof params.feeRate === "number" ? params.feeRate : 0;
+    const feeAmount = typeof params.feeAmount === "number" ? params.feeAmount : 0;
+    const result = toRunResult(
+      await this.db.db
       .prepare(
         `
         INSERT INTO rebate_withdrawals (
           user_id, amount, method, account_payload, fee_rate, fee_amount, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, 0, 0, 'pending', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
       `
       )
       .bind(
@@ -1377,10 +1490,15 @@ export class DatabaseService {
         params.amount,
         params.method,
         params.accountPayload ? JSON.stringify(params.accountPayload) : null,
+        feeRate,
+        feeAmount,
         now,
         now
       )
-      .run();
+      .run()
+    );
+    const id = getLastRowId(result);
+    return id ?? 0;
   }
 
   async listWithdrawals(params: { page: number; pageSize: number; status?: string }) {
@@ -1699,7 +1817,15 @@ export class DatabaseService {
     const rows = await this.db.db
       .prepare(
         `
-        SELECT rr.*, u.email as invitee_email, u.username as invitee_username
+        SELECT 
+          rr.*,
+          u.email as invitee_email,
+          u.username as invitee_username,
+          (
+            SELECT COALESCE(SUM(amount), 0)
+            FROM rebate_transactions rt
+            WHERE rt.referral_id = rr.id AND rt.amount > 0
+          ) AS total_rebate
         FROM referral_relations rr
         LEFT JOIN users u ON rr.invitee_id = u.id
         WHERE rr.inviter_id = ?
@@ -2255,20 +2381,83 @@ export class DatabaseService {
   }
 
   async getSystemStats() {
-    const stats = await this.db
+    const usersRow = await this.db
       .prepare(
         `
         SELECT 
-          (SELECT COUNT(*) FROM users WHERE status = 1) as active_users,
-          (SELECT COUNT(*) FROM users WHERE class_expire_time IS NOT NULL 
-           AND class_expire_time < CURRENT_TIMESTAMP AND class > 0) as expired_level_users,
-          (SELECT COUNT(*) FROM users WHERE expire_time < CURRENT_TIMESTAMP) as expired_account_users,
-          (SELECT COUNT(*) FROM users WHERE transfer_total >= transfer_enable) as exhausted_users,
-          (SELECT COUNT(*) FROM nodes WHERE status = 1) as active_nodes
+          COUNT(*)                                   AS total_users,
+          SUM(CASE WHEN transfer_total > 0 THEN 1 ELSE 0 END) AS active_users,
+          SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END)         AS disabled_users,
+          SUM(CASE WHEN is_admin = 1 THEN 1 ELSE 0 END)       AS admin_users
+        FROM users
       `
       )
-      .first();
+      .first<{
+        total_users?: number;
+        active_users?: number;
+        disabled_users?: number;
+        admin_users?: number;
+      }>();
 
-    return stats || {};
+    const nodesRow = await this.db
+      .prepare(
+        `
+        SELECT 
+          COUNT(*)                                   AS total_nodes,
+          SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS active_nodes
+        FROM nodes
+      `
+      )
+      .first<{
+        total_nodes?: number;
+        active_nodes?: number;
+      }>();
+
+    const onlineNodesRow = await this.db
+      .prepare(
+        `
+        SELECT COUNT(DISTINCT node_id) AS online_nodes
+        FROM node_status
+        WHERE created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 5 MINUTE)
+      `
+      )
+      .first<{ online_nodes?: number }>();
+
+    const trafficRow = await this.db
+      .prepare(
+        `
+        SELECT 
+          COALESCE(SUM(transfer_enable), 0)                 AS total_traffic,
+          COALESCE(SUM(upload_today + download_today), 0)   AS today_traffic,
+          COALESCE(AVG(transfer_enable), 0)                 AS average_quota
+        FROM users
+      `
+      )
+      .first<{
+        total_traffic?: number;
+        today_traffic?: number;
+        average_quota?: number;
+      }>();
+
+    return {
+      users: {
+        total: Number(usersRow?.total_users ?? 0),
+        active: Number(usersRow?.active_users ?? 0),
+        disabled: Number(usersRow?.disabled_users ?? 0),
+        admins: Number(usersRow?.admin_users ?? 0)
+      },
+      nodes: {
+        total: Number(nodesRow?.total_nodes ?? 0),
+        active: Number(nodesRow?.active_nodes ?? 0),
+        online: Number(onlineNodesRow?.online_nodes ?? 0),
+        offline:
+          Number(nodesRow?.active_nodes ?? 0) - Number(onlineNodesRow?.online_nodes ?? 0)
+      },
+      traffic: {
+        total: Number(trafficRow?.total_traffic ?? 0),
+        today: Number(trafficRow?.today_traffic ?? 0),
+        average_quota: Number(trafficRow?.average_quota ?? 0)
+      }
+    };
   }
 }

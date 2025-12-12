@@ -38,6 +38,68 @@ const FILE_EXTENSIONS = {
 
 type SubscriptionType = keyof typeof GENERATORS;
 
+async function resolveSiteName(ctx: AppContext): Promise<string> {
+  try {
+    const configs = await ctx.dbService.listSystemConfigsMap();
+    if (configs.site_name && typeof configs.site_name === "string") {
+      return configs.site_name;
+    }
+  } catch {
+    // 忽略异常，回退到环境变量
+  }
+  if (ctx.env.SITE_NAME && typeof ctx.env.SITE_NAME === "string") {
+    return ctx.env.SITE_NAME;
+  }
+  return "Soga Panel";
+}
+
+async function resolveSiteUrl(ctx: AppContext): Promise<string> {
+  try {
+    const configs = await ctx.dbService.listSystemConfigsMap();
+    if (configs.site_url && typeof configs.site_url === "string") {
+      return configs.site_url;
+    }
+  } catch {
+    // 忽略异常，回退到环境变量
+  }
+  if (ctx.env.SITE_URL && typeof ctx.env.SITE_URL === "string") {
+    return ctx.env.SITE_URL;
+  }
+  return "";
+}
+
+function sanitizeFilename(value: string): string {
+  const cleaned = String(value)
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .trim();
+  return cleaned.length > 0 ? cleaned : "soga_panel";
+}
+
+function isAscii(value: string): boolean {
+  return /^[\x00-\x7F]*$/.test(value);
+}
+
+function forceAsciiFilename(value: string): string {
+  const sanitized = sanitizeFilename(value);
+  const ascii = sanitized
+    .replace(/[^\x00-\x7F]/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return ascii.length > 0 ? ascii : "soga_panel";
+}
+
+function buildContentDisposition(filename: string): string {
+  const fallback = forceAsciiFilename(filename);
+  if (isAscii(filename)) {
+    return `attachment; filename=${fallback}`;
+  }
+  const encoded = encodeURIComponent(filename);
+  return `attachment; filename=${fallback}; filename*=UTF-8''${encoded}`;
+}
+
 export function createSubscriptionRouter(ctx: AppContext) {
   const router = Router();
 
@@ -93,19 +155,33 @@ async function handleSubscription(ctx: AppContext, type: SubscriptionType, req: 
     const generator = GENERATORS[type];
     const contentType = CONTENT_TYPES[type];
     const extension = FILE_EXTENSIONS[type];
+    let filename: string;
+    const siteUrl = await resolveSiteUrl(ctx);
+
+    if (type === "clash" || type === "surge") {
+      const siteName = await resolveSiteName(ctx);
+      const safeSiteName = sanitizeFilename(siteName);
+      filename = `${safeSiteName}.${extension}`;
+    } else {
+      filename = `${type}.${extension}`;
+    }
+
     const config = generator(nodes, userRow);
-    const filename = `${type}_subscription.${extension}`;
     const uploadTraffic = ensureNumber(userRow.upload_traffic);
     const downloadTraffic = ensureNumber(userRow.download_traffic);
 
     const headers: Record<string, string> = {
-      "Content-Type": contentType,
-      "Content-Disposition": `attachment; filename=${filename}`,
-      "Profile-Update-Interval": "24",
-      "Subscription-Userinfo": `upload=${uploadTraffic}; download=${downloadTraffic}; total=${trafficQuota}; expire=${getExpireTimestamp(
+      "content-type": contentType,
+      "content-disposition": buildContentDisposition(filename),
+      "profile-update-interval": "24",
+      "subscription-userinfo": `upload=${uploadTraffic}; download=${downloadTraffic}; total=${trafficQuota}; expire=${getExpireTimestamp(
         userRow.expire_time
       )}`
     };
+
+    if (siteUrl) {
+      headers["profile-web-page-url"] = siteUrl;
+    }
 
     return res.status(200).set(headers).send(config);
   } catch (error) {

@@ -394,23 +394,26 @@ export function createStoreRouter(ctx: AppContext) {
     const rows = await ctx.db
       .prepare(
         `
-        SELECT ppr.id,
-               ppr.price,
-               ppr.package_price,
-               ppr.discount_amount,
-               ppr.coupon_code,
-               ppr.purchase_type,
-               ppr.trade_no,
-               ppr.status,
-               ppr.created_at,
-               ppr.paid_at,
-               ppr.expires_at,
-               p.name as package_name,
-               p.traffic_quota,
-               p.validity_days,
-               p.level
+        SELECT 
+          ppr.id,
+          ppr.price,
+          ppr.package_price,
+          ppr.discount_amount,
+          ppr.coupon_code,
+          ppr.purchase_type,
+          ppr.trade_no,
+          ppr.status,
+          ppr.created_at,
+          ppr.paid_at,
+          ppr.expires_at,
+          p.name AS package_name,
+          p.traffic_quota,
+          p.validity_days,
+          p.level,
+          gcr.code AS gift_card_code
         FROM package_purchase_records ppr
         LEFT JOIN packages p ON ppr.package_id = p.id
+        LEFT JOIN gift_card_redemptions gcr ON gcr.purchase_record_id = ppr.id
         WHERE ppr.user_id = ?
         ORDER BY ppr.created_at DESC
         LIMIT ? OFFSET ?
@@ -442,8 +445,14 @@ export function createStoreRouter(ctx: AppContext) {
         const discount = r.discount_amount != null ? ensureNumber(r.discount_amount, 0) : 0;
         const finalPrice = Math.max(0, packagePrice - discount);
         const purchaseType = r.purchase_type || "";
-        const displayTradeNo =
-          purchaseType === "gift_card" && r.trade_no ? String(r.trade_no).split("-")[0] : r.trade_no;
+        let displayTradeNo: string | null = r.trade_no;
+        if (purchaseType === "gift_card") {
+          if (r.gift_card_code) {
+            displayTradeNo = String(r.gift_card_code);
+          } else if (r.trade_no && String(r.trade_no).includes("-")) {
+            displayTradeNo = String(r.trade_no).split("-")[0] || r.trade_no;
+          }
+        }
         return {
           ...r,
           trade_no: displayTradeNo,

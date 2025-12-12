@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import type { AppContext } from "../types";
 import { errorResponse } from "../utils/response";
 import { ensureNumber, ensureString } from "../utils/d1";
+import { generateETag, isETagMatch, sendETagJson, sendNotModified } from "../utils/etag";
 
 export function createNodeRouter(ctx: AppContext) {
   const router = Router();
@@ -51,16 +52,98 @@ export function createNodeRouter(ctx: AppContext) {
   router.get("/v1/audit_rules", async (req: Request, res: Response) => {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
     if (!auth.success) return errorResponse(res, auth.message, 401);
-    const result = await ctx.dbService.getAuditRules();
-    return res.json(result);
+    const cacheKey = "audit_rules";
+    let rulesJson: string | null = null;
+    let rules: Array<{ id: number; rule: string | null }> = [];
+
+    try {
+      // 尝试从缓存读取
+      rulesJson = await ctx.cache.get(cacheKey);
+    } catch {
+      rulesJson = null;
+    }
+
+    if (rulesJson) {
+      try {
+        rules = JSON.parse(rulesJson);
+      } catch {
+        rules = [];
+      }
+    }
+
+    if (!rules.length) {
+      const dbRows = (await ctx.dbService.getAuditRules()) as Array<{ id: number; rule?: string | null }>;
+      rules = dbRows.map((row) => ({
+        id: row.id,
+        rule: typeof row.rule === "string" ? row.rule : null
+      }));
+      try {
+        await ctx.cache.set(cacheKey, JSON.stringify(rules), 86400);
+      } catch {
+        // 忽略缓存失败
+      }
+    }
+
+    const etag = generateETag(rules);
+    if (isETagMatch(req, etag)) {
+      return sendNotModified(res, etag);
+    }
+
+    return sendETagJson(res, rules, etag);
   });
 
   // 白名单
   router.get("/v1/white_list", async (req: Request, res: Response) => {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
     if (!auth.success) return errorResponse(res, auth.message, 401);
-    const result = await ctx.dbService.getWhiteList();
-    return res.json(result);
+    const cacheKey = "white_list";
+    let whiteListJson: string | null = null;
+    let whiteList: string[] = [];
+
+    try {
+      whiteListJson = await ctx.cache.get(cacheKey);
+    } catch {
+      whiteListJson = null;
+    }
+
+    if (whiteListJson) {
+      try {
+        whiteList = JSON.parse(whiteListJson);
+      } catch {
+        whiteList = [];
+      }
+    }
+
+    if (!whiteList.length) {
+      const dbRows = (await ctx.dbService.getWhiteList()) as Array<{ rule?: string | null }>;
+      const flattened: string[] = [];
+      for (const row of dbRows) {
+        const rule = typeof row.rule === "string" ? row.rule : "";
+        if (!rule) continue;
+        if (rule.includes("\n") || rule.includes("\r")) {
+          const parts = rule
+            .split(/\r?\n/)
+            .map((r) => r.trim())
+            .filter((r) => r.length > 0);
+          flattened.push(...parts);
+        } else {
+          flattened.push(rule);
+        }
+      }
+      whiteList = flattened;
+      try {
+        await ctx.cache.set(cacheKey, JSON.stringify(whiteList), 86400);
+      } catch {
+        // 忽略缓存失败
+      }
+    }
+
+    const etag = generateETag(whiteList);
+    if (isETagMatch(req, etag)) {
+      return sendNotModified(res, etag);
+    }
+
+    return sendETagJson(res, whiteList, etag);
   });
 
   // 流量上报

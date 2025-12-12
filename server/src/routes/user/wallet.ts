@@ -13,6 +13,12 @@ export function createWalletRouter(ctx: AppContext) {
   const referralService = new ReferralService(ctx.dbService);
   const payment = createPaymentProviders(ctx.env);
 
+  const buildGiftCardTradeNo = (code: string, usageIndex: number) => {
+    const cleanCode = String(code || "").trim();
+    const suffix = Date.now().toString().slice(-6);
+    return `${cleanCode}-${usageIndex}-${suffix}`;
+  };
+
   // 兼容前端 /user/wallet 获取余额
   router.get("/", async (req: Request, res: Response) => {
     const user = (req as any).user;
@@ -62,15 +68,25 @@ export function createWalletRouter(ctx: AppContext) {
     const total = ensureNumber(totalRow?.total, 0);
     const statusText: Record<number, string> = { 0: "待支付", 1: "已支付", 2: "已取消", 3: "支付失败" };
     const mapped = (records || []).map((r: any) => {
-      const pm = String(r.payment_method || "").toLowerCase();
+      const rawMethod = String(r.payment_method || "");
+      const pm = rawMethod.toLowerCase();
       const method =
         pm === "epay"
           ? "alipay"
           : pm === "epusdt"
             ? "usdt"
             : pm || "alipay";
+      let displayTradeNo = String(r.trade_no || "");
+      if (method === "gift_card") {
+        if (r.gift_card_code) {
+          displayTradeNo = String(r.gift_card_code);
+        } else if (displayTradeNo.includes("-")) {
+          displayTradeNo = displayTradeNo.split("-")[0] || displayTradeNo;
+        }
+      }
       return {
         ...r,
+        trade_no: displayTradeNo,
         payment_method: method,
         amount: ensureNumber(r.amount, 0),
         status_text: statusText[Number(r.status)] || "未知状态"
@@ -130,14 +146,15 @@ export function createWalletRouter(ctx: AppContext) {
     });
   });
 
-  // 创建充值订单（模拟，未接入第三方）
+  // 创建充值订单
   router.post("/recharge", async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { amount, method } = req.body || {};
+    const { amount, method, payment_method } = req.body || {};
     const amt = ensureNumber(amount, 0);
     if (amt <= 0) return errorResponse(res, "金额无效", 400);
     const tradeNo = `R${Date.now().toString().slice(-8)}${generateRandomString(4).toUpperCase()}`;
-    const channel = payment.normalizeChannel(method) || payment.getActiveChannels()[0] || null;
+    const rawChannel = typeof payment_method === "string" && payment_method.trim() ? payment_method : method;
+    const channel = payment.normalizeChannel(rawChannel) || payment.getActiveChannels()[0] || null;
     if (!channel) return errorResponse(res, "支付方式不可用", 400);
     const providerType = payment.getChannelProviderType(ctx.env, channel);
     if (!providerType || !(payment.providers as any)[providerType]?.isConfigured()) {
@@ -216,7 +233,7 @@ export function createWalletRouter(ctx: AppContext) {
     if (usedCount >= maxUsage) return errorResponse(res, "礼品卡已用完", 400);
 
     const usageIndex = usedCount + 1;
-    const tradeNo = `gc_${Date.now()}_${usageIndex}`;
+    const tradeNo = buildGiftCardTradeNo(String(code), usageIndex);
 
     const ensurePositive = (value: any) => {
       const n = ensureNumber(value, 0);

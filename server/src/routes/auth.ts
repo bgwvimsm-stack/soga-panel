@@ -59,14 +59,20 @@ export function createAuthRouter(ctx: AppContext) {
   });
 
   router.post("/register", async (req: Request, res: Response) => {
-    const { email, username, password, invite_code } = req.body || {};
+    const { email, username, password } = req.body || {};
+    const inviteCodeRaw =
+      typeof req.body?.inviteCode === "string"
+        ? req.body.inviteCode
+        : typeof req.body?.invite_code === "string"
+        ? req.body.invite_code
+        : "";
     if (!email || !username || !password) {
       return errorResponse(res, "参数缺失", 400);
     }
 
     try {
       let inviterId: number | null = null;
-      const inviter = await referralService.findInviterByCode(invite_code);
+      const inviter = await referralService.findInviterByCode(inviteCodeRaw);
       if (inviter) {
         inviterId = Number(inviter.id);
       }
@@ -80,7 +86,7 @@ export function createAuthRouter(ctx: AppContext) {
         await referralService.saveReferralRelation({
           inviterId,
           inviteeId: Number(result.userId),
-          inviteCode: invite_code ?? "",
+          inviteCode: inviteCodeRaw ?? "",
           inviteIp: req.ip
         });
         await referralService.incrementInviteUsage(inviterId);

@@ -18,8 +18,59 @@ export function createAdminSharedIdRouter(ctx: AppContext) {
 
   router.get("/", async (req: Request, res: Response) => {
     if (!ensureAdmin(req, res)) return;
-    const data = await ctx.dbService.listSharedIds();
-    return successResponse(res, data);
+    const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+    const limitRaw = req.query.limit ?? req.query.pageSize ?? 20;
+    const limitCandidate = Number(limitRaw) || 20;
+    const limit = Math.min(limitCandidate > 0 ? limitCandidate : 20, 100);
+    const keyword = typeof req.query.keyword === "string" ? req.query.keyword.trim() : "";
+    const statusParam = typeof req.query.status === "string" ? req.query.status.trim() : req.query.status;
+
+    const conditions: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (keyword) {
+      conditions.push("name LIKE ?");
+      params.push(`%${keyword}%`);
+    }
+
+    if (statusParam !== undefined && statusParam !== null && statusParam !== "") {
+      conditions.push("status = ?");
+      params.push(Number(statusParam));
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const totalRow = await ctx.db.db
+      .prepare(`SELECT COUNT(*) as total FROM shared_ids ${whereClause}`)
+      .bind(...params)
+      .first<{ total?: number | string | null }>();
+    const total = totalRow?.total != null ? Number(totalRow.total) || 0 : 0;
+    const offset = (page - 1) * limit;
+
+    const listResult = await ctx.db.db
+      .prepare(
+        `
+        SELECT id, name, fetch_url, remote_account_id, status, created_at, updated_at
+        FROM shared_ids
+        ${whereClause}
+        ORDER BY id DESC
+        LIMIT ? OFFSET ?
+      `
+      )
+      .bind(...params, limit, offset)
+      .all<Record<string, unknown>>();
+
+    const records = listResult.results ?? [];
+
+    return successResponse(res, {
+      records,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: total > 0 ? Math.ceil(total / limit) : 0
+      }
+    });
   });
 
   router.post("/", async (req: Request, res: Response) => {
