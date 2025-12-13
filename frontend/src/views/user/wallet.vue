@@ -568,10 +568,18 @@ const submitRecharge = async () => {
 
   submitting.value = true;
   try {
-    const response = await http.post('/wallet/recharge', {
+    const origin =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin.replace(/\/$/, '')
+        : '';
+    const payload: Record<string, unknown> = {
       amount: parseFloat(rechargeForm.amount),
       payment_method: rechargeForm.payment_method
-    });
+    };
+    if (origin) {
+      payload.return_url = `${origin}/user/wallet`;
+    }
+    const response = await http.post('/wallet/recharge', payload);
 
     if (response.code === 0 && response.data) {
       ElMessage.success('充值订单创建成功，正在跳转到支付页面...');
