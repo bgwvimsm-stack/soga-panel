@@ -1,6 +1,5 @@
 import { Router, type Request, type Response } from "express";
 import type { AppContext } from "../../types";
-import { errorResponse, successResponse } from "../../utils/response";
 import { createPaymentProviders } from "../../payment/factory";
 import { ReferralService } from "../../services/referral";
 
@@ -8,6 +7,40 @@ export function createPaymentCallbackRouter(ctx: AppContext) {
   const router = Router();
   const referralService = new ReferralService(ctx.dbService);
   const payment = createPaymentProviders(ctx.env);
+  const extractTradeNo = (payload: any) =>
+    payload?.out_trade_no || payload?.trade_no || payload?.order_id;
+  const normalizePayload = (payload: any): Record<string, any> => {
+    if (!payload) return {};
+    if (typeof payload === "string") {
+      const trimmed = payload.trim();
+      if (!trimmed) return {};
+      if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || trimmed.startsWith("[")) {
+        try {
+          return JSON.parse(trimmed);
+        } catch {
+          // ignore and try urlencoded
+        }
+      }
+      try {
+        const params = new URLSearchParams(trimmed);
+        const obj: Record<string, string> = {};
+        for (const [key, value] of params) {
+          obj[key] = value;
+        }
+        if (Object.keys(obj).length > 0) {
+          return obj;
+        }
+      } catch {
+        // ignore malformed payload
+      }
+      return {};
+    }
+    return payload;
+  };
+
+  const sendText = (res: Response, text: string) => {
+    res.status(200).type("text/plain").send(text);
+  };
 
   const settleTrade = async (tradeNo: string) => {
     const rechargeRecord = await ctx.dbService.markRechargePaid(String(tradeNo));
@@ -44,56 +77,91 @@ export function createPaymentCallbackRouter(ctx: AppContext) {
     return null;
   };
 
+  // 通用回调（兼容 Worker 的 /api/payment/callback）
+  // 自动识别易支付 / epusdt，并根据签名与状态入账
+  router.post("/", async (req: Request, res: Response) => {
+    const body = normalizePayload(req.body);
+    const verified = payment.verifyCallback(body);
+
+    if (!verified || !verified.ok || !verified.tradeNo) {
+      sendText(res, "fail");
+      return;
+    }
+
+    const result = await settleTrade(String(verified.tradeNo));
+    if (result) {
+      const successBody = verified.method === "epusdt" ? "ok" : "success";
+      sendText(res, successBody);
+      return;
+    }
+
+    sendText(res, "fail");
+  });
+
   // Epay 回调：校验 sign（简化版），再入账
   router.post("/epay", async (req: Request, res: Response) => {
-    const body = req.body || {};
-    const outTradeNo = body.out_trade_no || body.trade_no;
-    if (!outTradeNo) return errorResponse(res, "缺少 trade_no", 400);
-
+    const body = normalizePayload(req.body);
     const verified = payment.providers.epay.verifyCallback(body);
-    if (!verified.ok) return errorResponse(res, "签名错误", 400);
+    const tradeNo = extractTradeNo(body) || verified.tradeNo;
+    if (!tradeNo || !verified.ok) {
+      sendText(res, "fail");
+      return;
+    }
 
-    const result = await settleTrade(String(outTradeNo));
-    if (result) return successResponse(res, { trade_no: outTradeNo, ...result }, "ok");
-    return errorResponse(res, "订单不存在", 404);
+    const result = await settleTrade(String(tradeNo));
+    if (result) {
+      sendText(res, "success");
+      return;
+    }
+    sendText(res, "fail");
   });
 
   // Epusdt 回调：校验 token（若配置），再入账
   router.post("/epusdt", async (req: Request, res: Response) => {
-    const body = req.body || {};
-    const outTradeNo = body.out_trade_no || body.trade_no;
-    if (!outTradeNo) return errorResponse(res, "缺少 trade_no", 400);
-
+    const body = normalizePayload(req.body);
     const verified = payment.providers.epusdt.verifyCallback(body);
-    if (!verified.ok) return errorResponse(res, "签名错误", 400);
+    const tradeNo = extractTradeNo(body) || verified.tradeNo;
+    if (!tradeNo || !verified.ok) {
+      sendText(res, "fail");
+      return;
+    }
 
-    const result = await settleTrade(String(outTradeNo));
-    if (result) return successResponse(res, { trade_no: outTradeNo, ...result }, "ok");
-    return errorResponse(res, "订单不存在", 404);
+    const result = await settleTrade(String(tradeNo));
+    if (result) {
+      sendText(res, "ok");
+      return;
+    }
+    sendText(res, "fail");
   });
 
   // 通用回调：兼容 /api/payment/notify（易支付/epusdt 均可）
   router.all("/notify", async (req: Request, res: Response) => {
-    const body = req.method === "GET" ? req.query : req.body || {};
-    const outTradeNo = (body as any).out_trade_no || (body as any).trade_no;
-    if (!outTradeNo) return errorResponse(res, "缺少 trade_no", 400);
-
-    // 优先 epay 验签，其次 epusdt
+    const body =
+      req.method === "GET"
+        ? (req.query as Record<string, any>)
+        : normalizePayload(req.body);
     const epayVerified = payment.providers.epay.verifyCallback(body as any);
-    if (epayVerified.ok) {
-      const result = await settleTrade(String(outTradeNo));
-      if (result) return successResponse(res, { trade_no: outTradeNo, ...result }, "ok");
-      return errorResponse(res, "订单不存在", 404);
-    }
-
     const epusdtVerified = payment.providers.epusdt.verifyCallback(body as any);
-    if (epusdtVerified.ok) {
-      const result = await settleTrade(String(outTradeNo));
-      if (result) return successResponse(res, { trade_no: outTradeNo, ...result }, "ok");
-      return errorResponse(res, "订单不存在", 404);
+    const tradeNo =
+      extractTradeNo(body) || epayVerified.tradeNo || epusdtVerified.tradeNo;
+    if (!tradeNo) {
+      sendText(res, "fail");
+      return;
     }
 
-    return errorResponse(res, "签名错误", 400);
+    if (epayVerified.ok) {
+      const result = await settleTrade(String(tradeNo));
+      sendText(res, result ? "success" : "fail");
+      return;
+    }
+
+    if (epusdtVerified.ok) {
+      const result = await settleTrade(String(tradeNo));
+      sendText(res, result ? "ok" : "fail");
+      return;
+    }
+
+    sendText(res, "fail");
   });
 
   return router;

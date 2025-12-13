@@ -13,6 +13,79 @@ export function createWalletRouter(ctx: AppContext) {
   const referralService = new ReferralService(ctx.dbService);
   const payment = createPaymentProviders(ctx.env);
 
+  const parseBaseUrl = (value?: string | null) => {
+    if (!value) return "";
+    try {
+      const url = new URL(value);
+      return `${url.protocol}//${url.host}`;
+    } catch {
+      return "";
+    }
+  };
+
+  const getEnvSiteBase = () => {
+    const site = (ctx.env.SITE_URL || "").trim();
+    if (!site || site.includes("panel.example.com")) return "";
+    const parsed = parseBaseUrl(site);
+    return parsed || site.replace(/\/$/, "");
+  };
+
+  const detectBaseUrl = (req: Request): string => {
+    const explicitOrigin =
+      req.get("x-frontend-url") ||
+      req.get("x-frontend-origin") ||
+      req.get("x-forwarded-origin") ||
+      req.get("cf-connecting-origin");
+    const explicitBase = parseBaseUrl(explicitOrigin);
+    if (explicitBase) return explicitBase;
+
+    const originBase = parseBaseUrl(req.get("origin"));
+    if (originBase) return originBase;
+
+    const refererBase = parseBaseUrl(req.get("referer"));
+    if (refererBase) return refererBase;
+
+    const queryOriginValue =
+      typeof req.query.return_origin === "string" ? req.query.return_origin : "";
+    const queryOrigin = parseBaseUrl(queryOriginValue);
+    if (queryOrigin) return queryOrigin;
+
+    const siteBase = getEnvSiteBase();
+    if (siteBase) return siteBase;
+
+    const forwardedHostHeader = req.get("x-forwarded-host");
+    if (forwardedHostHeader) {
+      const forwardedHost = forwardedHostHeader.split(",")[0]?.trim();
+      if (forwardedHost) {
+        const protoHeader = req.get("x-forwarded-proto") || req.protocol || "https";
+        const proto = protoHeader.split(",")[0]?.trim() || "https";
+        return `${proto}://${forwardedHost}`;
+      }
+    }
+
+    const host = req.get("host");
+    if (host) {
+      const forwarded = req.headers["x-forwarded-proto"];
+      let forwardedProto = "";
+      if (Array.isArray(forwarded)) {
+        forwardedProto = forwarded[0] || "";
+      } else if (typeof forwarded === "string") {
+        forwardedProto = forwarded;
+      }
+      const proto = forwardedProto.split(",")[0]?.trim() || req.protocol || "https";
+      return `${proto}://${host}`;
+    }
+
+    return "";
+  };
+
+  const buildReturnUrl = (req: Request, path = "/user/wallet") => {
+    const base = detectBaseUrl(req);
+    if (!base) return "";
+    const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+    return `${base}${normalizedPath}`;
+  };
+
   const buildGiftCardTradeNo = (code: string, usageIndex: number) => {
     const cleanCode = String(code || "").trim();
     const suffix = Date.now().toString().slice(-6);
@@ -149,7 +222,7 @@ export function createWalletRouter(ctx: AppContext) {
   // 创建充值订单
   router.post("/recharge", async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { amount, method, payment_method } = req.body || {};
+    const { amount, method, payment_method, return_url } = req.body || {};
     const amt = ensureNumber(amount, 0);
     if (amt <= 0) return errorResponse(res, "金额无效", 400);
     const tradeNo = `R${Date.now().toString().slice(-8)}${generateRandomString(4).toUpperCase()}`;
@@ -163,28 +236,28 @@ export function createWalletRouter(ctx: AppContext) {
     // 记录用户选择的支付渠道（alipay / wxpay / crypto）
     await ctx.dbService.createRechargeRecord(Number(user.id), amt, tradeNo, channel);
 
-    let returnUrl = ctx.env.EPAY_RETURN_URL || ctx.env.EPUSDT_RETURN_URL || "";
+    const clientReturnUrl = typeof return_url === "string" && return_url.trim().length > 0 ? return_url.trim() : "";
+    const envReturnUrl = channel === "crypto" ? ctx.env.EPUSDT_RETURN_URL : ctx.env.EPAY_RETURN_URL;
+    let returnUrl = clientReturnUrl || (envReturnUrl ? envReturnUrl.trim() : "");
     if (!returnUrl) {
-      const origin = (req.headers.origin as string) || (req.headers.referer as string);
-      if (origin) {
-        try {
-          const originUrl = new URL(origin);
-          returnUrl = `${originUrl.protocol}//${originUrl.host}/user/wallet`;
-        } catch {
-          returnUrl = ctx.env.SITE_URL ? `${ctx.env.SITE_URL.replace(/\/$/, "")}/user/wallet` : "";
-        }
-      } else if (ctx.env.SITE_URL) {
-        returnUrl = `${ctx.env.SITE_URL.replace(/\/$/, "")}/user/wallet`;
-      }
+      returnUrl = buildReturnUrl(req);
     }
+
+    const notifyUrl =
+      (channel === "crypto" ? ctx.env.EPUSDT_NOTIFY_URL : ctx.env.EPAY_NOTIFY_URL) ||
+      ctx.env.EPAY_NOTIFY_URL ||
+      ctx.env.EPUSDT_NOTIFY_URL ||
+      "";
 
     const created = await payment.create(
       {
         tradeNo,
         amount: amt,
         subject: "账户充值",
-        notifyUrl: ctx.env.EPAY_NOTIFY_URL || ctx.env.EPUSDT_NOTIFY_URL,
-        returnUrl
+        notifyUrl,
+        notify_url: notifyUrl,
+        returnUrl,
+        return_url: returnUrl
       },
       channel
     );

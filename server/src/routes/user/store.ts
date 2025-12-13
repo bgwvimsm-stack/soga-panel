@@ -14,10 +14,76 @@ export function createStoreRouter(ctx: AppContext) {
     return payment.normalizeChannel(method) || null;
   };
 
+  const parseBaseUrl = (value?: string | null) => {
+    if (!value) return "";
+    try {
+      const url = new URL(value);
+      return `${url.protocol}//${url.host}`;
+    } catch {
+      return "";
+    }
+  };
+
+  const getEnvSiteBase = () => {
+    const site = (ctx.env.SITE_URL || "").trim();
+    if (!site || site.includes("panel.example.com")) return "";
+    const parsed = parseBaseUrl(site);
+    return parsed || site.replace(/\/$/, "");
+  };
+
+  const detectBaseUrl = (req: Request) => {
+    const explicitOrigin =
+      req.get("x-frontend-url") ||
+      req.get("x-frontend-origin") ||
+      req.get("x-forwarded-origin") ||
+      req.get("cf-connecting-origin");
+    const explicitBase = parseBaseUrl(explicitOrigin);
+    if (explicitBase) return explicitBase;
+
+    const originBase = parseBaseUrl(req.get("origin"));
+    if (originBase) return originBase;
+
+    const refererBase = parseBaseUrl(req.get("referer"));
+    if (refererBase) return refererBase;
+
+    const queryOriginValue =
+      typeof req.query.return_origin === "string" ? req.query.return_origin : "";
+    const queryOrigin = parseBaseUrl(queryOriginValue);
+    if (queryOrigin) return queryOrigin;
+
+    const siteBase = getEnvSiteBase();
+    if (siteBase) return siteBase;
+
+    const forwardedHostHeader = req.get("x-forwarded-host");
+    if (forwardedHostHeader) {
+      const forwardedHost = forwardedHostHeader.split(",")[0]?.trim();
+      if (forwardedHost) {
+        const protoHeader = req.get("x-forwarded-proto") || req.protocol || "https";
+        const proto = protoHeader.split(",")[0]?.trim() || "https";
+        return `${proto}://${forwardedHost}`;
+      }
+    }
+
+    const host = req.get("host");
+    if (host) {
+      const forwarded = req.headers["x-forwarded-proto"];
+      let forwardedProto = "";
+      if (Array.isArray(forwarded)) {
+        forwardedProto = forwarded[0] || "";
+      } else if (typeof forwarded === "string") {
+        forwardedProto = forwarded;
+      }
+      const proto = forwardedProto.split(",")[0]?.trim() || req.protocol || "https";
+      return `${proto}://${host}`;
+    }
+    return "";
+  };
+
   const buildReturnUrl = (req: Request, fallback = "/user/store") => {
-    const origin = (req.get("origin") || ctx.env.SITE_URL || "").replace(/\/$/, "");
-    if (!origin) return undefined;
-    return `${origin}${fallback}`;
+    const base = detectBaseUrl(req);
+    if (!base) return undefined;
+    const normalizedPath = fallback.startsWith("/") ? fallback : `/${fallback}`;
+    return `${base}${normalizedPath}`;
   };
 
   const listPackages = async (req: Request, res: Response) => {
@@ -148,7 +214,7 @@ export function createStoreRouter(ctx: AppContext) {
   // 购买创建订单（不扣款，待支付/回调逻辑留待后续）
   router.post("/packages/purchase", createAuthMiddleware(ctx), async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { package_id, coupon_code, payment_method, purchase_type } = req.body || {};
+    const { package_id, coupon_code, payment_method, purchase_type, return_url } = req.body || {};
     const userId = Number(user.id);
     const pkg = await ctx.dbService.getPackageById(Number(package_id));
     if (!pkg) return errorResponse(res, "套餐不存在或已下架", 404);
@@ -347,13 +413,19 @@ export function createStoreRouter(ctx: AppContext) {
       discountAmount: discount
     });
 
+    const clientReturnUrl = typeof return_url === "string" && return_url.trim().length > 0 ? return_url.trim() : "";
+    const defaultReturnUrl = buildReturnUrl(req);
+    const resolvedReturnUrl = clientReturnUrl || defaultReturnUrl || "";
+
     const pay = await payment.create(
       {
         tradeNo,
         amount: paymentAmount,
         subject: String(pkg.name || "套餐购买"),
         notifyUrl: ctx.env.EPAY_NOTIFY_URL || ctx.env.EPUSDT_NOTIFY_URL,
-        returnUrl: buildReturnUrl(req)
+        notify_url: ctx.env.EPAY_NOTIFY_URL || ctx.env.EPUSDT_NOTIFY_URL,
+        returnUrl: resolvedReturnUrl,
+        return_url: resolvedReturnUrl
       },
       channelToUse
     );

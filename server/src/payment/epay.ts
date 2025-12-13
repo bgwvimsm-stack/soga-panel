@@ -29,12 +29,21 @@ export class EpayProvider {
     const apiUrl = (this.env.EPAY_API_URL || "").replace(/\/$/, "");
     const channel = (order.channel || "").toLowerCase();
     const type = channel === "wechat" || channel === "wxpay" ? "wxpay" : "alipay";
+    const returnUrlFromOrder =
+      typeof order.returnUrl === "string" && order.returnUrl.trim().length > 0
+        ? order.returnUrl.trim()
+        : typeof order.return_url === "string"
+          ? order.return_url.trim()
+          : "";
+
+    const resolvedReturnUrl = returnUrlFromOrder || this.env.EPAY_RETURN_URL || "";
+
     const payParams: Record<string, string> = {
       pid: this.env.EPAY_PID || "",
       type,
       out_trade_no: order.tradeNo,
-      notify_url: order.notifyUrl || this.env.EPAY_NOTIFY_URL || "",
-      return_url: order.returnUrl || this.env.EPAY_RETURN_URL || "",
+      notify_url: order.notifyUrl || order.notify_url || this.env.EPAY_NOTIFY_URL || "",
+      return_url: resolvedReturnUrl,
       name: order.subject || "账户充值",
       money: order.amount.toString(),
       sitename: this.env.SITE_NAME || "Soga Panel"

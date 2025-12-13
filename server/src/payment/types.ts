@@ -6,6 +6,8 @@ export type PaymentOrder = {
   subject: string;
   notifyUrl?: string;
   returnUrl?: string;
+  notify_url?: string;
+  return_url?: string;
   channel?: string;
   method?: PaymentMethod;
 };

@@ -11,6 +11,8 @@ type EpusdtCallbackParams = {
   actual_amount?: string | number;
   token?: string;
   signature?: string;
+  sign?: string;
+  status?: string | number;
   [key: string]: any;
 };
 
@@ -54,10 +56,10 @@ export class EpusdtProvider {
     return !!(this.env.EPUSDT_API_URL && this.env.EPUSDT_TOKEN && this.env.EPUSDT_NOTIFY_URL);
   }
 
-  private async generateSign(params: Record<string, unknown>): Promise<string> {
+  private generateSign(params: Record<string, unknown>): string {
     const filtered: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(params)) {
-      if (key === "signature") continue;
+      if (key === "signature" || key === "sign") continue;
       if (value === null || value === undefined || value === "") continue;
       filtered[key] = value;
     }
@@ -81,9 +83,18 @@ export class EpusdtProvider {
       return { method: "epusdt", success: false, message: "金额异常" };
     }
 
-    const notifyUrl = ensureString(order.notifyUrl || this.env.EPUSDT_NOTIFY_URL || "");
-    const redirectUrl = ensureString(
-      order.returnUrl || this.env.EPUSDT_RETURN_URL || this.env.SITE_URL || ""
+    const rawReturnUrl =
+      typeof order.returnUrl === "string" && order.returnUrl.trim().length > 0
+        ? order.returnUrl.trim()
+        : typeof order.return_url === "string"
+          ? order.return_url.trim()
+          : "";
+    const redirectUrl = ensureString(rawReturnUrl || this.env.EPUSDT_RETURN_URL || "");
+    const notifyUrl = ensureString(
+      order.notifyUrl ||
+        (typeof order.notify_url === "string" ? order.notify_url : "") ||
+        this.env.EPUSDT_NOTIFY_URL ||
+        ""
     );
     const tradeType = ensureString(this.env.EPUSDT_TRADE_TYPE) || "usdt.trc20";
     const timeout = Math.max(60, ensureNumber(this.env.EPUSDT_TIMEOUT, 600));
@@ -97,7 +108,7 @@ export class EpusdtProvider {
       timeout
     };
 
-    payload.signature = await this.generateSign({ ...payload });
+    payload.signature = this.generateSign({ ...payload });
 
     const apiBase = ensureString(this.env.EPUSDT_API_URL);
     const url = `${apiBase.replace(/\/$/, "")}/api/v1/order/create-transaction`;
@@ -154,11 +165,28 @@ export class EpusdtProvider {
 
   verifyCallback(body: EpusdtCallbackParams): PaymentCallbackResult {
     if (!this.isConfigured()) return { ok: false };
-    if (this.env.EPUSDT_TOKEN && body.token && body.token !== this.env.EPUSDT_TOKEN) {
+    const providedSignature =
+      (typeof body.signature === "string" && body.signature.trim()) ||
+      (typeof body.sign === "string" && body.sign.trim()) ||
+      "";
+    if (!providedSignature) return { ok: false };
+    const expectedSignature = this.generateSign(body);
+    if (providedSignature.toLowerCase() !== expectedSignature.toLowerCase()) {
       return { ok: false };
     }
     const tradeNo = body.trade_no || body.out_trade_no || body.order_id;
     const rawAmount = body.actual_amount ?? body.amount;
+    const statusValue =
+      body.status !== undefined && body.status !== null ? Number(body.status) : undefined;
+    // 按 BEpusdt 文档，仅在 status === 2（支付成功）时视为有效支付回调
+    if (statusValue !== undefined && Number.isFinite(statusValue) && statusValue !== 2) {
+      return {
+        ok: false,
+        tradeNo: tradeNo ? String(tradeNo) : undefined,
+        amount: rawAmount != null ? Number(rawAmount) : undefined,
+        raw: body
+      };
+    }
     return {
       ok: true,
       tradeNo: tradeNo ? String(tradeNo) : undefined,
