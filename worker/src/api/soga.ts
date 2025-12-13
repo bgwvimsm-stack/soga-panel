@@ -64,7 +64,12 @@ export class SogaAPI {
 
       // 解析节点配置
       const nodeConfigRaw = ensureString(node.node_config, "{}") || "{}";
-      const nodeConfigJson = JSON.parse(nodeConfigRaw);
+      let nodeConfigJson: Record<string, any> = {};
+      try {
+        nodeConfigJson = JSON.parse(nodeConfigRaw);
+      } catch {
+        nodeConfigJson = {};
+      }
 
       // 从 node_config 中提取 basic 和 config
       const responseConfig = {

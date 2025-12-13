@@ -35,16 +35,34 @@ export function createNodeRouter(ctx: AppContext) {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
     if (!auth.success) return errorResponse(res, auth.message, 401);
 
+    const nodeRecord = await ctx.dbService.getNode(auth.nodeId);
+    const nodeConfigRaw = ensureString(nodeRecord?.node_config, "{}") || "{}";
+    const nodeConfigJson = safeJson(nodeConfigRaw, {});
+    const ssConfig = (nodeConfigJson as any).config || nodeConfigJson || {};
+
     const users = await ctx.dbService.getNodeUsers(auth.nodeId);
-    // 格式化 password 字段兼容 SS/Trojan
-    const formatted = users.map((u) => ({
-      id: u.id,
-      uuid: u.uuid,
-      password: u.password ?? u.passwd,
-      speed_limit: u.speed_limit || 0,
-      device_limit: u.device_limit || 0,
-      tcp_limit: u.tcp_limit || 0
-    }));
+    const formatted = users.map((u) => {
+      const base = {
+        id: u.id,
+        speed_limit: u.speed_limit || 0,
+        device_limit: u.device_limit || 0,
+        tcp_limit: u.tcp_limit || 0
+      };
+
+      if (auth.nodeType === "v2ray" || auth.nodeType === "vless") {
+        return { ...base, uuid: u.uuid };
+      } else if (auth.nodeType === "ss" || auth.nodeType === "shadowsocks") {
+        const password = buildSSPassword(
+          ssConfig,
+          String((u as any).password ?? (u as any).passwd ?? "")
+        );
+        return { ...base, password };
+      } else {
+        // trojan/hysteria 等类型沿用 password
+        return { ...base, password: (u as any).password ?? (u as any).passwd };
+      }
+    });
+
     return res.json(formatted);
   });
 
@@ -188,20 +206,32 @@ export function createNodeRouter(ctx: AppContext) {
 function validateSogaAuth(
   req: Request,
   expectedKey?: string
-): { success: true; nodeId: number } | { success: false; message: string } {
+):
+  | { success: true; nodeId: number; nodeType: string }
+  | { success: false; message: string } {
   const apiKey =
     (req.headers["api-key"] as string | undefined) ||
     (req.headers["x-api-key"] as string | undefined);
   const nodeId =
     (req.headers["node-id"] as string | undefined) ||
     (req.headers["x-node-id"] as string | undefined);
-  if (!apiKey || !nodeId) return { success: false, message: "缺少认证信息" };
+  const nodeType =
+    (req.headers["node-type"] as string | undefined) ||
+    (req.headers["x-node-type"] as string | undefined);
+
+  if (!apiKey || !nodeId || !nodeType) {
+    return { success: false, message: "缺少认证信息" };
+  }
 
   if (expectedKey && apiKey !== expectedKey) {
     return { success: false, message: "认证失败" };
   }
 
-  return { success: true, nodeId: Number(nodeId) || 0 };
+  return {
+    success: true,
+    nodeId: Number(nodeId) || 0,
+    nodeType: nodeType.toLowerCase()
+  };
 }
 
 function safeJson(raw: string, fallback: any) {
@@ -210,4 +240,48 @@ function safeJson(raw: string, fallback: any) {
   } catch {
     return fallback;
   }
+}
+
+function decodeBase64Safe(value?: string | null) {
+  try {
+    if (!value) return null;
+    const cleaned = value.trim();
+    if (!cleaned) return null;
+    const decoded = Buffer.from(cleaned, "base64").toString("binary");
+    return Uint8Array.from(decoded, (c) => c.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
+function deriveSS2022UserKey(cipher: string, userPassword: string) {
+  const lower = cipher.toLowerCase();
+  const needs = lower.includes("aes-128") ? 16 : 32;
+  const decoded = decodeBase64Safe(userPassword);
+  let bytes = decoded;
+
+  if (!bytes || bytes.length === 0) {
+    try {
+      bytes = new TextEncoder().encode(userPassword);
+    } catch {
+      bytes = new Uint8Array([0]);
+    }
+  }
+
+  const out = new Uint8Array(needs);
+  for (let i = 0; i < needs; i++) {
+    out[i] = bytes[i % bytes.length];
+  }
+
+  return Buffer.from(out).toString("base64");
+}
+
+function buildSSPassword(nodeConfig: any, userPassword: string) {
+  const cipher = (nodeConfig?.cipher || nodeConfig?.method || "").toLowerCase();
+  const nodePassword = nodeConfig?.password || "";
+  if (cipher.includes("2022-blake3")) {
+    // Soga 仅需要用户段，节点端密码已在节点配置中
+    return deriveSS2022UserKey(cipher, userPassword || nodePassword);
+  }
+  return userPassword || nodePassword;
 }
