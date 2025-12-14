@@ -501,6 +501,14 @@ const confirmPurchase = async () => {
       requestData.payment_method = purchaseForm.purchase_type; // alipay 或 wechat
     }
 
+    const origin =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin.replace(/\/$/, '')
+        : '';
+    if (origin) {
+      requestData.return_url = `${origin}/user/store`;
+    }
+
     const response = await http.post('/packages/purchase', requestData);
 
     if (response.code === 0) {

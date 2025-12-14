@@ -29,8 +29,8 @@ export const useUserStore = defineStore("user", () => {
   };
 
   const isAdmin = (): boolean => {
-    // 统一admin字段类型，只支持boolean类型
-    return user.value?.is_admin === true;
+    const flag = user.value?.is_admin;
+    return flag === true || flag === 1 || flag === "1";
   };
 
   const isUserEnabled = (): boolean => {

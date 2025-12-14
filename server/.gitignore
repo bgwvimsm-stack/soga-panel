@@ -1,0 +1,5 @@
+# dist files
+dist
+.env
+data
+bun.lock
