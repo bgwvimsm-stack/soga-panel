@@ -354,6 +354,7 @@ interface GiftCardListRow {
   reset_traffic_gb?: number | string | null;
   package_id?: number | string | null;
   max_usage?: number | string | null;
+  per_user_limit?: number | string | null;
   used_count?: number | string | null;
   start_at?: string | null;
   end_at?: string | null;
@@ -5779,6 +5780,10 @@ export class AdminAPI {
           record.max_usage !== undefined && record.max_usage !== null
             ? ensureNumber(record.max_usage)
             : null;
+        const perUserLimit =
+          record.per_user_limit !== undefined && record.per_user_limit !== null
+            ? ensureNumber(record.per_user_limit)
+            : null;
         const usedCount = ensureNumber(record.used_count ?? 0);
         const remaining = maxUsage !== null ? Math.max(maxUsage - usedCount, 0) : null;
         const endAt = record.end_at ? new Date(record.end_at) : null;
@@ -5786,6 +5791,7 @@ export class AdminAPI {
         return {
           ...record,
           max_usage: maxUsage,
+          per_user_limit: perUserLimit,
           used_count: usedCount,
           remaining_usage: remaining,
           is_expired: isExpired
@@ -5858,6 +5864,9 @@ export class AdminAPI {
         return errorResponse(message, 400);
       }
 
+      const maxUsage = validatePositive(body.max_usage, "最大使用次数");
+      const perUserLimit = validatePositive(body.per_user_limit, "单用户使用次数");
+
       const result = await this.giftCardService.createGiftCards(
         {
           name,
@@ -5869,7 +5878,8 @@ export class AdminAPI {
           package_id: body.package_id ?? null,
           start_at: body.start_at ?? null,
           end_at: body.end_at ?? null,
-          max_usage: body.max_usage ?? null,
+          max_usage: maxUsage,
+          per_user_limit: perUserLimit,
           quantity: body.quantity ?? 1,
           code: body.code ?? null,
           code_prefix: body.code_prefix ?? null,
@@ -5903,6 +5913,20 @@ export class AdminAPI {
       }
 
       const body = (await request.json()) as Partial<CreateGiftCardPayload>;
+      if (body.max_usage !== undefined && body.max_usage !== null) {
+        const value = ensureNumber(body.max_usage);
+        if (!Number.isFinite(value) || value <= 0) {
+          return errorResponse("最大使用次数必须大于0", 400);
+        }
+        body.max_usage = value;
+      }
+      if (body.per_user_limit !== undefined && body.per_user_limit !== null) {
+        const value = ensureNumber(body.per_user_limit);
+        if (!Number.isFinite(value) || value <= 0) {
+          return errorResponse("单用户使用次数必须大于0", 400);
+        }
+        body.per_user_limit = value;
+      }
       const updated = await this.giftCardService.updateGiftCard(cardId, body);
       if (!updated) {
         return errorResponse("礼品卡更新失败或无变化", 400);

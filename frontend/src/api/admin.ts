@@ -226,6 +226,7 @@ export interface GiftCard {
   package_id?: number | null;
   package_name?: string | null;
   max_usage?: number | null;
+  per_user_limit?: number | null;
   used_count?: number | null;
   remaining_usage?: number | null;
   start_at?: string | null;
@@ -247,6 +248,7 @@ export interface GiftCardPayload {
   start_at?: string | Date | null;
   end_at?: string | Date | null;
   max_usage?: number | null;
+  per_user_limit?: number | null;
   quantity?: number | null;
 }
 

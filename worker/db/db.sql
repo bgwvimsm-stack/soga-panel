@@ -570,6 +570,7 @@ CREATE TABLE IF NOT EXISTS gift_card_batches (
     reset_traffic_gb INTEGER,
     package_id INTEGER,
     max_usage INTEGER,
+    per_user_limit INTEGER,
     start_at DATETIME,
     end_at DATETIME,
     created_by INTEGER,
@@ -589,6 +590,7 @@ CREATE TABLE IF NOT EXISTS gift_card_batches (
 -- balance_amount/duration_days/traffic_value_gb/reset_traffic_gb: 按类型对应的面值
 -- package_id: 若为套餐兑换类型，指定的套餐
 -- max_usage: 最大使用次数（null 表示不限制）
+-- per_user_limit: 每个用户最多可使用次数（null 表示不限制）
 -- used_count: 已使用次数
 -- start_at/end_at: 单张卡的生效/失效时间
 -- created_by: 创建人ID
@@ -606,6 +608,7 @@ CREATE TABLE IF NOT EXISTS gift_cards (
     reset_traffic_gb INTEGER,
     package_id INTEGER,
     max_usage INTEGER DEFAULT 1,
+    per_user_limit INTEGER,
     used_count INTEGER DEFAULT 0,
     start_at DATETIME,
     end_at DATETIME,

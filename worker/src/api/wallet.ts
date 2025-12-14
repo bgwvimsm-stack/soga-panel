@@ -803,6 +803,14 @@ export class WalletAPI {
       if (maxUsage !== null && usedCount >= maxUsage) {
         return errorResponse("礼品卡已达到最大使用次数", 400);
       }
+      const perUserLimit = card.per_user_limit != null ? ensureNumber(card.per_user_limit) : null;
+      let userUsedCount = 0;
+      if (perUserLimit !== null) {
+        userUsedCount = await this.giftCardService.getUserRedemptionCount(card.id, userId);
+        if (userUsedCount >= perUserLimit) {
+          return errorResponse("当前用户已达到该礼品卡的使用上限", 400);
+        }
+      }
 
       const userInfo = await this.db.db
         .prepare(`
@@ -1022,7 +1030,9 @@ export class WalletAPI {
           reset_traffic_gb: resetTrafficGb,
           usage: {
             used_count: usageIndex,
-            max_usage: maxUsage
+            max_usage: maxUsage,
+            per_user_limit: perUserLimit,
+            user_used_count: perUserLimit !== null ? userUsedCount + 1 : null
           },
           message
         },

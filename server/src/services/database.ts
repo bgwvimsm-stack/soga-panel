@@ -1208,7 +1208,7 @@ export class DatabaseService {
 
   async markGiftCardUsed(cardId: number, usedCount: number, maxUsage: number | null) {
     const nextCount = usedCount + 1;
-    const nextStatus = maxUsage && nextCount >= maxUsage ? 2 : 1;
+    const nextStatus = maxUsage !== null && maxUsage !== undefined && nextCount >= maxUsage ? 2 : 1;
     await this.db.db
       .prepare(
         `
@@ -1294,6 +1294,7 @@ export class DatabaseService {
     resetTrafficGb?: number | null;
     packageId?: number | null;
     maxUsage?: number | null;
+    perUserLimit?: number | null;
     startAt?: Date | null;
     endAt?: Date | null;
   }) {
@@ -1302,8 +1303,8 @@ export class DatabaseService {
         `
         INSERT INTO gift_cards (
           name, code, card_type, balance_amount, duration_days, traffic_value_gb, reset_traffic_gb, package_id,
-          max_usage, used_count, status, start_at, end_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          max_usage, per_user_limit, used_count, status, start_at, end_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       `
       )
       .bind(
@@ -1316,10 +1317,25 @@ export class DatabaseService {
         params.resetTrafficGb ?? null,
         params.packageId ?? null,
         params.maxUsage ?? null,
+        params.perUserLimit ?? null,
         params.startAt ?? null,
         params.endAt ?? null
       )
       .run();
+  }
+
+  async countGiftCardUserRedemptions(cardId: number, userId: number) {
+    const row = await this.db.db
+      .prepare(
+        `
+        SELECT COUNT(*) as total
+        FROM gift_card_redemptions
+        WHERE card_id = ? AND user_id = ? AND result_status = 'success'
+      `
+      )
+      .bind(cardId, userId)
+      .first<{ total?: number | string | null }>();
+    return Number(row?.total ?? 0);
   }
 
   async listSystemConfigs() {
