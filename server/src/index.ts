@@ -25,7 +25,7 @@ async function bootstrap() {
   }
 
   const cache = new CacheService({ db: dbService, redis: redis ?? undefined });
-  startSchedulers(dbService, cache);
+  startSchedulers(dbService, cache, env);
   const app = createApp({ env, db, dbService, cache, redis: redis ?? null });
   const port = env.PORT ?? 18787;
 
