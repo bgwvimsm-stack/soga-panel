@@ -305,9 +305,22 @@ export function createWalletRouter(ctx: AppContext) {
     if (card.end_at && new Date(card.end_at).getTime() < Date.now()) {
       return errorResponse(res, "礼品卡已过期", 400);
     }
-    const maxUsage = card.max_usage ? Number(card.max_usage) : 1;
+    const maxUsage =
+      card.max_usage !== null && card.max_usage !== undefined ? Number(card.max_usage) : null;
     const usedCount = Number(card.used_count || 0);
-    if (usedCount >= maxUsage) return errorResponse(res, "礼品卡已用完", 400);
+    if (maxUsage !== null && usedCount >= maxUsage) return errorResponse(res, "礼品卡已用完", 400);
+
+    const perUserLimit =
+      card.per_user_limit !== null && card.per_user_limit !== undefined
+        ? Number(card.per_user_limit)
+        : null;
+    let userUsedCount = 0;
+    if (perUserLimit !== null) {
+      userUsedCount = await ctx.dbService.countGiftCardUserRedemptions(Number(card.id), Number(user.id));
+      if (userUsedCount >= perUserLimit) {
+        return errorResponse(res, "您已达到该礼品卡的个人使用次数上限", 400);
+      }
+    }
 
     const usageIndex = usedCount + 1;
     const tradeNo = buildGiftCardTradeNo(String(code), usageIndex);
@@ -473,7 +486,12 @@ export function createWalletRouter(ctx: AppContext) {
         duration_days: durationDays,
         traffic_value_gb: trafficValueGb,
         reset_traffic_gb: resetTrafficGb,
-        usage: { used_count: usageIndex, max_usage: maxUsage },
+        usage: {
+          used_count: usageIndex,
+          max_usage: maxUsage,
+          per_user_limit: perUserLimit,
+          user_used_count: perUserLimit !== null ? userUsedCount + 1 : null
+        },
         message,
         trade_no: tradeNo,
         package_id: packageId,

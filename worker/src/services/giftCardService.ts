@@ -17,6 +17,7 @@ export interface GiftCardRow {
   reset_traffic_gb?: number | null;
   package_id?: number | null;
   max_usage?: number | null;
+  per_user_limit?: number | null;
   used_count?: number | null;
   start_at?: string | null;
   end_at?: string | null;
@@ -53,6 +54,7 @@ export interface CreateGiftCardPayload {
   start_at?: string | null;
   end_at?: string | null;
   max_usage?: number | null;
+  per_user_limit?: number | null;
   quantity?: number | null;
   code?: string | null;
   code_prefix?: string | null;
@@ -76,6 +78,7 @@ function normalizeCardRow(row: GiftCardRow): GiftCardRow {
     reset_traffic_gb: row.reset_traffic_gb != null ? ensureNumber(row.reset_traffic_gb) : null,
     package_id: row.package_id != null ? ensureNumber(row.package_id) : null,
     max_usage: row.max_usage != null ? ensureNumber(row.max_usage) : null,
+    per_user_limit: row.per_user_limit != null ? ensureNumber(row.per_user_limit) : null,
     used_count: row.used_count != null ? ensureNumber(row.used_count) : null
   };
 }
@@ -182,6 +185,8 @@ export class GiftCardService {
     const normalizedPrefix = this.sanitizeCode(code_prefix || "GC");
     const normalizedMaxUsage =
       payload.max_usage != null ? Math.max(1, ensureNumber(payload.max_usage, 1)) : null;
+    const normalizedPerUserLimit =
+      payload.per_user_limit != null ? Math.max(1, ensureNumber(payload.per_user_limit, 1)) : null;
     const normalizedBalance =
       payload.balance_amount != null ? fixMoneyPrecision(Math.max(ensureNumber(payload.balance_amount, 0), 0)) : null;
     const normalizedDuration =
@@ -200,8 +205,8 @@ export class GiftCardService {
       .prepare(`
         INSERT INTO gift_card_batches
         (name, description, card_type, quantity, code_prefix, balance_amount, duration_days, traffic_value_gb,
-         reset_traffic_gb, package_id, max_usage, start_at, end_at, created_by)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         reset_traffic_gb, package_id, max_usage, per_user_limit, start_at, end_at, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .bind(
         name,
@@ -215,6 +220,7 @@ export class GiftCardService {
         normalizedReset,
         normalizedPackage,
         normalizedMaxUsage,
+        normalizedPerUserLimit,
         startAt,
         endAt,
         creatorId ?? null
@@ -246,8 +252,8 @@ export class GiftCardService {
         .prepare(`
           INSERT INTO gift_cards
           (batch_id, name, code, card_type, status, balance_amount, duration_days, traffic_value_gb,
-           reset_traffic_gb, package_id, max_usage, start_at, end_at, created_by)
-          VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           reset_traffic_gb, package_id, max_usage, per_user_limit, start_at, end_at, created_by)
+          VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .bind(
           batchId,
@@ -260,6 +266,7 @@ export class GiftCardService {
           normalizedReset,
           normalizedPackage,
           normalizedMaxUsage,
+          normalizedPerUserLimit,
           startAt,
           endAt,
           creatorId ?? null
@@ -280,6 +287,7 @@ export class GiftCardService {
         reset_traffic_gb: normalizedReset,
         package_id: normalizedPackage,
         max_usage: normalizedMaxUsage,
+        per_user_limit: normalizedPerUserLimit,
         used_count: 0,
         start_at: startAt,
         end_at: endAt,
@@ -350,6 +358,12 @@ export class GiftCardService {
         data.max_usage != null ? Math.max(1, ensureNumber(data.max_usage, 1)) : null
       );
     }
+    if (data.per_user_limit !== undefined) {
+      fields.push("per_user_limit = ?");
+      params.push(
+        data.per_user_limit != null ? Math.max(1, ensureNumber(data.per_user_limit, 1)) : null
+      );
+    }
     if (data.start_at !== undefined) {
       fields.push("start_at = ?");
       params.push(formatDateTimeInput(data.start_at));
@@ -371,5 +385,19 @@ export class GiftCardService {
         .run()
     );
     return (result.meta?.changes ?? 0) > 0;
+  }
+
+  async getUserRedemptionCount(cardId: number, userId: number): Promise<number> {
+    const row = await this.db
+      .prepare(
+        `
+        SELECT COUNT(*) as total
+        FROM gift_card_redemptions
+        WHERE card_id = ? AND user_id = ? AND result_status = 'success'
+      `
+      )
+      .bind(cardId, userId)
+      .first<{ total: number | string | null }>();
+    return ensureNumber(row?.total ?? 0);
   }
 }

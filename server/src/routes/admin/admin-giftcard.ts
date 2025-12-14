@@ -82,6 +82,7 @@ export function createAdminGiftCardRouter(ctx: AppContext) {
         reset_traffic_gb?: number | string | null;
         package_id?: number | string | null;
         max_usage?: number | string | null;
+        per_user_limit?: number | string | null;
         used_count?: number | string | null;
         start_at?: string | null;
         end_at?: string | null;
@@ -95,6 +96,10 @@ export function createAdminGiftCardRouter(ctx: AppContext) {
         record.max_usage !== undefined && record.max_usage !== null
           ? ensureNumber(record.max_usage)
           : null;
+      const perUserLimit =
+        record.per_user_limit !== undefined && record.per_user_limit !== null
+          ? ensureNumber(record.per_user_limit)
+          : null;
       const usedCount = ensureNumber(record.used_count ?? 0);
       const remaining = maxUsage !== null ? Math.max(maxUsage - usedCount, 0) : null;
       const endAt = record.end_at ? new Date(record.end_at) : null;
@@ -102,6 +107,7 @@ export function createAdminGiftCardRouter(ctx: AppContext) {
       return {
         ...record,
         max_usage: maxUsage,
+        per_user_limit: perUserLimit,
         used_count: usedCount,
         remaining_usage: remaining,
         is_expired: isExpired
@@ -121,9 +127,15 @@ export function createAdminGiftCardRouter(ctx: AppContext) {
 
   router.post("/", async (req: Request, res: Response) => {
     if (!ensureAdmin(req, res)) return;
-    const { name, code, card_type, balance_amount, duration_days, traffic_value_gb, reset_traffic_gb, package_id, max_usage, start_at, end_at } =
+    const { name, code, card_type, balance_amount, duration_days, traffic_value_gb, reset_traffic_gb, package_id, max_usage, per_user_limit, start_at, end_at } =
       req.body || {};
     if (!name) return errorResponse(res, "名称必填", 400);
+    if (max_usage !== undefined && max_usage !== null && (!Number(max_usage) || Number(max_usage) <= 0)) {
+      return errorResponse(res, "最大使用次数必须大于 0", 400);
+    }
+    if (per_user_limit !== undefined && per_user_limit !== null && (!Number(per_user_limit) || Number(per_user_limit) <= 0)) {
+      return errorResponse(res, "单用户使用次数必须大于 0", 400);
+    }
     const finalCode = code || generateRandomString(16);
     await ctx.dbService.createGiftCard({
       name,
@@ -135,6 +147,7 @@ export function createAdminGiftCardRouter(ctx: AppContext) {
       resetTrafficGb: reset_traffic_gb ?? null,
       packageId: package_id ?? null,
       maxUsage: max_usage ?? null,
+      perUserLimit: per_user_limit ?? null,
       startAt: start_at ? new Date(start_at) : null,
       endAt: end_at ? new Date(end_at) : null
     });

@@ -58,6 +58,14 @@ const columns = [
   { field: 'actions', title: '操作', width: 100, fixed: 'right', visible: true, slots: { default: 'actions' }, align: 'center' }
 ];
 
+const redemptionColumns = [
+  { field: 'user_email', title: '用户', minWidth: 180, slots: { default: 'user' } },
+  { field: 'card_type', title: '类型', width: 120, align: 'center', slots: { default: 'card_type' } },
+  { field: 'effect', title: '效果', minWidth: 200, slots: { default: 'effect' } },
+  { field: 'message', title: '备注', minWidth: 200, slots: { default: 'message' } },
+  { field: 'created_at', title: '兑换时间', width: 180, align: 'center', slots: { default: 'created_at' } }
+];
+
 const packageOptions = ref<Array<{ id: number; name: string }>>([]);
 
 const creationDialog = reactive({
@@ -73,6 +81,7 @@ const creationDialog = reactive({
     reset_traffic_gb: '',
     package_id: null as number | null,
     max_usage: '',
+    per_user_limit: '',
     quantity: 1,
     validity: [] as Array<Date | string>
   }
@@ -132,10 +141,14 @@ const formatDateTime = (value?: string | null) => {
 
 const usageText = (card: GiftCard) => {
   const used = Number(card.used_count || 0);
-  if (card.max_usage === null || card.max_usage === undefined) {
-    return `${used} / 不限`;
+  const maxUsageText =
+    card.max_usage === null || card.max_usage === undefined
+      ? `${used} / 不限`
+      : `${used} / ${card.max_usage}`;
+  if (card.per_user_limit === null || card.per_user_limit === undefined) {
+    return maxUsageText;
   }
-  return `${used} / ${card.max_usage}`;
+  return `${maxUsageText}（单用户 ${card.per_user_limit} 次）`;
 };
 
 const canDeleteCard = (card: GiftCard) => {
@@ -202,6 +215,7 @@ const resetCreationForm = () => {
   creationDialog.form.reset_traffic_gb = '0';
   creationDialog.form.package_id = null;
   creationDialog.form.max_usage = '';
+  creationDialog.form.per_user_limit = '';
   creationDialog.form.quantity = 1;
   creationDialog.form.validity = [];
 };
@@ -223,7 +237,8 @@ const submitCreateGiftCard = async () => {
     card_type: form.card_type,
     code: form.code?.trim() || undefined,
     quantity: form.quantity || 1,
-    max_usage: form.max_usage ? Number(form.max_usage) : null
+    max_usage: form.max_usage ? Number(form.max_usage) : null,
+    per_user_limit: form.per_user_limit ? Number(form.per_user_limit) : null
   };
 
   if (form.validity.length === 2) {
@@ -343,6 +358,15 @@ onMounted(() => {
   loadGiftCards();
   loadPackageOptions();
 });
+
+watch(
+  () => creationDialog.form.card_type,
+  (type) => {
+    if (type === 'reset_traffic') {
+      creationDialog.form.reset_traffic_gb = '0';
+    }
+  }
+);
 
 const refreshSelectionState = () => {
   const records = vxeTableRef.value?.getCheckboxRecords?.() || [];
@@ -481,12 +505,14 @@ const exportGiftCards = async () => {
       type: 'info'
     });
 
-    const headers = ['卡密', '名称', '类型', '面值/效果', '失效时间'];
+    const headers = ['卡密', '名称', '类型', '面值/效果', '最大使用次数', '单用户使用次数', '失效时间'];
     const rows = giftCards.value.map(card => [
       card.code || '',
       card.name || '',
       giftCardTypeText(card.card_type),
       formatCardValue(card),
+      card.max_usage ?? '不限',
+      card.per_user_limit ?? '不限',
       formatDateTime(card.end_at)
     ]);
 
@@ -747,6 +773,13 @@ const exportGiftCards = async () => {
         />
       </el-form-item>
 
+      <el-form-item label="单用户使用次数">
+        <el-input
+          v-model="creationDialog.form.per_user_limit"
+          placeholder="每个用户的最多使用次数，留空表示不限制"
+        />
+      </el-form-item>
+
       <el-form-item label="生成数量">
         <el-input-number v-model="creationDialog.form.quantity" :min="1" :max="500" />
       </el-form-item>
@@ -767,50 +800,47 @@ const exportGiftCards = async () => {
     width="720px"
     destroy-on-close
   >
-    <el-table
-      v-loading="redemptionDialog.loading"
+    <vxe-grid
+      :loading="redemptionDialog.loading"
       :data="redemptionDialog.records"
       border
+      show-overflow
+      :columns="redemptionColumns"
       size="small"
+      auto-resize
     >
-      <el-table-column prop="user_email" label="用户" min-width="160">
-        <template #default="{ row }">
-          <div>{{ row.user_email || '未知用户' }}</div>
-          <div class="sub-text" v-if="row.user_name">({{ row.user_name }})</div>
-        </template>
-      </el-table-column>
-      <el-table-column prop="card_type" label="类型" width="120">
-        <template #default="{ row }">{{ giftCardTypeText(row.card_type) }}</template>
-      </el-table-column>
-      <el-table-column label="效果" min-width="180">
-        <template #default="{ row }">
-          <div v-if="row.card_type === 'balance' && row.change_amount">
-            充值 ¥{{ Number(row.change_amount).toFixed(2) }}
-          </div>
-          <div v-else-if="row.card_type === 'duration' && row.duration_days">
-            增加 {{ row.duration_days }} 天
-          </div>
-          <div v-else-if="row.card_type === 'traffic' && row.traffic_value_gb">
-            增加 {{ row.traffic_value_gb }} GB
-          </div>
-          <div v-else-if="row.card_type === 'reset_traffic' && row.reset_traffic_gb">
-            重置为 {{ row.reset_traffic_gb }} GB
-          </div>
-          <div v-else-if="row.card_type === 'package'">
-            套餐兑换成功
-          </div>
-          <div v-else>-</div>
-        </template>
-      </el-table-column>
-      <el-table-column prop="message" label="备注" min-width="200">
-        <template #default="{ row }">
-          {{ row.message || '-' }}
-        </template>
-      </el-table-column>
-      <el-table-column prop="created_at" label="兑换时间" width="180">
-        <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-      </el-table-column>
-    </el-table>
+      <template #user="{ row }">
+        <div>{{ row.user_email || '未知用户' }}</div>
+        <div class="sub-text" v-if="row.user_name">({{ row.user_name }})</div>
+      </template>
+      <template #card_type="{ row }">
+        <el-tag type="info" effect="plain">{{ giftCardTypeText(row.card_type) }}</el-tag>
+      </template>
+      <template #effect="{ row }">
+        <div v-if="row.card_type === 'balance' && row.change_amount">
+          充值 ¥{{ Number(row.change_amount).toFixed(2) }}
+        </div>
+        <div v-else-if="row.card_type === 'duration' && row.duration_days">
+          增加 {{ row.duration_days }} 天
+        </div>
+        <div v-else-if="row.card_type === 'traffic' && row.traffic_value_gb">
+          增加 {{ row.traffic_value_gb }} GB
+        </div>
+        <div v-else-if="row.card_type === 'reset_traffic' && row.reset_traffic_gb">
+          重置为 {{ row.reset_traffic_gb }} GB
+        </div>
+        <div v-else-if="row.card_type === 'package'">
+          套餐兑换成功
+        </div>
+        <div v-else>-</div>
+      </template>
+      <template #message="{ row }">
+        {{ row.message || '-' }}
+      </template>
+      <template #created_at="{ row }">
+        {{ formatDateTime(row.created_at) }}
+      </template>
+    </vxe-grid>
     <div class="redemption-pagination">
       <el-pagination
         layout="prev, pager, next, total"
@@ -877,8 +907,3 @@ const exportGiftCards = async () => {
   justify-content: flex-end;
 }
 </style>
-watch(() => creationDialog.form.card_type, (type) => {
-  if (type === 'reset_traffic') {
-    creationDialog.form.reset_traffic_gb = '0';
-  }
-});
