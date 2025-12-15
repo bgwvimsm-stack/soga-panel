@@ -61,23 +61,9 @@
         登录
       </el-button>
 
-      <el-button
-        size="large"
-        class="passkey-btn"
-        :loading="passkeyLoading"
-        :disabled="!passkeySupported"
-        @click="handlePasskeyLogin"
-      >
-        <span class="passkey-dot" />
-        通过通行密钥登录
-      </el-button>
-      <div class="passkey-hint">
-        {{ passkeySupported ? "使用已绑定在此设备上的通行密钥快速登录" : "当前环境不支持通行密钥，尝试使用密码登录" }}
-      </div>
-
       <div class="third-party">
         <div class="third-title">
-          <span>第三方登录</span>
+          <span>其他登录</span>
         </div>
         <div class="third-icons">
           <div
@@ -142,8 +128,38 @@
               <el-icon><Loading /></el-icon>
             </div>
           </div>
-          <div class="third-icon placeholder" v-for="n in 1" :key="`placeholder-${n}`">
-            <span class="placeholder-dot"></span>
+          <div
+            class="third-icon passkey"
+            :class="{ disabled: !passkeySupported }"
+            @click="passkeySupported ? handlePasskeyLogin() : null"
+          >
+            <span class="icon-wrapper">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                aria-label="Passkey"
+                fill="none"
+              >
+                <circle cx="10" cy="7" r="3.2" fill="url(#pk-grad)" />
+                <path
+                  d="M5 13.6c0-1.7 1.7-3 4-3s4 1.3 4 3v1c0 .66-.54 1.2-1.2 1.2H6.2A1.2 1.2 0 0 1 5 14.6v-1Z"
+                  fill="#e2e8f0"
+                />
+                <path
+                  d="M17.75 10a2.25 2.25 0 0 0-.96 4.3v2.45a.5.5 0 0 0 1 0v-1H19a.5.5 0 0 0 .5-.5v-1.1A2.25 2.25 0 0 0 17.75 10Z"
+                  fill="#0f172a"
+                />
+                <defs>
+                  <linearGradient id="pk-grad" x1="6" y1="3" x2="13" y2="11" gradientUnits="userSpaceOnUse">
+                    <stop stop-color="#0ea5e9" />
+                    <stop offset="0.5" stop-color="#8b5cf6" />
+                    <stop offset="1" stop-color="#f97316" />
+                  </linearGradient>
+                </defs>
+              </svg>
+            </span>
           </div>
         </div>
       </div>
@@ -997,47 +1013,6 @@ const copyGeneratedPassword = async () => {
   border: none;
 }
 
-.passkey-btn {
-  width: 100%;
-  height: 44px;
-  font-size: 15px;
-  font-weight: 600;
-  border-radius: 12px;
-  background: #111827;
-  color: #f9fafb;
-  border: none;
-  margin-top: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-
-  &:hover {
-    background: #0b1220;
-    color: #ffffff;
-  }
-
-  &:disabled {
-    background: #1f2937;
-    color: #9ca3af;
-  }
-}
-
-.passkey-dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 30% 30%, #7dd3fc, #7c3aed 40%, #f59e0b 75%, #ef4444);
-  box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.15);
-}
-
-.passkey-hint {
-  margin-top: 6px;
-  text-align: center;
-  color: #6b7280;
-  font-size: 12px;
-}
-
 .register-action {
   display: flex;
   justify-content: center;
@@ -1129,6 +1104,21 @@ const copyGeneratedPassword = async () => {
 .third-icon.github:hover {
   border-color: #d1d5db;
   box-shadow: 0 6px 18px rgba(99, 102, 241, 0.12);
+}
+
+.third-icon.passkey {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+.third-icon.passkey:hover:not(.disabled) {
+  border-color: #cbd5f5;
+  box-shadow: 0 6px 18px rgba(79, 70, 229, 0.14);
+}
+
+.third-icon.passkey.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .icon-wrapper {
