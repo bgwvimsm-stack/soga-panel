@@ -128,6 +128,42 @@
                 </template>
               </div>
             </div>
+
+            <div class="security-item">
+              <div class="security-info">
+                <div class="security-title">
+                  <el-icon><Key /></el-icon>
+                  通行密钥
+                </div>
+                <div class="security-desc">
+                  <el-tag :type="passkeySupported ? 'success' : 'info'" size="small">
+                    {{ passkeySupported ? '设备支持' : '当前设备不支持' }}
+                  </el-tag>
+                  <span class="security-hint">
+                    绑定后可在登录页直接使用通行密钥
+                  </span>
+                </div>
+              </div>
+              <div class="security-actions">
+                <div class="passkey-input">
+                  <el-input
+                    v-model="passkeyDeviceName"
+                    size="small"
+                    placeholder="设备备注（可选）"
+                    clearable
+                  />
+                </div>
+                <el-button
+                  type="primary"
+                  size="small"
+                  :loading="passkeyBinding"
+                  :disabled="!passkeySupported"
+                  @click="handleBindPasskey"
+                >
+                  {{ passkeyList.length === 0 ? '绑定通行密钥' : '再绑定一台' }}
+                </el-button>
+              </div>
+            </div>
             
             <div class="security-item">
               <div class="security-info">
@@ -199,6 +235,42 @@
                 <span class="mobile-label">最后活跃:</span>
                 <span class="mobile-value">{{ formatDateTime(ip.last_seen) }}</span>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-card>
+
+    <!-- 通行密钥列表 -->
+    <el-card class="passkey-list-card" style="margin-top: 20px;">
+      <div class="card-header">
+        <h3>已绑定的通行密钥</h3>
+        <p class="card-desc">如果设备丢失或不再使用，请及时删除对应通行密钥</p>
+      </div>
+
+      <div class="passkey-list" v-loading="passkeyLoading">
+        <div v-if="passkeyList.length === 0 && !passkeyLoading" class="no-logs">
+          <el-empty description="暂无已绑定的通行密钥" />
+        </div>
+        <div v-else class="passkey-rows">
+          <div
+            v-for="item in passkeyList"
+            :key="item.credential_id"
+            class="passkey-row"
+          >
+            <div class="passkey-meta">
+              <div class="passkey-title">
+                {{ item.device_name || '未命名设备' }}
+                <el-tag size="small" type="info" style="margin-left: 8px;">{{ item.credential_id.slice(0, 6) }}***</el-tag>
+              </div>
+              <div class="passkey-desc">
+                <span>绑定于：{{ formatDateTime(item.created_at) || '-' }}</span>
+                <span>最近使用：{{ formatDateTime(item.last_used_at) || '从未' }}</span>
+                <span>签名计数：{{ item.sign_count ?? 0 }}</span>
+              </div>
+            </div>
+            <div class="passkey-actions">
+              <el-button type="danger" size="small" @click="handleDeletePasskey(item.credential_id)">删除</el-button>
             </div>
           </div>
         </div>
@@ -429,11 +501,13 @@ import { ref, reactive, onMounted, computed, nextTick } from "vue";
 import { ElMessage, ElMessageBox, type FormInstance } from "element-plus";
 import { User, Lock, Key, Message } from "@element-plus/icons-vue";
 import { changeUserPassword, getBarkSettings, updateBarkSettings as updateBarkSettingsAPI, testBarkNotification, getLoginLogs, startTwoFactorSetup, enableTwoFactor, regenerateTwoFactorBackupCodes, disableTwoFactor } from "@/api/user";
-import { getUserProfile } from "@/api/auth";
+import { getUserProfile, getPasskeyRegisterOptions, verifyPasskeyRegister } from "@/api/auth";
+import { getPasskeys, deletePasskey } from "@/api/passkey";
 import { useUserStore } from "@/store/user";
 import router from "@/router";
 import http from "@/api/http";
 import QRCode from "qrcode";
+import { isPasskeySupported, performPasskeyRegistration } from "@/utils/passkey";
 
 const userStore = useUserStore();
 
@@ -467,6 +541,11 @@ const disableTwoFactorForm = reactive({
   code: ""
 });
 const disableTwoFactorLoading = ref(false);
+const passkeyBinding = ref(false);
+const passkeyDeviceName = ref("");
+const passkeySupported = computed(() => isPasskeySupported());
+const passkeyList = ref<any[]>([]);
+const passkeyLoading = ref(false);
 
 // 表单引用
 const passwordFormRef = ref<FormInstance>();
@@ -853,6 +932,63 @@ const testBarkKey = async () => {
   }
 };
 
+const handleBindPasskey = async () => {
+  if (!passkeySupported.value) {
+    ElMessage.warning("当前浏览器不支持通行密钥，请使用支持的设备");
+    return;
+  }
+  passkeyBinding.value = true;
+  try {
+    const { data } = await getPasskeyRegisterOptions();
+    if (!data?.challenge) {
+      throw new Error("未获取到通行密钥注册信息");
+    }
+    const credential = await performPasskeyRegistration(data);
+    const displayName =
+      passkeyDeviceName.value.trim() ||
+      userStore.user?.username ||
+      userStore.user?.email ||
+      "我的通行密钥";
+    await verifyPasskeyRegister({
+      credential,
+      deviceName: displayName.slice(0, 64)
+    });
+    ElMessage.success("通行密钥已绑定，可直接用于登录");
+    passkeyDeviceName.value = "";
+    await loadPasskeys();
+  } catch (error) {
+    console.error("绑定通行密钥失败:", error);
+    ElMessage.error((error as any)?.message || "绑定失败，请稍后重试");
+  } finally {
+    passkeyBinding.value = false;
+  }
+};
+
+const loadPasskeys = async () => {
+  passkeyLoading.value = true;
+  try {
+    const { data } = await getPasskeys();
+    passkeyList.value = data?.items || [];
+  } catch (error) {
+    console.error("获取通行密钥列表失败:", error);
+    passkeyList.value = [];
+  } finally {
+    passkeyLoading.value = false;
+  }
+};
+
+const handleDeletePasskey = async (credentialId: string) => {
+  if (!credentialId) return;
+  try {
+    await deletePasskey(credentialId);
+    ElMessage.success("已删除通行密钥");
+    passkeyList.value = passkeyList.value.filter((item) => item.credential_id !== credentialId);
+  } catch (error) {
+    console.error("删除通行密钥失败:", error);
+    ElMessage.error((error as any)?.message || "删除失败，请稍后重试");
+  }
+};
+
 // 加载登录记录
 const loadLoginLogs = async () => {
   loginLogsLoading.value = true;
@@ -941,6 +1077,7 @@ onMounted(async () => {
   loadBarkSettings();
   loadLoginLogs();
   loadOnlineIps();
+  loadPasskeys();
 });
 </script>
 
@@ -1093,6 +1230,11 @@ onMounted(async () => {
         gap: 10px;
         flex-wrap: wrap;
       }
+
+      .passkey-input {
+        margin-top: 6px;
+        max-width: 240px;
+      }
       
       .bark-controls {
         display: flex;
@@ -1129,6 +1271,47 @@ onMounted(async () => {
     
     &:last-child {
       margin-bottom: 0;
+    }
+  }
+}
+
+.passkey-list-card {
+  margin-top: 20px;
+}
+
+.passkey-list {
+  .passkey-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .passkey-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border: 1px solid #f2f2f2;
+    border-radius: 10px;
+    background: #fafafa;
+  }
+
+  .passkey-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    .passkey-title {
+      font-weight: 600;
+      color: #303133;
+    }
+
+    .passkey-desc {
+      color: #909399;
+      font-size: 12px;
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
     }
   }
 }

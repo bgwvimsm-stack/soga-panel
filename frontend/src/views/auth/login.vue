@@ -61,6 +61,20 @@
         登录
       </el-button>
 
+      <el-button
+        size="large"
+        class="passkey-btn"
+        :loading="passkeyLoading"
+        :disabled="!passkeySupported"
+        @click="handlePasskeyLogin"
+      >
+        <span class="passkey-dot" />
+        通过通行密钥登录
+      </el-button>
+      <div class="passkey-hint">
+        {{ passkeySupported ? "使用已绑定在此设备上的通行密钥快速登录" : "当前环境不支持通行密钥，尝试使用密码登录" }}
+      </div>
+
       <div class="third-party">
         <div class="third-title">
           <span>第三方登录</span>
@@ -253,13 +267,19 @@ import {
   loginWithGithub,
   getRegisterConfig,
   verifyTwoFactor,
-  completePendingOAuthRegistration
+  completePendingOAuthRegistration,
+  getPasskeyLoginOptions,
+  verifyPasskeyLogin
 } from "@/api/auth";
 import { setToken } from "@/utils/auth-soga";
 import { useUserStore } from "@/store/user";
 import { useSiteStore } from "@/store/site";
 import type { LoginRequest, LoginResponse } from "@/api/types";
 import TermsAgreement from "@/components/auth/TermsAgreement.vue";
+import {
+  isPasskeySupported,
+  performPasskeyLogin
+} from "@/utils/passkey";
 
 const router = useRouter();
 const route = useRoute();
@@ -300,6 +320,8 @@ const githubLoading = ref(false);
 const turnstileEnabled = computed(() =>
   Boolean((import.meta.env.VITE_TURNSTILE_SITE_KEY || "").toString().trim())
 );
+const passkeyLoading = ref(false);
+const passkeySupported = computed(() => isPasskeySupported());
 const oauthTermsRef = ref<InstanceType<typeof TermsAgreement>>();
 const pendingOAuthToken = ref("");
 const pendingOAuthProvider = ref("第三方");
@@ -682,6 +704,41 @@ const handleLogin = async () => {
   }
 };
 
+const handlePasskeyLogin = async () => {
+  const email = loginForm.email.trim().toLowerCase();
+  if (!passkeySupported.value) {
+    ElMessage.warning("当前浏览器不支持通行密钥，请使用密码或更换设备");
+    return;
+  }
+  if (!email) {
+    ElMessage.warning("请输入邮箱后再使用通行密钥登录");
+    return;
+  }
+  passkeyLoading.value = true;
+  try {
+    const { data } = await getPasskeyLoginOptions({
+      email,
+      remember: rememberLogin.value
+    });
+    if (!data?.challenge) {
+      throw new Error("未获取到通行密钥挑战");
+    }
+    if (!data?.allowCredentials || data.allowCredentials.length === 0) {
+      ElMessage.warning("该账户未绑定通行密钥，请先在个人资料中绑定");
+      return;
+    }
+    const credential = await performPasskeyLogin(data);
+    const { data: result } = await verifyPasskeyLogin({ credential });
+    completeLogin(result, "通行密钥");
+    navigateAfterLogin(result, "通行密钥");
+  } catch (error) {
+    console.error("通行密钥登录失败:", error);
+    ElMessage.error((error as any)?.message || "通行密钥登录失败，请稍后重试");
+  } finally {
+    passkeyLoading.value = false;
+  }
+};
+
 const goToRegister = () => {
   router.push("/register");
 };
@@ -938,6 +995,47 @@ const copyGeneratedPassword = async () => {
   border-radius: 12px;
   background: linear-gradient(135deg, #5a6cea 0%, #7c3aed 100%);
   border: none;
+}
+
+.passkey-btn {
+  width: 100%;
+  height: 44px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 12px;
+  background: #111827;
+  color: #f9fafb;
+  border: none;
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+
+  &:hover {
+    background: #0b1220;
+    color: #ffffff;
+  }
+
+  &:disabled {
+    background: #1f2937;
+    color: #9ca3af;
+  }
+}
+
+.passkey-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #7dd3fc, #7c3aed 40%, #f59e0b 75%, #ef4444);
+  box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.15);
+}
+
+.passkey-hint {
+  margin-top: 6px;
+  text-align: center;
+  color: #6b7280;
+  font-size: 12px;
 }
 
 .register-action {

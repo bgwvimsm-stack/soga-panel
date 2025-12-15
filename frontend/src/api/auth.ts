@@ -131,3 +131,27 @@ export const verifyTwoFactor = (data: {
 }): Promise<ApiResponse<LoginResponse>> => {
   return http.post("/auth/verify-2fa", data);
 };
+
+export const getPasskeyLoginOptions = (data: {
+  email: string;
+  remember?: boolean;
+}): Promise<ApiResponse<any>> => {
+  return http.post("/auth/passkey/login/options", data);
+};
+
+export const verifyPasskeyLogin = (data: {
+  credential: any;
+}): Promise<ApiResponse<LoginResponse>> => {
+  return http.post("/auth/passkey/login/verify", data);
+};
+
+export const getPasskeyRegisterOptions = (): Promise<ApiResponse<any>> => {
+  return http.post("/auth/passkey/register/options");
+};
+
+export const verifyPasskeyRegister = (data: {
+  credential: any;
+  deviceName?: string;
+}): Promise<ApiResponse<any>> => {
+  return http.post("/auth/passkey/register/verify", data);
+};

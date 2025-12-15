@@ -59,7 +59,9 @@ const envSchema = z.object({
   MAIL_VERIFICATION_COOLDOWN_SECONDS: z.string().optional(),
   MAIL_VERIFICATION_DAILY_LIMIT: z.string().optional(),
   MAIL_VERIFICATION_IP_HOURLY_LIMIT: z.string().optional(),
-  MAIL_VERIFICATION_ATTEMPT_LIMIT: z.string().optional()
+  MAIL_VERIFICATION_ATTEMPT_LIMIT: z.string().optional(),
+  PASSKEY_RP_ID: z.string().optional(),
+  PASSKEY_ORIGIN: z.string().optional()
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

@@ -445,6 +445,36 @@ CREATE TABLE IF NOT EXISTS two_factor_trusted_devices (
     UNIQUE (user_id, token_hash)
 );
 
+-- Passkey 表（WebAuthn）
+-- 字段说明：
+-- id: 主键
+-- user_id: 用户ID（外键）
+-- credential_id: 凭证ID（base64url，唯一）
+-- public_key: COSE 公钥（base64url）
+-- alg: COSE alg（如 -7 表示 ES256）
+-- user_handle: 注册时的 user.id（base64url）
+-- rp_id: 绑定的 rpId（域名）
+-- transports: 认证器传输方式 JSON
+-- sign_count: 签名计数
+-- device_name: 设备备注
+-- last_used_at/created_at/updated_at: 时间字段
+CREATE TABLE IF NOT EXISTS passkeys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    credential_id TEXT NOT NULL UNIQUE,
+    public_key TEXT NOT NULL,
+    alg INTEGER NOT NULL,
+    user_handle TEXT,
+    rp_id TEXT,
+    transports TEXT,
+    sign_count INTEGER DEFAULT 0,
+    device_name TEXT,
+    last_used_at DATETIME,
+    created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    updated_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
 -- 苹果账号共享ID配置表
 -- 字段说明：
 -- id: 主键
@@ -942,6 +972,10 @@ CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions (expires_a
 CREATE INDEX IF NOT EXISTS idx_two_factor_trusted_devices_user ON two_factor_trusted_devices (user_id);
 
 CREATE INDEX IF NOT EXISTS idx_two_factor_trusted_devices_expires ON two_factor_trusted_devices (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_passkeys_rp ON passkeys (rp_id);
 
 CREATE INDEX IF NOT EXISTS idx_shared_ids_status ON shared_ids (status);
 CREATE INDEX IF NOT EXISTS idx_shared_ids_remote_id ON shared_ids (remote_account_id);
