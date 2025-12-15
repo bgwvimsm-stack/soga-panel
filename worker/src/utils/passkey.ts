@@ -38,7 +38,6 @@ export type ValidatedRegistration = {
 export type ValidatedAuthentication = {
   newSignCount: number;
   userHandle?: string | null;
-  unverified?: boolean;
 };
 
 export function base64UrlEncode(data: ArrayBuffer | Uint8Array | string) {
@@ -168,7 +167,6 @@ export async function validateAuthenticationResponse(params: {
   alg: number;
   prevSignCount: number;
   expectedUserHandle?: string | null;
-  allowUnverified?: boolean;
 }): Promise<ValidatedAuthentication> {
   const {
     credential,
@@ -179,7 +177,6 @@ export async function validateAuthenticationResponse(params: {
     alg,
     prevSignCount,
     expectedUserHandle,
-    allowUnverified = false,
   } = params;
 
   if (!credential || credential.type !== "public-key") {
@@ -243,14 +240,7 @@ export async function validateAuthenticationResponse(params: {
   }
 
   if (!verified) {
-    if (!allowUnverified) {
-      throw new Error("签名验证失败");
-    }
-    return {
-      newSignCount: parsedAuth.signCount,
-      userHandle: clientData.raw.userHandle ?? credential.response.userHandle,
-      unverified: true,
-    };
+    throw new Error("签名验证失败");
   }
 
   return {

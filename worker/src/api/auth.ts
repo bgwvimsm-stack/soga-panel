@@ -2213,7 +2213,6 @@ export class AuthAPI {
         prevSignCount: Number(passkey.sign_count ?? 0),
         expectedUserHandle:
           typeof passkey.user_handle === "string" ? passkey.user_handle : undefined,
-        allowUnverified: this.parseBoolean(this.env.PASSKEY_ALLOW_WEAK, false),
       });
 
       const newCount =
