@@ -23,6 +23,8 @@ JWT_SECRET = "ABCDEFG123456"
 # 前后端通信密钥
 FRONTEND_API_SECRET = "123456"
 TWO_FACTOR_SECRET_KEY = "your-2fa-encryption-secret"
+PASSKEY_RP_ID = "your.frontend.domain"
+PASSKEY_ORIGIN = "https://your.frontend.domain"
 
 # ------------------------------------------------------------------------
 # 站点名称（用于邮件、页面抬头）

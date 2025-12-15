@@ -63,7 +63,7 @@
 
       <div class="third-party">
         <div class="third-title">
-          <span>第三方登录</span>
+          <span>其他登录</span>
         </div>
         <div class="third-icons">
           <div
@@ -128,8 +128,27 @@
               <el-icon><Loading /></el-icon>
             </div>
           </div>
-          <div class="third-icon placeholder" v-for="n in 1" :key="`placeholder-${n}`">
-            <span class="placeholder-dot"></span>
+          <div
+            class="third-icon passkey"
+            :class="{ disabled: !passkeySupported }"
+            @click="passkeySupported ? handlePasskeyLogin() : null"
+          >
+            <span class="icon-wrapper">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                aria-label="Passkey"
+                fill="none"
+              >
+                <path
+                  fill="#000000"
+                  stroke-width="0.5"
+                  d="M3 20v-2.35c0-.63335.158335-1.175.475-1.625.316665-.45.725-.79165 1.225-1.025 1.11665-.5 2.1875-.875 3.2125-1.125S9.96665 13.5 11 13.5c.43335 0 .85415.02085 1.2625.0625s.82915.10415 1.2625.1875c-.08335.96665.09585 1.87915.5375 2.7375C14.50415 17.34585 15.15 18.01665 16 18.5v1.5H3Zm16 3.675-1.5-1.5v-4.65c-.73335-.21665-1.33335-.62915-1.8-1.2375-.46665-.60835-.7-1.3125-.7-2.1125 0-.96665.34165-1.79165 1.025-2.475.68335-.68335 1.50835-1.025 2.475-1.025s1.79165.34165 2.475 1.025c.68335.68335 1.025 1.50835 1.025 2.475 0 .75-.2125 1.41665-.6375 2-.425.58335-.9625 1-1.6125 1.25l1.25 1.25-1.5 1.5 1.5 1.5-2 2ZM11 11.5c-1.05 0-1.9375-.3625-2.6625-1.0875-.725-.725-1.0875-1.6125-1.0875-2.6625s.3625-1.9375 1.0875-2.6625C9.0625 4.3625 9.95 4 11 4s1.9375.3625 2.6625 1.0875c.725.725 1.0875 1.6125 1.0875 2.6625s-.3625 1.9375-1.0875 2.6625C12.9375 11.1375 12.05 11.5 11 11.5Zm7.5 3.175c.28335 0 .52085-.09585.7125-.2875s.2875-.42915.2875-.7125c0-.28335-.09585-.52085-.2875-.7125s-.42915-.2875-.7125-.2875c-.28335 0-.52085.09585-.7125.2875s-.2875.42915-.2875.7125c0 .28335.09585.52085.2875.7125s.42915.2875.7125.2875Z"
+                />
+              </svg>
+            </span>
           </div>
         </div>
       </div>
@@ -253,13 +272,19 @@ import {
   loginWithGithub,
   getRegisterConfig,
   verifyTwoFactor,
-  completePendingOAuthRegistration
+  completePendingOAuthRegistration,
+  getPasskeyLoginOptions,
+  verifyPasskeyLogin
 } from "@/api/auth";
 import { setToken } from "@/utils/auth-soga";
 import { useUserStore } from "@/store/user";
 import { useSiteStore } from "@/store/site";
 import type { LoginRequest, LoginResponse } from "@/api/types";
 import TermsAgreement from "@/components/auth/TermsAgreement.vue";
+import {
+  isPasskeySupported,
+  performPasskeyLogin
+} from "@/utils/passkey";
 
 const router = useRouter();
 const route = useRoute();
@@ -300,6 +325,8 @@ const githubLoading = ref(false);
 const turnstileEnabled = computed(() =>
   Boolean((import.meta.env.VITE_TURNSTILE_SITE_KEY || "").toString().trim())
 );
+const passkeyLoading = ref(false);
+const passkeySupported = computed(() => isPasskeySupported());
 const oauthTermsRef = ref<InstanceType<typeof TermsAgreement>>();
 const pendingOAuthToken = ref("");
 const pendingOAuthProvider = ref("第三方");
@@ -682,6 +709,41 @@ const handleLogin = async () => {
   }
 };
 
+const handlePasskeyLogin = async () => {
+  const email = loginForm.email.trim().toLowerCase();
+  if (!passkeySupported.value) {
+    ElMessage.warning("当前浏览器不支持通行密钥，请使用密码或更换设备");
+    return;
+  }
+  if (!email) {
+    ElMessage.warning("请输入邮箱后再使用通行密钥登录");
+    return;
+  }
+  passkeyLoading.value = true;
+  try {
+    const { data } = await getPasskeyLoginOptions({
+      email,
+      remember: rememberLogin.value
+    });
+    if (!data?.challenge) {
+      throw new Error("未获取到通行密钥挑战");
+    }
+    if (!data?.allowCredentials || data.allowCredentials.length === 0) {
+      ElMessage.warning("该账户未绑定通行密钥，请先在个人资料中绑定");
+      return;
+    }
+    const credential = await performPasskeyLogin(data);
+    const { data: result } = await verifyPasskeyLogin({ credential });
+    completeLogin(result, "通行密钥");
+    navigateAfterLogin(result, "通行密钥");
+  } catch (error) {
+    console.error("通行密钥登录失败:", error);
+    ElMessage.error((error as any)?.message || "通行密钥登录失败，请稍后重试");
+  } finally {
+    passkeyLoading.value = false;
+  }
+};
+
 const goToRegister = () => {
   router.push("/register");
 };
@@ -1031,6 +1093,21 @@ const copyGeneratedPassword = async () => {
 .third-icon.github:hover {
   border-color: #d1d5db;
   box-shadow: 0 6px 18px rgba(99, 102, 241, 0.12);
+}
+
+.third-icon.passkey {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+
+.third-icon.passkey:hover:not(.disabled) {
+  border-color: #cbd5f5;
+  box-shadow: 0 6px 18px rgba(79, 70, 229, 0.14);
+}
+
+.third-icon.passkey.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .icon-wrapper {

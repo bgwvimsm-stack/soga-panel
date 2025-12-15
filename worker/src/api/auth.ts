@@ -15,6 +15,16 @@ import {
   generateNumericCode,
   sha256Hex,
 } from "../utils/crypto";
+import {
+  AuthenticationCredential,
+  RegistrationCredential,
+  base64UrlDecode,
+  base64UrlEncode,
+  randomChallenge,
+  validateAuthenticationResponse,
+  validateRegistrationResponse,
+} from "../utils/passkey";
+import { validateUserAuth } from "../middleware/auth";
 import { EmailService } from "../services/email";
 import {
   createSystemConfigManager,
@@ -83,6 +93,16 @@ type TwoFactorChallengePayload = {
   meta?: Record<string, unknown> | null;
 };
 
+type PasskeyChallengePayload = {
+  type: "registration" | "authentication";
+  userId: number;
+  challenge: string;
+  rpId: string;
+  origin: string;
+  remember?: boolean;
+  createdAt: number;
+};
+
 type PendingOAuthRegistration = {
   provider: "google" | "github";
   email: string;
@@ -102,6 +122,7 @@ const PURPOSE_PASSWORD_RESET = "password_reset";
 
 const TWO_FACTOR_CHALLENGE_TTL = 300;
 const TRUSTED_DEVICE_TTL_DAYS = 30;
+const PASSKEY_CHALLENGE_TTL = 300;
 
 interface AuthUserRow {
   id: number;
@@ -193,6 +214,81 @@ export class AuthAPI {
       }
     }
     return defaultValue;
+  }
+
+  private getExpectedOrigin(request: Request) {
+    const override =
+      typeof this.env.PASSKEY_ORIGIN === "string"
+        ? this.env.PASSKEY_ORIGIN.trim()
+        : "";
+    if (override) {
+      return override.replace(/\/+$/, "");
+    }
+    const url = new URL(request.url);
+    return `${url.protocol}//${url.host}`;
+  }
+
+  private getRpId(request: Request) {
+    const override =
+      typeof this.env.PASSKEY_RP_ID === "string"
+        ? this.env.PASSKEY_RP_ID.trim()
+        : "";
+    if (override) return override;
+    const url = new URL(request.url);
+    return url.hostname;
+  }
+
+  private getPasskeyCacheKey(challenge: string) {
+    return `passkey_challenge_${challenge}`;
+  }
+
+  private async savePasskeyChallenge(payload: PasskeyChallengePayload) {
+    await this.cache.set(
+      this.getPasskeyCacheKey(payload.challenge),
+      JSON.stringify(payload),
+      PASSKEY_CHALLENGE_TTL
+    );
+  }
+
+  private async loadPasskeyChallenge(
+    challenge: string
+  ): Promise<PasskeyChallengePayload | null> {
+    const raw = await this.cache.get(this.getPasskeyCacheKey(challenge));
+    if (!raw || typeof raw !== "string") return null;
+    try {
+      return JSON.parse(raw) as PasskeyChallengePayload;
+    } catch {
+      return null;
+    }
+  }
+
+  private async clearPasskeyChallenge(challenge: string) {
+    await this.cache.delete(this.getPasskeyCacheKey(challenge));
+  }
+
+  private parseTransports(raw?: string | null) {
+    if (!raw) return undefined;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((t) => String(t));
+      }
+    } catch {
+      // ignore
+    }
+    return undefined;
+  }
+
+  private extractClientChallenge(clientDataJSON: string) {
+    try {
+      const decoded = base64UrlDecode(clientDataJSON);
+      const parsed = JSON.parse(
+        new TextDecoder().decode(decoded)
+      ) as Record<string, unknown>;
+      return typeof parsed.challenge === "string" ? parsed.challenge : "";
+    } catch {
+      return "";
+    }
   }
 
   private isTwoFactorEnabled(user: AuthUserRow): boolean {
@@ -1817,6 +1913,378 @@ export class AuthAPI {
       return errorResponse(
         error instanceof Error ? error.message : "二步验证失败，请稍后重试",
         500
+      );
+    }
+  }
+
+  async generatePasskeyRegistrationOptions(request: Request) {
+    const auth = await validateUserAuth(request, this.env);
+    if (!auth.success) {
+      return errorResponse(auth.message, 401);
+    }
+
+    const siteConfigs = await this.configManager.getSiteConfigs();
+    const siteName =
+      siteConfigs.site_name || (this.env.SITE_NAME as string) || "Soga Panel";
+    const rpId = this.getRpId(request);
+    const origin = this.getExpectedOrigin(request);
+    const challenge = randomChallenge(32);
+
+    const existing = await this.db.db
+      .prepare("SELECT credential_id, transports FROM passkeys WHERE user_id = ?")
+      .bind(auth.user.id)
+      .all<{ credential_id: string; transports?: string | null }>();
+
+    await this.savePasskeyChallenge({
+      type: "registration",
+      userId: auth.user.id,
+      challenge,
+      rpId,
+      origin,
+      createdAt: Date.now(),
+    });
+
+    const excludeCredentials =
+      existing.results?.map((row) => ({
+        id: row.credential_id,
+        type: "public-key",
+        transports: this.parseTransports(row.transports),
+      })) || [];
+
+    const userHandle = base64UrlEncode(String(auth.user.id));
+    const displayName =
+      (auth.user as any).username ||
+      (auth.user as any).email ||
+      `user_${auth.user.id}`;
+
+    return successResponse({
+      challenge,
+      rp: { id: rpId, name: siteName },
+      user: {
+        id: userHandle,
+        name: (auth.user as any).email || displayName,
+        displayName,
+      },
+      pubKeyCredParams: [
+        { type: "public-key", alg: -7 },
+        { type: "public-key", alg: -257 },
+      ],
+      timeout: 120000,
+      attestation: "none",
+      authenticatorSelection: {
+        userVerification: "preferred",
+        residentKey: "preferred",
+      },
+      excludeCredentials,
+    });
+  }
+
+  async verifyPasskeyRegistration(request: Request) {
+    const auth = await validateUserAuth(request, this.env);
+    if (!auth.success) {
+      return errorResponse(auth.message, 401);
+    }
+
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("请求格式不正确，请使用 JSON", 400);
+    }
+
+    const credential = body?.credential as RegistrationCredential | undefined;
+    const deviceName =
+      typeof body?.deviceName === "string"
+        ? body.deviceName.trim().slice(0, 64)
+        : "";
+
+    if (
+      !credential ||
+      typeof credential.response?.clientDataJSON !== "string" ||
+      typeof credential.response?.attestationObject !== "string"
+    ) {
+      return errorResponse("缺少 Passkey 凭证数据", 400);
+    }
+
+    const receivedChallenge = this.extractClientChallenge(
+      credential.response.clientDataJSON
+    );
+    if (!receivedChallenge) {
+      return errorResponse("挑战码无效，请重试", 400);
+    }
+
+    const challenge = await this.loadPasskeyChallenge(receivedChallenge);
+    if (
+      !challenge ||
+      challenge.type !== "registration" ||
+      challenge.userId !== auth.user.id
+    ) {
+      return errorResponse("Passkey 注册会话已过期，请重新开始", 400);
+    }
+
+    try {
+      const validated = await validateRegistrationResponse({
+        credential,
+        expectedChallenge: challenge.challenge,
+        expectedOrigin: challenge.origin,
+        expectedRpId: challenge.rpId,
+      });
+
+      const existing = await this.db.db
+        .prepare("SELECT user_id FROM passkeys WHERE credential_id = ?")
+        .bind(validated.credentialId)
+        .first<{ user_id: number }>();
+
+      if (existing) {
+        await this.clearPasskeyChallenge(receivedChallenge);
+        return errorResponse("该 Passkey 已被绑定，请改用其它凭证", 400);
+      }
+
+      await this.db.db
+        .prepare(
+          `
+          INSERT INTO passkeys (user_id, credential_id, public_key, alg, user_handle, rp_id, transports, sign_count, device_name, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'))
+        `
+        )
+        .bind(
+          auth.user.id,
+          validated.credentialId,
+          validated.publicKey,
+          validated.alg,
+          validated.userHandle || base64UrlEncode(String(auth.user.id)),
+          challenge.rpId,
+          validated.transports ? JSON.stringify(validated.transports) : null,
+          validated.signCount || 0,
+          deviceName || null
+        )
+        .run();
+
+      await this.clearPasskeyChallenge(receivedChallenge);
+      return successResponse({
+        credential_id: validated.credentialId,
+        message: "Passkey 已绑定",
+      });
+    } catch (error) {
+      await this.clearPasskeyChallenge(receivedChallenge);
+      this.logger.error("Passkey 注册失败", error);
+      const message =
+        error instanceof Error ? error.message : "Passkey 注册失败，请重试";
+      return errorResponse(message, 400);
+    }
+  }
+
+  async generatePasskeyLoginOptions(request: Request) {
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("请求格式不正确，请使用 JSON", 400);
+    }
+
+    const email =
+      typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+    const remember = this.parseBoolean(body?.remember, false);
+
+    if (!email) {
+      return errorResponse("请填写邮箱", 400);
+    }
+    if (!EMAIL_REGEX.test(email)) {
+      return errorResponse("邮箱格式无效", 400);
+    }
+
+    const user = await this.db.db
+      .prepare("SELECT * FROM users WHERE email = ?")
+      .bind(email)
+      .first<AuthUserRow>();
+
+    if (!user) {
+      return errorResponse("账户不存在", 404);
+    }
+
+    const passkeys = await this.db.db
+      .prepare("SELECT credential_id, transports, rp_id FROM passkeys WHERE user_id = ?")
+      .bind(user.id)
+      .all<{ credential_id: string; transports?: string | null; rp_id?: string | null }>();
+
+    const list = passkeys.results || [];
+    if (!list.length) {
+      return errorResponse("该账户未绑定 Passkey，请先使用密码登录绑定", 400);
+    }
+
+    const rpId = this.getRpId(request);
+    const origin = this.getExpectedOrigin(request);
+    const challenge = randomChallenge(32);
+
+    await this.savePasskeyChallenge({
+      type: "authentication",
+      userId: user.id,
+      challenge,
+      rpId,
+      origin,
+      remember,
+      createdAt: Date.now(),
+    });
+
+    return successResponse({
+      challenge,
+      rpId,
+      timeout: 120000,
+      allowCredentials: list.map((row) => ({
+        id: row.credential_id,
+        type: "public-key",
+        transports: this.parseTransports(row.transports),
+      })),
+      userVerification: "required",
+    });
+  }
+
+  async verifyPasskeyLogin(request: Request) {
+    let body: any;
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("请求格式不正确，请使用 JSON", 400);
+    }
+
+    const credential = body?.credential as AuthenticationCredential | undefined;
+    if (
+      !credential ||
+      typeof credential.response?.clientDataJSON !== "string" ||
+      typeof credential.response?.authenticatorData !== "string" ||
+      typeof credential.response?.signature !== "string"
+    ) {
+      return errorResponse("缺少 Passkey 凭证数据", 400);
+    }
+
+    const clientIP =
+      request.headers.get("CF-Connecting-IP") ||
+      request.headers.get("X-Forwarded-For") ||
+      request.headers.get("X-Real-IP") ||
+      "unknown";
+    const userAgent = request.headers.get("User-Agent") || "";
+
+    const receivedChallenge = this.extractClientChallenge(
+      credential.response.clientDataJSON
+    );
+    if (!receivedChallenge) {
+      return errorResponse("挑战码无效，请重试", 400);
+    }
+
+    const challenge = await this.loadPasskeyChallenge(receivedChallenge);
+    if (!challenge || challenge.type !== "authentication") {
+      return errorResponse("登录会话已失效，请重试", 400);
+    }
+
+    const credentialId = typeof credential.id === "string" ? credential.id : "";
+    const passkey = await this.db.db
+      .prepare("SELECT * FROM passkeys WHERE credential_id = ?")
+      .bind(credentialId)
+      .first<any>();
+
+    if (!passkey) {
+      await this.clearPasskeyChallenge(receivedChallenge);
+      return errorResponse("未找到匹配的 Passkey", 404);
+    }
+
+    if (Number(passkey.user_id) !== Number(challenge.userId)) {
+      await this.clearPasskeyChallenge(receivedChallenge);
+      return errorResponse("登录会话已失效，请重试", 400);
+    }
+
+    const user = await this.db.db
+      .prepare("SELECT * FROM users WHERE id = ?")
+      .bind(passkey.user_id)
+      .first<AuthUserRow>();
+
+    if (!user) {
+      await this.clearPasskeyChallenge(receivedChallenge);
+      return errorResponse("账户不存在", 404);
+    }
+
+    try {
+      const validated = await validateAuthenticationResponse({
+        credential,
+        expectedChallenge: challenge.challenge,
+        expectedOrigin: challenge.origin,
+        expectedRpId: challenge.rpId || this.getRpId(request),
+        storedPublicKey: passkey.public_key,
+        alg: Number(passkey.alg ?? -7),
+        prevSignCount: Number(passkey.sign_count ?? 0),
+        expectedUserHandle:
+          typeof passkey.user_handle === "string" ? passkey.user_handle : undefined,
+      });
+
+      const newCount =
+        validated.newSignCount ?? Number(passkey.sign_count ?? 0);
+      const finalCount =
+        newCount > Number(passkey.sign_count ?? 0)
+          ? newCount
+          : Number(passkey.sign_count ?? 0);
+
+      await this.db.db
+        .prepare(
+          `
+          UPDATE passkeys
+          SET sign_count = ?, last_used_at = datetime('now', '+8 hours'), updated_at = datetime('now', '+8 hours')
+          WHERE credential_id = ?
+        `
+        )
+        .bind(finalCount, credentialId)
+        .run();
+
+      await this.clearPasskeyChallenge(receivedChallenge);
+
+      const expireTime = user.expire_time
+        ? new Date(
+            typeof user.expire_time === "string"
+              ? user.expire_time
+              : String(user.expire_time)
+          )
+        : null;
+
+      if (expireTime && expireTime < new Date()) {
+        await this.db.db
+          .prepare(
+            `
+            INSERT INTO login_logs (user_id, login_ip, user_agent, login_status, failure_reason, login_method)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `
+          )
+          .bind(user.id, clientIP, userAgent, 0, "账户过期", "passkey")
+          .run();
+        return errorResponse("账户已过期，请联系管理员续费", 403);
+      }
+
+      return this.finalizeLogin(
+        user,
+        Boolean(challenge.remember),
+        "passkey",
+        clientIP,
+        userAgent
+      );
+    } catch (error) {
+      await this.clearPasskeyChallenge(receivedChallenge);
+      await this.db.db
+        .prepare(
+          `
+          INSERT INTO login_logs (user_id, login_ip, user_agent, login_status, failure_reason, login_method)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `
+        )
+        .bind(
+          user.id,
+          clientIP,
+          userAgent,
+          0,
+          error instanceof Error ? error.message : "Passkey 校验失败",
+          "passkey"
+        )
+        .run();
+      this.logger.error("Passkey 登录失败", error);
+      return errorResponse(
+        error instanceof Error ? error.message : "Passkey 登录失败，请重试",
+        400
       );
     }
   }

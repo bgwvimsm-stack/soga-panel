@@ -22,6 +22,8 @@ WEBAPI_KEY = "114514"
 JWT_SECRET = "ABCDEFG123456"
 # 前后端通信密钥
 FRONTEND_API_SECRET = "123456"
+PASSKEY_RP_ID = "your.frontend.domain"
+PASSKEY_ORIGIN = "https://your.frontend.domain"
 
 # ------------------------------------------------------------------------
 # 站点名称（用于邮件、页面抬头）
