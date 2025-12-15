@@ -110,6 +110,28 @@ export function createUserRouter(ctx: AppContext) {
     });
   });
 
+  router.get("/passkeys", async (req: Request, res: Response) => {
+    const user = (req as any).user;
+    if (!user?.id) return errorResponse(res, "未登录", 401);
+    const list = await ctx.dbService.listPasskeys(Number(user.id));
+    return successResponse(res, { items: list });
+  });
+
+  router.delete("/passkeys/:id", async (req: Request, res: Response) => {
+    const user = (req as any).user;
+    if (!user?.id) return errorResponse(res, "未登录", 401);
+    const id = ensureString(req.params?.id);
+    if (!id) return errorResponse(res, "缺少凭证ID", 400);
+
+    const del = await ctx.dbService.db
+      .prepare("DELETE FROM passkeys WHERE user_id = ? AND credential_id = ?")
+      .bind(user.id, id)
+      .run();
+    const changes = (del.meta as any)?.changes ?? (del as any)?.changes;
+    if (!changes) return errorResponse(res, "未找到要删除的通行密钥", 404);
+    return successResponse(res, { removed: id });
+  });
+
   router.put("/profile", async (req: Request, res: Response) => {
     const user = (req as any).user;
     const { username, email } = req.body || {};
