@@ -6,12 +6,132 @@ import { TwoFactorService } from "../services/twoFactor";
 import { ReferralService } from "../services/referral";
 import { generateRandomString, generateUUID, hashPassword } from "../utils/crypto";
 import { ensureString } from "../utils/d1";
+import { createAuthMiddleware } from "../middleware/auth";
+import {
+  AuthenticationCredential,
+  RegistrationCredential,
+  base64UrlDecode,
+  base64UrlEncode,
+  randomChallenge,
+  validateAuthenticationResponse,
+  validateRegistrationResponse
+} from "../utils/passkey";
 
 export function createAuthRouter(ctx: AppContext) {
   const router = Router();
   const authService = new AuthService(ctx.dbService, ctx.cache, ctx.env);
   const twoFactorService = new TwoFactorService(ctx.env);
   const referralService = new ReferralService(ctx.dbService);
+
+  type PasskeyChallengePayload = {
+    type: "registration" | "authentication";
+    userId: number;
+    challenge: string;
+    rpId: string;
+    origin: string;
+    remember?: boolean;
+    createdAt: number;
+  };
+
+  const PASSKEY_CHALLENGE_TTL = 300;
+  const localPasskeyChallenges = new Map<
+    string,
+    { payload: PasskeyChallengePayload; expiresAt: number }
+  >();
+
+  const buildPasskeyCacheKey = (challenge: string) =>
+    `passkey_challenge_${challenge}`;
+
+  const savePasskeyChallenge = async (payload: PasskeyChallengePayload) => {
+    const key = buildPasskeyCacheKey(payload.challenge);
+    const value = JSON.stringify(payload);
+    if (ctx.redis) {
+      try {
+        await ctx.redis.set(key, value, "EX", PASSKEY_CHALLENGE_TTL);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[passkey] 保存挑战失败（redis）:", message);
+      }
+    }
+    localPasskeyChallenges.set(key, {
+      payload,
+      expiresAt: Date.now() + PASSKEY_CHALLENGE_TTL * 1000
+    });
+  };
+
+  const loadPasskeyChallenge = async (challenge: string) => {
+    const key = buildPasskeyCacheKey(challenge);
+    if (ctx.redis) {
+      try {
+        const raw = await ctx.redis.get(key);
+        if (raw) {
+          return JSON.parse(raw) as PasskeyChallengePayload;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[passkey] 读取挑战失败（redis）:", message);
+      }
+    }
+    const cached = localPasskeyChallenges.get(key);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.payload;
+    }
+    localPasskeyChallenges.delete(key);
+    return null;
+  };
+
+  const clearPasskeyChallenge = async (challenge: string) => {
+    const key = buildPasskeyCacheKey(challenge);
+    if (ctx.redis) {
+      try {
+        await ctx.redis.del(key);
+      } catch {
+        // ignore
+      }
+    }
+    localPasskeyChallenges.delete(key);
+  };
+
+  const parseTransports = (raw?: string | null) => {
+    if (!raw) return undefined;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((t) => String(t));
+      }
+    } catch {
+      // ignore
+    }
+    return undefined;
+  };
+
+  const getExpectedOrigin = (req: Request) => {
+    const override = (ctx.env.PASSKEY_ORIGIN || "").trim();
+    if (override) {
+      return override.replace(/\/+$/, "");
+    }
+    const host = req.get("host") || "";
+    return `${req.protocol}://${host}`;
+  };
+
+  const getRpId = (req: Request) => {
+    const override = (ctx.env.PASSKEY_RP_ID || "").trim();
+    if (override) return override;
+    const host = req.get("host") || "";
+    return host.split(":")[0] || host || "localhost";
+  };
+
+  const extractClientChallenge = (clientDataJSON: string) => {
+    try {
+      const decoded = base64UrlDecode(clientDataJSON);
+      const parsed = JSON.parse(
+        new TextDecoder().decode(decoded)
+      ) as Record<string, unknown>;
+      return typeof parsed.challenge === "string" ? parsed.challenge : "";
+    } catch {
+      return "";
+    }
+  };
 
   const buildPayload = (userRow: any) => ({
     id: Number(userRow.id),
@@ -472,6 +592,264 @@ export function createAuthRouter(ctx: AppContext) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return errorResponse(res, message, 500);
+    }
+  });
+
+  router.post(
+    "/passkey/register/options",
+    createAuthMiddleware(ctx),
+    async (req: Request, res: Response) => {
+      const user = (req as any).user;
+      if (!user?.id) return errorResponse(res, "未登录", 401);
+      try {
+        const configs = await ctx.dbService.listSystemConfigsMap();
+        const siteName = configs["site_name"] || ctx.env.SITE_NAME || "Soga Panel";
+        const rpId = getRpId(req);
+        const origin = getExpectedOrigin(req);
+        const challenge = randomChallenge(32);
+
+        const passkeys = await ctx.dbService.listPasskeys(Number(user.id));
+        await savePasskeyChallenge({
+          type: "registration",
+          userId: Number(user.id),
+          challenge,
+          rpId,
+          origin,
+          createdAt: Date.now()
+        });
+
+        const excludeCredentials = passkeys.map((p: any) => ({
+          id: String(p.credential_id),
+          type: "public-key",
+          transports: parseTransports(p.transports)
+        }));
+
+        const displayName = ensureString(user.username) || ensureString(user.email) || `user_${user.id}`;
+
+        return successResponse(res, {
+          challenge,
+          rp: { id: rpId, name: siteName },
+          user: {
+            id: base64UrlEncode(String(user.id)),
+            name: ensureString(user.email) || displayName,
+            displayName
+          },
+          pubKeyCredParams: [
+            { type: "public-key", alg: -7 },
+            { type: "public-key", alg: -257 }
+          ],
+          timeout: 120000,
+          attestation: "none",
+          authenticatorSelection: {
+            userVerification: "preferred",
+            residentKey: "preferred"
+          },
+          excludeCredentials
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return errorResponse(res, message, 500);
+      }
+    }
+  );
+
+  router.post(
+    "/passkey/register/verify",
+    createAuthMiddleware(ctx),
+    async (req: Request, res: Response) => {
+      const user = (req as any).user;
+      if (!user?.id) return errorResponse(res, "未登录", 401);
+      const { credential, deviceName } = req.body || {};
+      if (
+        !credential ||
+        typeof credential?.response?.clientDataJSON !== "string" ||
+        typeof credential?.response?.attestationObject !== "string"
+      ) {
+        return errorResponse(res, "缺少凭证数据", 400);
+      }
+
+      const receivedChallenge = extractClientChallenge(credential.response.clientDataJSON);
+      if (!receivedChallenge) {
+        return errorResponse(res, "挑战码无效，请重试", 400);
+      }
+
+      const challenge = await loadPasskeyChallenge(receivedChallenge);
+      if (!challenge || challenge.type !== "registration" || Number(challenge.userId) !== Number(user.id)) {
+        return errorResponse(res, "Passkey 注册会话已过期，请重试", 400);
+      }
+
+      try {
+        const validated = await validateRegistrationResponse({
+          credential: credential as RegistrationCredential,
+          expectedChallenge: challenge.challenge,
+          expectedOrigin: challenge.origin,
+          expectedRpId: challenge.rpId
+        });
+
+        const existing = await ctx.dbService.getPasskeyByCredentialId(validated.credentialId);
+        if (existing) {
+          await clearPasskeyChallenge(receivedChallenge);
+          return errorResponse(res, "该 Passkey 已被绑定", 400);
+        }
+
+        const safeDeviceName =
+          typeof deviceName === "string" && deviceName.trim() ? deviceName.trim().slice(0, 64) : null;
+
+        await ctx.dbService.insertPasskey({
+          userId: Number(user.id),
+          credentialId: validated.credentialId,
+          publicKey: validated.publicKey,
+          alg: validated.alg,
+          userHandle: validated.userHandle || base64UrlEncode(String(user.id)),
+          rpId: challenge.rpId,
+          transports: validated.transports,
+          signCount: validated.signCount,
+          deviceName: safeDeviceName
+        });
+
+        await clearPasskeyChallenge(receivedChallenge);
+        return successResponse(res, { credential_id: validated.credentialId }, "Passkey 已绑定");
+      } catch (error) {
+        await clearPasskeyChallenge(receivedChallenge);
+        const message = error instanceof Error ? error.message : String(error);
+        return errorResponse(res, message, 400);
+      }
+    }
+  );
+
+  router.post("/passkey/login/options", async (req: Request, res: Response) => {
+    const { email, remember } = req.body || {};
+    const normalizedEmail = ensureString(email).toLowerCase();
+    if (!normalizedEmail) {
+      return errorResponse(res, "请填写邮箱", 400);
+    }
+
+    try {
+      const user = await ctx.dbService.getUserByEmail(normalizedEmail);
+      if (!user) {
+        return errorResponse(res, "账户不存在", 404);
+      }
+
+      const passkeys = await ctx.dbService.listPasskeys(Number(user.id));
+      if (!passkeys.length) {
+        return errorResponse(res, "该账户未绑定 Passkey，请先使用密码登录绑定", 400);
+      }
+
+      const rpId =
+        passkeys.find((p: any) => typeof p.rp_id === "string" && p.rp_id)?.rp_id || getRpId(req);
+      const origin = getExpectedOrigin(req);
+      const challenge = randomChallenge(32);
+
+      await savePasskeyChallenge({
+        type: "authentication",
+        userId: Number(user.id),
+        challenge,
+        rpId,
+        origin,
+        remember: Boolean(remember),
+        createdAt: Date.now()
+      });
+
+      return successResponse(res, {
+        challenge,
+        rpId,
+        timeout: 120000,
+        allowCredentials: passkeys.map((row: any) => ({
+          id: String(row.credential_id),
+          type: "public-key",
+          transports: parseTransports(row.transports)
+        })),
+        userVerification: "required"
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return errorResponse(res, message, 500);
+    }
+  });
+
+  router.post("/passkey/login/verify", async (req: Request, res: Response) => {
+    const { credential } = req.body || {};
+    if (
+      !credential ||
+      typeof credential?.response?.clientDataJSON !== "string" ||
+      typeof credential?.response?.authenticatorData !== "string" ||
+      typeof credential?.response?.signature !== "string"
+    ) {
+      return errorResponse(res, "缺少凭证数据", 400);
+    }
+
+    const clientChallenge = extractClientChallenge(credential.response.clientDataJSON);
+    if (!clientChallenge) {
+      return errorResponse(res, "挑战码无效，请重试", 400);
+    }
+
+    const challenge = await loadPasskeyChallenge(clientChallenge);
+    if (!challenge || challenge.type !== "authentication") {
+      return errorResponse(res, "登录会话已失效，请重试", 400);
+    }
+
+    const credentialId = ensureString(credential.id);
+    try {
+      const passkey = await ctx.dbService.getPasskeyByCredentialId(credentialId);
+      if (!passkey || Number(passkey.user_id) !== Number(challenge.userId)) {
+        await clearPasskeyChallenge(clientChallenge);
+        return errorResponse(res, "未找到匹配的 Passkey", 404);
+      }
+
+      const user = await ctx.dbService.getUserById(Number(passkey.user_id));
+      if (!user) {
+        await clearPasskeyChallenge(clientChallenge);
+        return errorResponse(res, "账户不存在", 404);
+      }
+
+      if (Number(user.status ?? 0) !== 1) {
+        await clearPasskeyChallenge(clientChallenge);
+        return errorResponse(res, "账户已禁用", 403);
+      }
+
+      const validated = await validateAuthenticationResponse({
+        credential: credential as AuthenticationCredential,
+        expectedChallenge: challenge.challenge,
+        expectedOrigin: challenge.origin,
+        expectedRpId: challenge.rpId || getRpId(req),
+        storedPublicKey: ensureString(passkey.public_key),
+        alg: Number(passkey.alg ?? -7),
+        prevSignCount: Number(passkey.sign_count ?? 0),
+        expectedUserHandle: ensureString(passkey.user_handle) || undefined
+      });
+
+      const newCount = validated.newSignCount ?? Number(passkey.sign_count ?? 0);
+      const finalCount =
+        newCount > Number(passkey.sign_count ?? 0) ? newCount : Number(passkey.sign_count ?? 0);
+      await ctx.dbService.updatePasskeyUsage(credentialId, finalCount);
+
+      await clearPasskeyChallenge(clientChallenge);
+
+      const payload = buildPayload(user);
+      const token = await authService.issueSessionToken(payload);
+      await ctx.dbService.updateLoginInfo(payload.id, req.ip ?? null);
+      await ctx.dbService.insertLoginLog({
+        userId: payload.id,
+        ip: req.ip ?? "",
+        userAgent: req.headers["user-agent"] as string | undefined,
+        status: 1,
+        loginMethod: "passkey"
+      });
+
+      const userResp = { ...payload, is_admin: Boolean(payload.is_admin) };
+      return successResponse(res, { token, user: userResp }, "登录成功");
+    } catch (error) {
+      await clearPasskeyChallenge(clientChallenge);
+      await ctx.dbService.insertLoginLog({
+        userId: Number(challenge.userId || 0),
+        ip: req.ip ?? "",
+        userAgent: req.headers["user-agent"] as string | undefined,
+        status: 0,
+        failureReason: error instanceof Error ? error.message : String(error),
+        loginMethod: "passkey"
+      });
+      const message = error instanceof Error ? error.message : String(error);
+      return errorResponse(res, message, 400);
     }
   });
 

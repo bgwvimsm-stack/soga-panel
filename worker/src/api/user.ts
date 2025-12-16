@@ -75,6 +75,49 @@ export class UserAPI {
     return (await validateUserAuth(request, this.env)) as AuthResult;
   }
 
+  async listPasskeys(request: Request) {
+    const auth = await this.validateUser(request);
+    if (!auth.success) return errorResponse(auth.message, 401);
+
+    const result = await this.db.db
+      .prepare(
+        `
+        SELECT credential_id, device_name, sign_count, created_at, last_used_at
+        FROM passkeys
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+      `
+      )
+      .bind(auth.user.id)
+      .all<{
+        credential_id: string;
+        device_name?: string | null;
+        sign_count?: number | string | null;
+        created_at?: string | null;
+        last_used_at?: string | null;
+      }>();
+
+    return successResponse({ items: result.results || [] });
+  }
+
+  async deletePasskey(request: Request, credentialId: string) {
+    const auth = await this.validateUser(request);
+    if (!auth.success) return errorResponse(auth.message, 401);
+    if (!credentialId) return errorResponse("缺少凭证ID", 400);
+
+    const del = await this.db.db
+      .prepare("DELETE FROM passkeys WHERE user_id = ? AND credential_id = ?")
+      .bind(auth.user.id, credentialId)
+      .run();
+
+    const changes = (del.meta as any)?.changes ?? (del as any)?.changes;
+    if (!changes) {
+      return errorResponse("未找到要删除的通行密钥", 404);
+    }
+
+    return successResponse({ removed: credentialId });
+  }
+
   private async verifyUserTwoFactorCode(userRow: DbRow, code: string) {
     if (!code) {
       return { success: false, usedBackup: false };

@@ -76,6 +76,14 @@ export async function handleRequest(
       authAPI.confirmPasswordReset(request),
     "GET /api/auth/register-config": () => authAPI.getRegisterConfig(),
     "POST /api/auth/verify-2fa": () => authAPI.verifyTwoFactor(request),
+    "POST /api/auth/passkey/register/options": () =>
+      authAPI.generatePasskeyRegistrationOptions(request),
+    "POST /api/auth/passkey/register/verify": () =>
+      authAPI.verifyPasskeyRegistration(request),
+    "POST /api/auth/passkey/login/options": () =>
+      authAPI.generatePasskeyLoginOptions(request),
+    "POST /api/auth/passkey/login/verify": () =>
+      authAPI.verifyPasskeyLogin(request),
     "GET /api/site/settings": () => authAPI.getSiteSettings(),
 
     // 用户 API
@@ -102,6 +110,11 @@ export async function handleRequest(
     "POST /api/user/two-factor/backup-codes": () =>
       userAPI.regenerateTwoFactorBackupCodes(request),
     "POST /api/user/two-factor/disable": () => userAPI.disableTwoFactor(request),
+    "GET /api/user/passkeys": () => userAPI.listPasskeys(request),
+    "DELETE /api/user/passkeys/:id": () => {
+      const id = url.pathname.split("/").pop() || "";
+      return userAPI.deletePasskey(request, id);
+    },
     "GET /api/user/shared-ids": () => userAPI.getSharedIds(request),
 
     // 工单 API（用户）

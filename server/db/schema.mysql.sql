@@ -253,6 +253,25 @@ CREATE TABLE IF NOT EXISTS two_factor_trusted_devices (
   INDEX idx_two_factor_expires (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS passkeys (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT 'Passkey ID',
+  user_id BIGINT NOT NULL COMMENT '用户 ID',
+  credential_id VARCHAR(255) NOT NULL UNIQUE COMMENT '凭证 ID（base64url）',
+  public_key TEXT NOT NULL COMMENT 'COSE 公钥（base64url）',
+  alg INT NOT NULL COMMENT 'COSE 算法',
+  user_handle VARCHAR(255) COMMENT 'user_handle（base64url）',
+  rp_id VARCHAR(255) COMMENT '绑定 rpId',
+  transports TEXT COMMENT '认证器传输方式',
+  sign_count BIGINT DEFAULT 0 COMMENT '签名计数',
+  device_name VARCHAR(255) COMMENT '设备备注',
+  last_used_at DATETIME COMMENT '最后使用时间',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  CONSTRAINT fk_passkeys_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+  INDEX idx_passkeys_user (user_id),
+  INDEX idx_passkeys_rp (rp_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS shared_ids (
   id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '共享账号 ID',
   name VARCHAR(255) NOT NULL COMMENT '共享账号名称',
@@ -572,6 +591,9 @@ CREATE INDEX IF NOT EXISTS idx_node_status_node_time ON node_status (node_id, cr
 
 CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions (token);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_expires ON user_sessions (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys (user_id);
+CREATE INDEX IF NOT EXISTS idx_passkeys_rp ON passkeys (rp_id);
 
 CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements (is_active);
 CREATE INDEX IF NOT EXISTS idx_announcements_pinned ON announcements (is_pinned);

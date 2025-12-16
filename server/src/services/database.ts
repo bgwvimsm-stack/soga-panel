@@ -293,6 +293,76 @@ export class DatabaseService {
       .run();
   }
 
+  async listPasskeys(userId: number) {
+    const result = await this.db
+      .prepare(
+        `
+        SELECT * FROM passkeys WHERE user_id = ?
+      `
+      )
+      .bind(userId)
+      .all();
+    return result.results || [];
+  }
+
+  async getPasskeyByCredentialId(credentialId: string) {
+    return await this.db
+      .prepare(
+        `
+        SELECT * FROM passkeys WHERE credential_id = ?
+      `
+      )
+      .bind(credentialId)
+      .first();
+  }
+
+  async insertPasskey(params: {
+    userId: number;
+    credentialId: string;
+    publicKey: string;
+    alg: number;
+    userHandle?: string | null;
+    rpId?: string | null;
+    transports?: string[] | null;
+    signCount?: number | null;
+    deviceName?: string | null;
+  }) {
+    await this.db
+      .prepare(
+        `
+        INSERT INTO passkeys (user_id, credential_id, public_key, alg, user_handle, rp_id, transports, sign_count, device_name, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `
+      )
+      .bind(
+        params.userId,
+        params.credentialId,
+        params.publicKey,
+        params.alg,
+        params.userHandle ?? null,
+        params.rpId ?? null,
+        params.transports ? JSON.stringify(params.transports) : null,
+        params.signCount ?? 0,
+        params.deviceName ?? null
+      )
+      .run();
+  }
+
+  async updatePasskeyUsage(credentialId: string, signCount?: number | null) {
+    await this.db
+      .prepare(
+        `
+        UPDATE passkeys
+        SET sign_count = COALESCE(?, sign_count),
+            last_used_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE credential_id = ?
+      `
+      )
+      .bind(signCount ?? null, credentialId)
+      .run();
+  }
+
   async updateUserBarkSettings(userId: number, barkKey: string | null, enabled: boolean) {
     await this.db
       .prepare(
