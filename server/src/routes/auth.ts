@@ -42,6 +42,29 @@ export function createAuthRouter(ctx: AppContext) {
   const buildPasskeyCacheKey = (challenge: string) =>
     `passkey_challenge_${challenge}`;
 
+  const extractIp = (value?: string | string[] | null) => {
+    const first =
+      Array.isArray(value) && value.length ? value[0] : typeof value === "string" ? value : "";
+    if (!first) return "";
+    const ip = first.split(",")[0]?.trim();
+    if (!ip) return "";
+    if (ip.startsWith("::ffff:")) return ip.slice(7);
+    if (ip === "::1") return "127.0.0.1";
+    return ip;
+  };
+
+  const getClientIp = (req: Request) => {
+    return (
+      extractIp((req.headers["cf-connecting-ip"] as any) ?? null) ||
+      extractIp((req.headers["true-client-ip"] as any) ?? null) ||
+      extractIp((req.headers["x-client-ip"] as any) ?? null) ||
+      extractIp((req.headers["x-real-ip"] as any) ?? null) ||
+      extractIp((req.headers["x-forwarded-for"] as any) ?? null) ||
+      extractIp((req.socket as any)?.remoteAddress ?? null) ||
+      extractIp(req.ip)
+    );
+  };
+
   const savePasskeyChallenge = async (payload: PasskeyChallengePayload) => {
     const key = buildPasskeyCacheKey(payload.challenge);
     const value = JSON.stringify(payload);
@@ -148,10 +171,11 @@ export function createAuthRouter(ctx: AppContext) {
   ) => {
     const payload = buildPayload(userRow);
     const token = await authService.issueSessionToken(payload);
-    await ctx.dbService.updateLoginInfo(payload.id, req.ip ?? null);
+    const clientIp = getClientIp(req);
+    await ctx.dbService.updateLoginInfo(payload.id, clientIp || null);
     await ctx.dbService.insertLoginLog({
       userId: payload.id,
-      ip: req.ip ?? "",
+      ip: clientIp,
       userAgent: req.headers["user-agent"] as string | undefined,
       status: 1,
       loginMethod: method
@@ -191,13 +215,14 @@ export function createAuthRouter(ctx: AppContext) {
     }
 
     try {
+      const clientIp = getClientIp(req);
       let inviterId: number | null = null;
       const inviter = await referralService.findInviterByCode(inviteCodeRaw);
       if (inviter) {
         inviterId = Number(inviter.id);
       }
 
-      const result = await authService.register(email, username, password, req.ip, inviterId);
+      const result = await authService.register(email, username, password, clientIp, inviterId);
       if (!result.success) {
         return errorResponse(res, result.message, 400);
       }
@@ -207,7 +232,7 @@ export function createAuthRouter(ctx: AppContext) {
           inviterId,
           inviteeId: Number(result.userId),
           inviteCode: inviteCodeRaw ?? "",
-          inviteIp: req.ip
+          inviteIp: clientIp
         });
         await referralService.incrementInviteUsage(inviterId);
       }
@@ -224,10 +249,10 @@ export function createAuthRouter(ctx: AppContext) {
             is_admin: Number(created.is_admin ?? 0)
           };
           const token = await authService.issueSessionToken(payload);
-          await ctx.dbService.updateLoginInfo(payload.id, req.ip ?? null);
+          await ctx.dbService.updateLoginInfo(payload.id, clientIp || null);
           await ctx.dbService.insertLoginLog({
             userId: payload.id,
-            ip: req.ip ?? "",
+            ip: clientIp,
             userAgent: req.headers["user-agent"] as string | undefined,
             status: 1,
             loginMethod: "register"
@@ -247,12 +272,13 @@ export function createAuthRouter(ctx: AppContext) {
     const { provider, email, provider_id, username } = req.body || {};
     if (!provider || !email || !provider_id) return errorResponse(res, "参数缺失", 400);
     try {
+      const clientIp = getClientIp(req);
       const result = await authService.oauthLogin({
         provider,
         email,
         providerId: provider_id,
         username,
-        clientIp: req.ip,
+        clientIp,
         userAgent: req.headers["user-agent"] as string | undefined
       });
       if (!result.success) return errorResponse(res, result.message, 401);
@@ -301,6 +327,7 @@ export function createAuthRouter(ctx: AppContext) {
       const emailVerified = tokenInfo.email_verified === "true" || tokenInfo.email_verified === true;
       if (!googleSub) return errorResponse(res, "无效的 Google sub", 400);
       if (!email) return errorResponse(res, "未获取到邮箱", 400);
+      const clientIp = getClientIp(req);
 
       // 查找用户
       let user = await ctx.dbService.db
@@ -331,7 +358,7 @@ export function createAuthRouter(ctx: AppContext) {
           uuid,
           passwd,
           token,
-          register_ip: req.ip ?? null
+          register_ip: clientIp || null
         });
         user = await ctx.dbService.getUserById(Number(userId));
       }
@@ -447,7 +474,7 @@ export function createAuthRouter(ctx: AppContext) {
           uuid,
           passwd,
           token,
-          register_ip: req.ip ?? null
+          register_ip: clientIp || null
         });
         user = await ctx.dbService.getUserById(Number(userId));
       }
@@ -483,12 +510,13 @@ export function createAuthRouter(ctx: AppContext) {
       return errorResponse(res, "缺少参数", 400);
     }
     try {
+      const clientIp = getClientIp(req);
       const result = await authService.verifyTwoFactorChallenge({
         challengeId: String(challenge_id),
         code: String(code),
         rememberDevice: Boolean(rememberDevice),
         deviceName: typeof deviceName === "string" ? deviceName : undefined,
-        clientIp: req.ip,
+        clientIp,
         userAgent: req.headers["user-agent"] as string | undefined
       });
       if (!result.success) {
@@ -521,12 +549,7 @@ export function createAuthRouter(ctx: AppContext) {
       return errorResponse(res, "参数缺失", 400);
     }
     try {
-      const clientIp =
-        (req.headers["cf-connecting-ip"] as string | undefined) ||
-        (req.headers["x-forwarded-for"] as string | undefined) ||
-        (req.headers["x-real-ip"] as string | undefined) ||
-        req.ip ||
-        "unknown";
+      const clientIp = getClientIp(req) || "unknown";
       const userAgent = (req.headers["user-agent"] as string | undefined) || "";
 
       const turnstileSecret = (ctx.env.TURNSTILE_SECRET_KEY || "").trim();
@@ -790,6 +813,7 @@ export function createAuthRouter(ctx: AppContext) {
 
     const credentialId = ensureString(credential.id);
     try {
+      const clientIp = getClientIp(req);
       const passkey = await ctx.dbService.getPasskeyByCredentialId(credentialId);
       if (!passkey || Number(passkey.user_id) !== Number(challenge.userId)) {
         await clearPasskeyChallenge(clientChallenge);
@@ -827,10 +851,10 @@ export function createAuthRouter(ctx: AppContext) {
 
       const payload = buildPayload(user);
       const token = await authService.issueSessionToken(payload);
-      await ctx.dbService.updateLoginInfo(payload.id, req.ip ?? null);
+      await ctx.dbService.updateLoginInfo(payload.id, clientIp || null);
       await ctx.dbService.insertLoginLog({
         userId: payload.id,
-        ip: req.ip ?? "",
+        ip: clientIp,
         userAgent: req.headers["user-agent"] as string | undefined,
         status: 1,
         loginMethod: "passkey"
@@ -840,9 +864,10 @@ export function createAuthRouter(ctx: AppContext) {
       return successResponse(res, { token, user: userResp }, "登录成功");
     } catch (error) {
       await clearPasskeyChallenge(clientChallenge);
+      const clientIp = getClientIp(req);
       await ctx.dbService.insertLoginLog({
         userId: Number(challenge.userId || 0),
-        ip: req.ip ?? "",
+        ip: clientIp,
         userAgent: req.headers["user-agent"] as string | undefined,
         status: 0,
         failureReason: error instanceof Error ? error.message : String(error),
@@ -876,8 +901,9 @@ export function createAuthRouter(ctx: AppContext) {
       return errorResponse(res, "参数缺失", 400);
     }
     try {
+      const clientIp = getClientIp(req);
       const result = await authService.sendEmailCode(email, purpose, {
-        ip: req.ip,
+        ip: clientIp,
         ua: req.headers["user-agent"]
       });
       // 为方便自托管调试，直接返回过期时间，验证码仅打印日志
@@ -895,8 +921,9 @@ export function createAuthRouter(ctx: AppContext) {
       return errorResponse(res, "参数缺失", 400);
     }
     try {
+      const clientIp = getClientIp(req);
       const result = await authService.sendEmailCode(email, "password_reset", {
-        ip: req.ip,
+        ip: clientIp,
         ua: req.headers["user-agent"]
       });
       console.log(`[password-reset] email=${email} code=${result.code}`);
