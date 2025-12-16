@@ -461,6 +461,7 @@ export function createAuthRouter(ctx: AppContext) {
       }
 
       if (!user) {
+        const clientIp = getClientIp(req);
         const usernameSeed = ghUser?.login || ghUser?.name || email.split("@")[0] || `github_${githubId.slice(-6)}`;
         const username = usernameSeed.length > 2 ? usernameSeed : `github_${githubId.slice(-6)}`;
         const passwordHash = hashPassword(generateRandomString(12));

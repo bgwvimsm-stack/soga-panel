@@ -8,7 +8,7 @@ export function createNodeRouter(ctx: AppContext) {
   const router = Router();
 
   // 获取节点信息
-  router.get("/v1/node", async (req: Request, res: Response) => {
+  router.get("/node", async (req: Request, res: Response) => {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
     if (!auth.success) return errorResponse(res, auth.message, 401);
 
@@ -31,7 +31,7 @@ export function createNodeRouter(ctx: AppContext) {
   });
 
   // 获取节点用户
-  router.get("/v1/users", async (req: Request, res: Response) => {
+  router.get("/users", async (req: Request, res: Response) => {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
     if (!auth.success) return errorResponse(res, auth.message, 401);
 
@@ -67,7 +67,7 @@ export function createNodeRouter(ctx: AppContext) {
   });
 
   // 审计规则
-  router.get("/v1/audit_rules", async (req: Request, res: Response) => {
+  router.get("/audit_rules", async (req: Request, res: Response) => {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
     if (!auth.success) return errorResponse(res, auth.message, 401);
     const cacheKey = "audit_rules";
@@ -111,7 +111,7 @@ export function createNodeRouter(ctx: AppContext) {
   });
 
   // 白名单
-  router.get("/v1/white_list", async (req: Request, res: Response) => {
+  router.get("/white_list", async (req: Request, res: Response) => {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
     if (!auth.success) return errorResponse(res, auth.message, 401);
     const cacheKey = "white_list";
@@ -165,7 +165,7 @@ export function createNodeRouter(ctx: AppContext) {
   });
 
   // 流量上报
-  router.post("/v1/traffic", async (req: Request, res: Response) => {
+  router.post("/traffic", async (req: Request, res: Response) => {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
     if (!auth.success) return errorResponse(res, auth.message, 401);
     const data = Array.isArray(req.body) ? req.body : [];
@@ -174,7 +174,7 @@ export function createNodeRouter(ctx: AppContext) {
   });
 
   // 在线 IP 上报
-  router.post("/v1/alive_ip", async (req: Request, res: Response) => {
+  router.post("/alive_ip", async (req: Request, res: Response) => {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
     if (!auth.success) return errorResponse(res, auth.message, 401);
     const data = Array.isArray(req.body) ? req.body : [];
@@ -183,7 +183,7 @@ export function createNodeRouter(ctx: AppContext) {
   });
 
   // 审计日志
-  router.post("/v1/audit_log", async (req: Request, res: Response) => {
+  router.post("/audit_log", async (req: Request, res: Response) => {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
     if (!auth.success) return errorResponse(res, auth.message, 401);
     const data = Array.isArray(req.body) ? req.body : [];
@@ -192,7 +192,7 @@ export function createNodeRouter(ctx: AppContext) {
   });
 
   // 节点状态
-  router.post("/v1/status", async (req: Request, res: Response) => {
+  router.post("/status", async (req: Request, res: Response) => {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
     if (!auth.success) return errorResponse(res, auth.message, 401);
     const body = typeof req.body === "object" && req.body ? req.body : {};

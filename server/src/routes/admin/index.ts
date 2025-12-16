@@ -27,6 +27,45 @@ export function createAdminRouter(ctx: AppContext) {
     return user;
   };
 
+  const escapeCsv = (value: unknown) => `"${String(value ?? "").replace(/\"/g, '\"\"')}"`;
+
+  const sendCsv = (res: Response, filename: string, csv: string) => {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename=\"${filename}\"`);
+    res.status(200).send(csv);
+  };
+
+  const parseIdsFromQuery = (value: unknown): number[] => {
+    if (Array.isArray(value)) {
+      return value.map((v) => Number(v)).filter((n) => Number.isFinite(n));
+    }
+    if (typeof value === "string") {
+      const raw = value.trim();
+      if (!raw) return [];
+      return raw
+        .split(",")
+        .map((v) => Number(v.trim()))
+        .filter((n) => Number.isFinite(n));
+    }
+    return [];
+  };
+
+  const listRedisKeys = async (maxKeys = 2000): Promise<string[]> => {
+    if (!ctx.redis || ctx.redis.status !== "ready") return [];
+    const keys: string[] = [];
+    let cursor = "0";
+    try {
+      do {
+        const [next, batch] = await ctx.redis.scan(cursor, "MATCH", "*", "COUNT", 200);
+        cursor = next;
+        keys.push(...batch);
+      } while (cursor !== "0" && keys.length < maxKeys);
+    } catch {
+      return [];
+    }
+    return keys.slice(0, maxKeys);
+  };
+
   // 调度器状态
   router.get("/scheduler-status", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
@@ -39,6 +78,17 @@ export function createAdminRouter(ctx: AppContext) {
     if (!requireAdmin(req, res)) return;
     await ctx.dbService.resetTodayBandwidth();
     return successResponse(res, { success: true, message: "已触发每日流量重置" }, "已触发每日流量重置");
+  });
+
+  // 兼容 Worker：POST /api/admin/reset-daily-traffic
+  router.post("/reset-daily-traffic", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    await ctx.dbService.resetTodayBandwidth();
+    const row = await ctx.db.db
+      .prepare("SELECT COUNT(*) as total FROM users WHERE status = 1")
+      .first<{ total?: number | string | null }>();
+    const count = ensureNumber(row?.total ?? 0);
+    return successResponse(res, { message: "已重置所有用户今日流量", count }, "已重置所有用户今日流量");
   });
 
   // 手动触发节点状态与在线 IP 清理（与定时任务逻辑一致）
@@ -170,17 +220,374 @@ export function createAdminRouter(ctx: AppContext) {
     return successResponse(res, { message: "已清理待支付记录" }, "已清理待支付记录");
   });
 
+  // 兼容 Worker：POST /api/admin/generate-traffic-test-data
+  router.post("/generate-traffic-test-data", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const userId = Number(req.body?.user_id ?? 1);
+    const daysRaw = Number(req.body?.days ?? 30);
+    const days = Math.min(Math.max(Number.isFinite(daysRaw) ? daysRaw : 30, 1), 365);
+    if (!Number.isFinite(userId) || userId <= 0) return errorResponse(res, "user_id 无效", 400);
+
+    const nodesResult = await ctx.db.db.prepare("SELECT id FROM nodes ORDER BY id ASC LIMIT 10").all<{ id: number }>();
+    const nodeIds = (nodesResult.results || []).map((n) => Number(n.id)).filter((n) => Number.isFinite(n) && n > 0);
+    if (!nodeIds.length) return errorResponse(res, "请先创建至少一个节点", 400);
+
+    const start = new Date();
+    start.setDate(start.getDate() - (days - 1));
+    const startDate = start.toISOString().slice(0, 10);
+
+    await ctx.db.db
+      .prepare("DELETE FROM traffic_logs WHERE user_id = ? AND date >= ?")
+      .bind(userId, startDate)
+      .run();
+    await ctx.db.db
+      .prepare("DELETE FROM daily_traffic WHERE user_id = ? AND record_date >= ?")
+      .bind(userId, startDate)
+      .run();
+
+    for (let i = 0; i < days; i += 1) {
+      const date = new Date(start);
+      date.setDate(start.getDate() + i);
+      const dateString = date.toISOString().slice(0, 10);
+
+      const nodesForDay = Math.min(3, Math.floor(Math.random() * 3) + 1);
+      let dailyUpload = 0;
+      let dailyDownload = 0;
+      const nodeUsage: Array<{ node_id: number; upload: number; download: number; total: number }> = [];
+
+      for (let idx = 0; idx < nodesForDay; idx += 1) {
+        const nodeId = nodeIds[(idx + i) % nodeIds.length];
+        const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+        const baseMultiplier = isWeekend ? 0.7 : 1.0;
+        const upload = Math.floor((50 + Math.random() * 450) * 1024 * 1024 * baseMultiplier);
+        const download = Math.floor((200 + Math.random() * 1800) * 1024 * 1024 * baseMultiplier);
+        dailyUpload += upload;
+        dailyDownload += download;
+        nodeUsage.push({ node_id: nodeId, upload, download, total: upload + download });
+
+        await ctx.db.db
+          .prepare(
+            `
+            INSERT INTO traffic_logs (
+              user_id, node_id, upload_traffic, download_traffic,
+              actual_upload_traffic, actual_download_traffic, actual_traffic,
+              deduction_multiplier, date, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          `
+          )
+          .bind(userId, nodeId, upload, download, upload, download, upload + download, 1, dateString)
+          .run();
+      }
+
+      await ctx.db.db
+        .prepare(
+          `
+          INSERT INTO daily_traffic (user_id, record_date, upload_traffic, download_traffic, total_traffic, node_usage, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        `
+        )
+        .bind(userId, dateString, dailyUpload, dailyDownload, dailyUpload + dailyDownload, JSON.stringify({ nodes: nodeUsage }))
+        .run();
+    }
+
+    const totalStats = await ctx.db.db
+      .prepare(
+        `
+        SELECT 
+          COALESCE(SUM(upload_traffic), 0) as total_upload,
+          COALESCE(SUM(download_traffic), 0) as total_download
+        FROM daily_traffic
+        WHERE user_id = ? AND record_date >= ?
+      `
+      )
+      .bind(userId, startDate)
+      .first<{ total_upload?: number | string; total_download?: number | string }>();
+
+    const totalUpload = ensureNumber(totalStats?.total_upload ?? 0);
+    const totalDownload = ensureNumber(totalStats?.total_download ?? 0);
+    const totalTraffic = totalUpload + totalDownload;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const todayStats = await ctx.db.db
+      .prepare(
+        `
+        SELECT upload_traffic, download_traffic
+        FROM daily_traffic
+        WHERE user_id = ? AND record_date = ?
+      `
+      )
+      .bind(userId, today)
+      .first<{ upload_traffic?: number | string; download_traffic?: number | string }>();
+    const uploadToday = ensureNumber(todayStats?.upload_traffic ?? 0);
+    const downloadToday = ensureNumber(todayStats?.download_traffic ?? 0);
+
+    await ctx.db.db
+      .prepare(
+        `
+        UPDATE users
+        SET upload_traffic = ?, download_traffic = ?, transfer_total = ?, upload_today = ?, download_today = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `
+      )
+      .bind(totalUpload, totalDownload, totalTraffic, uploadToday, downloadToday, userId)
+      .run();
+
+    return successResponse(
+      res,
+      {
+        message: "测试流量数据生成完成",
+        user_id: userId,
+        days,
+        total_upload: totalUpload,
+        total_download: totalDownload,
+        total_traffic: totalTraffic
+      },
+      "测试流量数据生成完成"
+    );
+  });
+
   // 清理缓存占位实现
   router.post("/clear-cache/audit-rules", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
     await ctx.cache.deleteByPrefix("audit_rules");
-    return successResponse(res, { message: "已清理审计规则缓存" }, "已清理审计规则缓存");
+    return successResponse(res, { message: "审计规则缓存已清除", cleared_at: new Date().toISOString() }, "审计规则缓存已清除");
   });
 
   router.post("/clear-cache/whitelist", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
+    await ctx.cache.deleteByPrefix("white_list");
     await ctx.cache.deleteByPrefix("whitelist");
-    return successResponse(res, { message: "已清理白名单缓存" }, "已清理白名单缓存");
+    return successResponse(res, { message: "白名单缓存已清除", cleared_at: new Date().toISOString() }, "白名单缓存已清除");
+  });
+
+  // 兼容 Worker：GET /api/admin/cache-status
+  router.get("/cache-status", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const cacheKeys = await listRedisKeys();
+    const categories = {
+      node_config: cacheKeys.filter((k) => k.startsWith("node_config_")).length,
+      node_users: cacheKeys.filter((k) => k.startsWith("node_users_") || k.startsWith("node_users")).length,
+      audit_rules: cacheKeys.filter((k) => k === "audit_rules" || k.startsWith("audit_rules")).length,
+      white_list: cacheKeys.filter((k) => k === "white_list" || k.startsWith("white_list") || k.startsWith("whitelist")).length,
+      others: cacheKeys.filter(
+        (k) =>
+          !k.startsWith("node_config_") &&
+          !k.startsWith("node_users_") &&
+          !k.startsWith("node_users") &&
+          !(k === "audit_rules" || k.startsWith("audit_rules")) &&
+          !(k === "white_list" || k.startsWith("white_list") || k.startsWith("whitelist"))
+      ).length
+    };
+    return successResponse(res, {
+      cache_status: {
+        total_keys: cacheKeys.length,
+        categories,
+        cache_keys: cacheKeys
+      },
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // 兼容 Worker：POST /api/admin/clear-cache/all
+  router.post("/clear-cache/all", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    await ctx.cache.deleteByPrefix("node_config_");
+    await ctx.cache.deleteByPrefix("node_users_");
+    await ctx.cache.deleteByPrefix("audit_rules");
+    await ctx.cache.deleteByPrefix("white_list");
+    await ctx.cache.deleteByPrefix("whitelist");
+    await ctx.cache.deleteByPrefix("system_config");
+    await ctx.cache.deleteByPrefix("site_config");
+    await ctx.db.db.prepare("UPDATE nodes SET updated_at = CURRENT_TIMESTAMP WHERE status = 1").run();
+    return successResponse(res, {
+      message: "所有缓存已清除",
+      cleared_at: new Date().toISOString(),
+      cleared_types: ["节点相关", "审计规则", "白名单", "系统配置"]
+    });
+  });
+
+  // 兼容 Worker：POST /api/admin/clear-cache/nodes
+  router.post("/clear-cache/nodes", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    await ctx.cache.deleteByPrefix("node_config_");
+    await ctx.cache.deleteByPrefix("node_users_");
+    await ctx.db.db.prepare("UPDATE nodes SET updated_at = CURRENT_TIMESTAMP WHERE status = 1").run();
+    return successResponse(res, {
+      message: "节点相关缓存已清除",
+      cleared_at: new Date().toISOString(),
+      cleared_types: ["节点配置", "节点用户"]
+    });
+  });
+
+  // 兼容 Worker：GET /api/admin/node-stats
+  router.get("/node-stats", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const stats = await ctx.db.db
+      .prepare(
+        `
+        SELECT 
+          COUNT(*) as total,
+          COUNT(CASE WHEN status = 1 THEN 1 END) as online,
+          COUNT(CASE WHEN status = 0 THEN 1 END) as offline,
+          COUNT(CASE WHEN status = 1 AND (node_bandwidth_limit = 0 OR node_bandwidth < node_bandwidth_limit) THEN 1 END) as available,
+          COALESCE(SUM(node_bandwidth_limit), 0) as totalBandwidth,
+          COALESCE(SUM(node_bandwidth), 0) as usedBandwidth
+        FROM nodes
+      `
+      )
+      .first();
+    return successResponse(res, stats ?? {});
+  });
+
+  // 兼容 Worker：GET /api/admin/system-health
+  router.get("/system-health", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    let dbOk = true;
+    try {
+      await ctx.db.db.prepare("SELECT 1").first();
+      dbOk = true;
+    } catch {
+      dbOk = false;
+    }
+    const mem = process.memoryUsage();
+    const uptimeSeconds = Math.floor(process.uptime());
+    return successResponse(res, {
+      status: dbOk ? "healthy" : "error",
+      timestamp: new Date().toISOString(),
+      database: { connected: dbOk },
+      memory_usage: mem.rss,
+      cpu_usage: 0,
+      uptime: `${uptimeSeconds}s`,
+      last_restart: null
+    });
+  });
+
+  // 兼容 Worker：GET /api/admin/statistics
+  router.get("/statistics", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const stats = await ctx.db.db
+      .prepare(
+        `
+        SELECT 
+          (SELECT COUNT(*) FROM users) as total_users,
+          (SELECT COUNT(*) FROM users WHERE status = 1) as active_users,
+          (SELECT COUNT(*) FROM users WHERE is_admin = 1) as admin_users,
+          (SELECT COUNT(*) FROM nodes) as total_nodes,
+          (SELECT COUNT(*) FROM nodes WHERE status = 1) as active_nodes,
+          (SELECT COALESCE(SUM(transfer_total), 0) FROM users) as total_traffic,
+          (SELECT COUNT(*) FROM users WHERE expire_time IS NOT NULL AND expire_time < CURRENT_TIMESTAMP) as expired_users,
+          (SELECT COUNT(*) FROM users WHERE transfer_total >= transfer_enable) as exhausted_users,
+          (SELECT COUNT(*) FROM users WHERE class_expire_time IS NOT NULL AND class_expire_time < CURRENT_TIMESTAMP AND class > 0) as expired_level_users
+      `
+      )
+      .first();
+    return successResponse(res, stats ?? {});
+  });
+
+  // 兼容 Worker：GET /api/admin/statistics/export
+  router.get("/statistics/export", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const [systemStats, nodeStats] = await Promise.all([
+      ctx.db.db
+        .prepare(
+          `
+          SELECT 
+            (SELECT COUNT(*) FROM users) as total_users,
+            (SELECT COUNT(*) FROM users WHERE status = 1) as active_users,
+            (SELECT COUNT(*) FROM users WHERE is_admin = 1) as admin_users,
+            (SELECT COUNT(*) FROM nodes) as total_nodes,
+            (SELECT COUNT(*) FROM nodes WHERE status = 1) as active_nodes,
+            (SELECT COALESCE(SUM(transfer_total), 0) FROM users) as total_traffic,
+            (SELECT COUNT(*) FROM users WHERE expire_time IS NOT NULL AND expire_time < CURRENT_TIMESTAMP) as expired_users,
+            (SELECT COUNT(*) FROM users WHERE transfer_total >= transfer_enable) as exhausted_users,
+            (SELECT COUNT(*) FROM users WHERE class_expire_time IS NOT NULL AND class_expire_time < CURRENT_TIMESTAMP AND class > 0) as expired_level_users
+        `
+        )
+        .first(),
+      ctx.db.db
+        .prepare(
+          `
+          SELECT 
+            COUNT(*) as total,
+            COUNT(CASE WHEN status = 1 THEN 1 END) as online,
+            COUNT(CASE WHEN status = 0 THEN 1 END) as offline,
+            COUNT(CASE WHEN status = 1 AND (node_bandwidth_limit = 0 OR node_bandwidth < node_bandwidth_limit) THEN 1 END) as available,
+            COALESCE(SUM(node_bandwidth_limit), 0) as totalBandwidth,
+            COALESCE(SUM(node_bandwidth), 0) as usedBandwidth
+          FROM nodes
+        `
+        )
+        .first()
+    ]);
+
+    const report = {
+      generated_at: new Date().toISOString(),
+      system_stats: systemStats ?? {},
+      node_stats: nodeStats ?? {},
+      export_info: {
+        version: ctx.env.SITE_NAME || "soga-panel-server",
+        format: "json"
+      }
+    };
+
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=system-stats-${new Date().toISOString().slice(0, 10)}.json`
+    );
+    res.status(200).send(JSON.stringify(report, null, 2));
+  });
+
+  // 兼容 Worker：GET /api/admin/expired-users
+  router.get("/expired-users", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const page = Number(req.query.page ?? 1) || 1;
+    const limit = Math.min(Number(req.query.limit ?? 20) || 20, 200);
+    const offset = (page - 1) * limit;
+
+    const totalRow = await ctx.db.db
+      .prepare(
+        `
+        SELECT COUNT(*) as total
+        FROM users
+        WHERE class_expire_time IS NOT NULL
+          AND class_expire_time < CURRENT_TIMESTAMP
+          AND class > 0
+          AND status = 1
+      `
+      )
+      .first<{ total?: number | string | null }>();
+    const total = ensureNumber(totalRow?.total ?? 0);
+
+    const usersResult = await ctx.db.db
+      .prepare(
+        `
+        SELECT 
+          id, email, username, class, class_expire_time,
+          upload_traffic, download_traffic, (upload_today + download_today) as transfer_today,
+          transfer_total, transfer_enable, reg_date, last_login_time,
+          TIMESTAMPDIFF(DAY, class_expire_time, CURRENT_TIMESTAMP) as days_expired
+        FROM users
+        WHERE class_expire_time IS NOT NULL
+          AND class_expire_time < CURRENT_TIMESTAMP
+          AND class > 0
+          AND status = 1
+        ORDER BY class_expire_time DESC
+        LIMIT ? OFFSET ?
+      `
+      )
+      .bind(limit, offset)
+      .all();
+
+    return successResponse(res, {
+      expired_users: usersResult.results || [],
+      pagination: {
+        total,
+        page,
+        limit,
+        pages: total > 0 ? Math.ceil(total / Math.max(limit, 1)) : 0
+      }
+    });
   });
 
   router.get("/system-stats", async (req: Request, res: Response) => {
@@ -226,6 +633,88 @@ export function createAdminRouter(ctx: AppContext) {
         pages: total > 0 ? Math.ceil(total / pageSize) : 0
       }
     });
+  });
+
+  // 兼容 Worker：POST /api/admin/users/:id/traffic
+  router.post("/users/:id/traffic", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const id = Number(req.params.id);
+    if (!id) return errorResponse(res, "ID 无效", 400);
+
+    await ctx.db.db
+      .prepare(
+        `
+        UPDATE users 
+        SET upload_traffic = 0, download_traffic = 0, upload_today = 0, download_today = 0, transfer_total = 0,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `
+      )
+      .bind(id)
+      .run();
+    await ctx.db.db.prepare("DELETE FROM traffic_logs WHERE user_id = ?").bind(id).run();
+    await ctx.db.db.prepare("DELETE FROM daily_traffic WHERE user_id = ?").bind(id).run();
+    await ctx.cache.deleteByPrefix(`user_${id}`);
+
+    return successResponse(res, { message: "User traffic reset successfully" });
+  });
+
+  // 兼容 Worker：GET /api/admin/users/export
+  router.get("/users/export", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const ids = parseIdsFromQuery(req.query.ids);
+    const where = ids.length > 0 ? `WHERE id IN (${ids.map(() => "?").join(",")})` : "";
+    const usersResult = await ctx.db.db
+      .prepare(
+        `
+        SELECT email, username, class, status,
+               upload_traffic, download_traffic, (upload_today + download_today) as transfer_today, transfer_total, transfer_enable,
+               reg_date, last_login_time, expire_time, class_expire_time
+        FROM users
+        ${where}
+        ORDER BY id DESC
+      `
+      )
+      .bind(...ids)
+      .all();
+
+    const headers = [
+      "Email",
+      "Username",
+      "Class",
+      "Status",
+      "Upload Traffic",
+      "Download Traffic",
+      "Today Traffic",
+      "Total Traffic",
+      "Transfer Limit",
+      "Register Date",
+      "Last Login",
+      "Expire Time",
+      "Class Expire Time"
+    ];
+
+    let csv = `${headers.join(",")}\n`;
+    for (const user of usersResult.results || []) {
+      const row = [
+        ensureString((user as any).email),
+        ensureString((user as any).username),
+        ensureNumber((user as any).class),
+        ensureNumber((user as any).status) === 1 ? "Active" : "Inactive",
+        ensureNumber((user as any).upload_traffic),
+        ensureNumber((user as any).download_traffic),
+        ensureNumber((user as any).transfer_today),
+        ensureNumber((user as any).transfer_total),
+        ensureNumber((user as any).transfer_enable),
+        ensureString((user as any).reg_date),
+        ensureString((user as any).last_login_time),
+        ensureString((user as any).expire_time),
+        ensureString((user as any).class_expire_time)
+      ];
+      csv += `${row.map(escapeCsv).join(",")}\n`;
+    }
+
+    sendCsv(res, `users-${new Date().toISOString().slice(0, 10)}.csv`, csv);
   });
 
   router.post("/users", async (req: Request, res: Response) => {
@@ -662,12 +1151,148 @@ export function createAdminRouter(ctx: AppContext) {
     return successResponse(res, data);
   });
 
+  // 兼容 Worker：DELETE /api/admin/login-logs/:id
+  router.delete("/login-logs/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const id = Number(req.params.id);
+    if (!id) return errorResponse(res, "ID 无效", 400);
+    await ctx.db.db.prepare("DELETE FROM login_logs WHERE id = ?").bind(id).run();
+    return successResponse(res, { message: "登录日志删除成功" });
+  });
+
+  // 兼容 Worker：POST /api/admin/login-logs/batch-delete
+  router.post("/login-logs/batch-delete", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return errorResponse(res, "请提供要删除的记录ID数组", 400);
+    }
+    const parsed = ids.map((v: any) => Number(v)).filter((n: number) => Number.isFinite(n));
+    if (!parsed.length) return errorResponse(res, "请提供要删除的记录ID数组", 400);
+    await ctx.db.db
+      .prepare(`DELETE FROM login_logs WHERE id IN (${parsed.map(() => "?").join(",")})`)
+      .bind(...parsed)
+      .run();
+    return successResponse(res, { message: `成功删除 ${parsed.length} 条登录日志`, deleted_count: parsed.length });
+  });
+
+  // 兼容 Worker：POST /api/admin/login-logs/export-csv
+  router.post("/login-logs/export-csv", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const parsed = ids.map((v: any) => Number(v)).filter((n: number) => Number.isFinite(n));
+    const where = parsed.length ? `WHERE ll.id IN (${parsed.map(() => "?").join(",")})` : "";
+
+    const logsResult = await ctx.db.db
+      .prepare(
+        `
+        SELECT 
+          u.email as user_email,
+          ll.login_ip,
+          ll.user_agent as login_ua,
+          ll.login_time,
+          CASE 
+            WHEN ll.login_status = 1 THEN '成功'
+            WHEN ll.login_status = 0 THEN '失败'
+            ELSE '未知'
+          END as login_status
+        FROM login_logs ll
+        LEFT JOIN users u ON ll.user_id = u.id
+        ${where}
+        ORDER BY ll.login_time DESC
+        ${parsed.length ? "" : "LIMIT 100"}
+      `
+      )
+      .bind(...parsed)
+      .all();
+
+    const csvHeaders = ["用户邮箱", "登录IP", "登录UA", "登录时间", "登录状态"];
+    let csv = `${csvHeaders.map(escapeCsv).join(",")}\n`;
+    for (const row of logsResult.results || []) {
+      const line = [
+        (row as any).user_email || "",
+        (row as any).login_ip || "",
+        (row as any).login_ua || "",
+        (row as any).login_time || "",
+        (row as any).login_status || ""
+      ];
+      csv += `${line.map(escapeCsv).join(",")}\n`;
+    }
+    sendCsv(res, "login_logs.csv", csv);
+  });
+
   router.get("/subscription-logs", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
     const page = Number(req.query.page ?? 1) || 1;
     const pageSize = Math.min(Number(req.query.pageSize ?? 50) || 50, 200);
     const data = await ctx.dbService.listAllSubscriptionLogs(page, pageSize);
     return successResponse(res, data);
+  });
+
+  // 兼容 Worker：DELETE /api/admin/subscription-logs/:id
+  router.delete("/subscription-logs/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const id = Number(req.params.id);
+    if (!id) return errorResponse(res, "ID 无效", 400);
+    await ctx.db.db.prepare("DELETE FROM subscriptions WHERE id = ?").bind(id).run();
+    return successResponse(res, { message: "订阅日志删除成功" });
+  });
+
+  // 兼容 Worker：POST /api/admin/subscription-logs/batch-delete
+  router.post("/subscription-logs/batch-delete", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return errorResponse(res, "请提供要删除的记录ID数组", 400);
+    }
+    const parsed = ids.map((v: any) => Number(v)).filter((n: number) => Number.isFinite(n));
+    if (!parsed.length) return errorResponse(res, "请提供要删除的记录ID数组", 400);
+    await ctx.db.db
+      .prepare(`DELETE FROM subscriptions WHERE id IN (${parsed.map(() => "?").join(",")})`)
+      .bind(...parsed)
+      .run();
+    return successResponse(res, { message: `成功删除 ${parsed.length} 条订阅日志`, deleted_count: parsed.length });
+  });
+
+  // 兼容 Worker：POST /api/admin/subscription-logs/export-csv
+  router.post("/subscription-logs/export-csv", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const parsed = ids.map((v: any) => Number(v)).filter((n: number) => Number.isFinite(n));
+    const where = parsed.length ? `WHERE s.id IN (${parsed.map(() => "?").join(",")})` : "";
+
+    const logsResult = await ctx.db.db
+      .prepare(
+        `
+        SELECT 
+          u.email as user_email,
+          s.type as subscription_type,
+          s.request_ip as access_ip,
+          s.request_user_agent as client_ua,
+          s.request_time as access_time
+        FROM subscriptions s
+        LEFT JOIN users u ON s.user_id = u.id
+        ${where}
+        ORDER BY s.request_time DESC
+        ${parsed.length ? "" : "LIMIT 100"}
+      `
+      )
+      .bind(...parsed)
+      .all();
+
+    const csvHeaders = ["用户邮箱", "订阅类型", "访问IP", "客户端UA", "访问时间"];
+    let csv = `${csvHeaders.map(escapeCsv).join(",")}\n`;
+    for (const row of logsResult.results || []) {
+      const line = [
+        (row as any).user_email || "",
+        (row as any).subscription_type || "",
+        (row as any).access_ip || "",
+        (row as any).client_ua || "",
+        (row as any).access_time || ""
+      ];
+      csv += `${line.map(escapeCsv).join(",")}\n`;
+    }
+    sendCsv(res, "subscription_logs.csv", csv);
   });
 
   router.post("/users/:id/status", async (req: Request, res: Response) => {
@@ -800,6 +1425,55 @@ export function createAdminRouter(ctx: AppContext) {
         pages: total > 0 ? Math.ceil(total / pageSize) : 0
       }
     });
+  });
+
+  // 兼容 Worker：POST /api/admin/online-ips/export-csv
+  router.post("/online-ips/export-csv", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+    const parsed = ids.map((v: any) => Number(v)).filter((n: number) => Number.isFinite(n));
+    const where = parsed.length ? `WHERE oi.id IN (${parsed.map(() => "?").join(",")})` : "";
+
+    const result = await ctx.dbService.db
+      .prepare(
+        `
+        SELECT 
+          u.email as user_email,
+          oi.ip as ip_address,
+          n.name as node_name,
+          oi.last_seen as connect_time
+        FROM online_ips oi
+        LEFT JOIN users u ON oi.user_id = u.id
+        LEFT JOIN nodes n ON oi.node_id = n.id
+        ${where}
+        ORDER BY oi.last_seen DESC
+        ${parsed.length ? "" : "LIMIT 100"}
+      `
+      )
+      .bind(...parsed)
+      .all();
+
+    const csvHeaders = ["用户邮箱", "IP地址", "连接节点名称", "连接时间"];
+    let csv = `${csvHeaders.map(escapeCsv).join(",")}\n`;
+    for (const row of result.results || []) {
+      const line = [
+        (row as any).user_email || "",
+        (row as any).ip_address || "",
+        (row as any).node_name || "",
+        (row as any).connect_time || ""
+      ];
+      csv += `${line.map(escapeCsv).join(",")}\n`;
+    }
+    sendCsv(res, "online_ips.csv", csv);
+  });
+
+  // 兼容 Worker：POST /api/admin/kick-ip（body: { ip_id }）
+  router.post("/kick-ip", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const ipId = Number(req.body?.ip_id);
+    if (!ipId) return errorResponse(res, "ip_id 必填", 400);
+    await ctx.dbService.db.prepare("DELETE FROM online_ips WHERE id = ?").bind(ipId).run();
+    return successResponse(res, { message: "IP踢出成功" });
   });
 
   router.post("/online-ips/:id/kick", async (req: Request, res: Response) => {

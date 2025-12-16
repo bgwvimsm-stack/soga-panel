@@ -8,6 +8,18 @@ export function createAdminNodeRouter(ctx: AppContext) {
   const router = Router();
   router.use(createAuthMiddleware(ctx));
 
+  const parseNodeConfig = (raw: unknown): { client: Record<string, any>; config: Record<string, any> } => {
+    try {
+      const parsed = typeof raw === "string" ? JSON.parse(raw || "{}") : raw || {};
+      return {
+        client: (parsed as any).client || {},
+        config: (parsed as any).config || (parsed as any) || {}
+      };
+    } catch {
+      return { client: {}, config: {} };
+    }
+  };
+
   const ensureAdmin = (req: Request, res: Response) => {
     const user = (req as any).user;
     if (!user?.is_admin) {
@@ -170,6 +182,96 @@ export function createAdminNodeRouter(ctx: AppContext) {
     }
 
     return successResponse(res, null, "节点已更新");
+  });
+
+  // 兼容 Worker：POST /api/admin/nodes/:id/traffic
+  router.post("/:id/traffic", async (req: Request, res: Response) => {
+    if (!ensureAdmin(req, res)) return;
+    const id = Number(req.params.id);
+    if (!id) return errorResponse(res, "ID 无效", 400);
+
+    await ctx.db.db
+      .prepare("UPDATE nodes SET node_bandwidth = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+      .bind(id)
+      .run();
+
+    await ctx.cache.deleteByPrefix(`node_config_${id}`);
+    return successResponse(res, { message: "Node traffic reset successfully" });
+  });
+
+  // 兼容 Worker：GET /api/admin/nodes/export
+  router.get("/export", async (req: Request, res: Response) => {
+    if (!ensureAdmin(req, res)) return;
+
+    const nodesResult = await ctx.db.db
+      .prepare(
+        `
+        SELECT id, name, type, node_class, status, node_bandwidth, node_bandwidth_limit,
+               traffic_multiplier, bandwidthlimit_resetday, node_config, created_at, updated_at
+        FROM nodes
+        ORDER BY id DESC
+      `
+      )
+      .all<{
+        id: number;
+        name: string;
+        type: string;
+        node_class: number | string;
+        status: number | string;
+        node_bandwidth: number | string;
+        node_bandwidth_limit: number | string;
+        traffic_multiplier: number | string;
+        bandwidthlimit_resetday: number | string;
+        node_config: any;
+        created_at?: string | null;
+        updated_at?: string | null;
+      }>();
+
+    const headers = [
+      "Name",
+      "Type",
+      "Server",
+      "Server Port",
+      "Class",
+      "Status",
+      "Bandwidth Used",
+      "Bandwidth Limit",
+      "Traffic Multiplier",
+      "Reset Day",
+      "Created At",
+      "Updated At"
+    ];
+
+    const escape = (value: unknown) => `"${String(value ?? "").replace(/\"/g, '\"\"')}"`;
+    let csv = `${headers.join(",")}\n`;
+
+    for (const node of nodesResult.results || []) {
+      const parsed = parseNodeConfig(node.node_config);
+      const client = parsed.client || {};
+      const cfg = parsed.config || {};
+      const row = [
+        node.name || "",
+        node.type || "",
+        client.server || "",
+        client.port || cfg.port || 0,
+        node.node_class ?? 0,
+        Number(node.status) === 1 ? "Online" : "Offline",
+        node.node_bandwidth ?? 0,
+        node.node_bandwidth_limit ?? 0,
+        node.traffic_multiplier ?? 1,
+        node.bandwidthlimit_resetday ?? 1,
+        node.created_at || "",
+        node.updated_at || ""
+      ];
+      csv += `${row.map(escape).join(",")}\n`;
+    }
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=nodes-${new Date().toISOString().slice(0, 10)}.csv`
+    );
+    res.status(200).send(csv);
   });
 
   // 删除节点
