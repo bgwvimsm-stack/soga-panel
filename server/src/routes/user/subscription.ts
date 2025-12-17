@@ -38,6 +38,28 @@ const FILE_EXTENSIONS = {
 
 type SubscriptionType = keyof typeof GENERATORS;
 
+const extractIp = (value?: string | string[] | null) => {
+  const first =
+    Array.isArray(value) && value.length ? value[0] : typeof value === "string" ? value : "";
+  if (!first) return "";
+  const ip = first.split(",")[0]?.trim();
+  if (!ip) return "";
+  if (ip.startsWith("::ffff:")) return ip.slice(7);
+  if (ip === "::1") return "127.0.0.1";
+  return ip;
+};
+
+const getClientIp = (req: Request) => {
+  return (
+    extractIp((req.headers["cf-connecting-ip"] as any) ?? null) ||
+    extractIp((req.headers["true-client-ip"] as any) ?? null) ||
+    extractIp((req.headers["x-real-ip"] as any) ?? null) ||
+    extractIp((req.headers["x-forwarded-for"] as any) ?? null) ||
+    extractIp(req.ip) ||
+    extractIp((req.socket as any)?.remoteAddress ?? null)
+  );
+};
+
 async function resolveSiteName(ctx: AppContext): Promise<string> {
   try {
     const configs = await ctx.dbService.listSystemConfigsMap();
@@ -146,7 +168,7 @@ async function handleSubscription(ctx: AppContext, type: SubscriptionType, req: 
         VALUES (?, ?, ?, ?)
       `
       )
-      .bind(userRow.id, type, req.ip || "", req.headers["user-agent"] || "")
+      .bind(userRow.id, type, getClientIp(req), String(req.headers["user-agent"] ?? ""))
       .run();
 
     const nodes = (await ctx.dbService.getUserAccessibleNodes(Number(userRow.id))) as any as SubscriptionNode[];

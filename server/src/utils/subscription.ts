@@ -3,8 +3,17 @@ import { buildClashTemplate } from "./templates/clashTemplate";
 import { buildSurgeTemplate } from "./templates/surgeTemplate";
 
 // Node 版没有浏览器的 btoa/atob，这里做一个简单兼容
-const b64encode = (input: string) => Buffer.from(input, "utf8").toString("base64");
-const b64decode = (input: string) => Buffer.from(input, "base64").toString("binary");
+const b64encodeUtf8 = (input: string) => Buffer.from(input, "utf8").toString("base64");
+
+function normalizeBase64(input: string) {
+  const cleaned = input.trim();
+  if (!cleaned) return null;
+  // 仅接受标准 Base64（与浏览器 atob 行为保持一致），不接受 Base64URL
+  if (/[^A-Za-z0-9+/=]/.test(cleaned)) return null;
+  const mod = cleaned.length % 4;
+  if (mod === 1) return null;
+  return mod === 0 ? cleaned : cleaned + "=".repeat(4 - mod);
+}
 
 export type SubscriptionUser = {
   id: number;
@@ -94,7 +103,7 @@ export function generateV2rayConfig(nodes: SubscriptionNode[], user: Subscriptio
     }
   }
 
-  return b64encode(links.join("\n"));
+  return b64encodeUtf8(links.join("\n"));
 }
 
 // ---------------- 单协议链接生成（与 Worker 版一致） ----------------
@@ -123,7 +132,7 @@ function generateVmessLink(node: any, config: any, user: SubscriptionUser) {
     alpn: config.alpn || ""
   };
 
-  return `vmess://${b64encode(JSON.stringify(vmessConfig))}`;
+  return `vmess://${b64encodeUtf8(JSON.stringify(vmessConfig))}`;
 }
 
 function generateVlessLink(node: any, config: any, user: SubscriptionUser) {
@@ -164,7 +173,8 @@ function generateTrojanLink(node: any, config: any, user: SubscriptionUser) {
 
   const queryString = params.toString();
   const host = formatHostForUrl(node.server);
-  const url = `trojan://${user.passwd}@${host}:${node.server_port}`;
+  const password = encodeURIComponent(String(user.passwd ?? ""));
+  const url = `trojan://${password}@${host}:${node.server_port}`;
 
   return queryString
     ? `${url}?${queryString}#${encodeURIComponent(node.name)}`
@@ -174,17 +184,6 @@ function generateTrojanLink(node: any, config: any, user: SubscriptionUser) {
 function deriveSS2022UserKey(method: string, userPassword: string) {
   const needs = method.toLowerCase().includes("aes-128") ? 16 : 32;
 
-  const decodeBase64 = (value: string) => {
-    try {
-      const cleaned = value.trim();
-      if (!cleaned) return null;
-      const decoded = b64decode(cleaned);
-      return Uint8Array.from(decoded, (c) => c.charCodeAt(0));
-    } catch {
-      return null;
-    }
-  };
-
   const toUtf8 = (value: string) => {
     try {
       return new TextEncoder().encode(value);
@@ -193,7 +192,9 @@ function deriveSS2022UserKey(method: string, userPassword: string) {
     }
   };
 
-  let bytes = decodeBase64(userPassword) || toUtf8(userPassword);
+  const normalized = normalizeBase64(userPassword);
+  const decodedBytes = normalized ? Buffer.from(normalized, "base64") : null;
+  let bytes = decodedBytes && decodedBytes.length > 0 ? new Uint8Array(decodedBytes) : toUtf8(userPassword);
   if (!bytes || bytes.length === 0) {
     bytes = new Uint8Array([0]);
   }
@@ -203,11 +204,8 @@ function deriveSS2022UserKey(method: string, userPassword: string) {
     out[i] = bytes[i % bytes.length];
   }
 
-  let binary = "";
-  out.forEach((b) => {
-    binary += String.fromCharCode(b);
-  });
-  return b64encode(binary);
+  // 这里必须按“原始字节”进行 Base64 编码（等价于 openssl rand -base64 <n> 的输出格式）
+  return Buffer.from(out).toString("base64");
 }
 
 function buildSS2022Password(config: any, userPassword: string) {
@@ -225,7 +223,7 @@ function generateShadowsocksLink(node: any, config: any, user: SubscriptionUser)
   const method = config.cipher || "aes-128-gcm";
   const password = buildSS2022Password(config, user.passwd || config.password || "");
   const userInfo = `${method}:${password}`;
-  const encoded = b64encode(userInfo);
+  const encoded = b64encodeUtf8(userInfo);
 
   const host = formatHostForUrl(node.server);
   let link = `ss://${encoded}@${host}:${node.server_port}`;
@@ -377,6 +375,52 @@ export function generateClashConfig(nodes: SubscriptionNode[], user: Subscriptio
         }
         break;
 
+      case "ssr":
+      case "shadowsocksr":
+        proxy = {
+          name: node.name,
+          type: "ssr",
+          server,
+          port,
+          cipher: config.method || config.cipher || "aes-256-cfb",
+          password: String(config.password || ""),
+          protocol: config.protocol || "origin",
+          obfs: config.obfs || "plain",
+          udp: true
+        };
+        {
+          const protocolParam =
+            config.protocol_param || (config as any)["protocol-param"] || config.protocolparam || user.passwd || "";
+          const obfsParam =
+            config.obfs_param || (config as any)["obfs-param"] || config.obfsparam || tlsHost || config.server || "";
+          if (protocolParam) proxy["protocol-param"] = protocolParam;
+          if (obfsParam) proxy["obfs-param"] = obfsParam;
+        }
+        break;
+
+      case "anytls":
+        proxy = {
+          name: node.name,
+          type: "anytls",
+          server,
+          port,
+          password: String(user.passwd || config.password || ""),
+          "client-fingerprint": config.fingerprint || "chrome",
+          udp: true,
+          "idle-session-check-interval": config.idle_session_check_interval ?? 30,
+          "idle-session-timeout": config.idle_session_timeout ?? 30,
+          "min-idle-session": config.min_idle_session ?? 0,
+          "skip-cert-verify": true
+        };
+        {
+          const sni = tlsHost || config.sni || config.server;
+          if (sni) proxy.sni = sni;
+          const alpnRaw = config.alpn;
+          if (Array.isArray(alpnRaw) && alpnRaw.length) proxy.alpn = alpnRaw;
+          else if (typeof alpnRaw === "string" && alpnRaw.trim()) proxy.alpn = alpnRaw.split(",").map((v: string) => v.trim()).filter(Boolean);
+        }
+        break;
+
       case "hysteria":
         proxy = {
           name: node.name,
@@ -462,7 +506,9 @@ export function generateShadowrocketConfig(nodes: SubscriptionNode[], user: Subs
         line = `vmess://${user.uuid}@${server}:${port}#${encodeURIComponent(String(node.name))}`;
         break;
       case "trojan":
-        line = `trojan://${user.passwd}@${server}:${port}#${encodeURIComponent(String(node.name))}`;
+        line = `trojan://${encodeURIComponent(String(user.passwd ?? ""))}@${server}:${port}#${encodeURIComponent(
+          String(node.name)
+        )}`;
         break;
       case "ss":
         line = generateShadowsocksLink(

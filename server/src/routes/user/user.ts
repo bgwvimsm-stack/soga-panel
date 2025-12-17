@@ -110,6 +110,28 @@ export function createUserRouter(ctx: AppContext) {
     });
   });
 
+  router.get("/passkeys", async (req: Request, res: Response) => {
+    const user = (req as any).user;
+    if (!user?.id) return errorResponse(res, "未登录", 401);
+    const list = await ctx.dbService.listPasskeys(Number(user.id));
+    return successResponse(res, { items: list });
+  });
+
+  router.delete("/passkeys/:id", async (req: Request, res: Response) => {
+    const user = (req as any).user;
+    if (!user?.id) return errorResponse(res, "未登录", 401);
+    const id = ensureString(req.params?.id);
+    if (!id) return errorResponse(res, "缺少凭证ID", 400);
+
+    const del = await ctx.dbService.db
+      .prepare("DELETE FROM passkeys WHERE user_id = ? AND credential_id = ?")
+      .bind(user.id, id)
+      .run();
+    const changes = (del.meta as any)?.changes ?? (del as any)?.changes;
+    if (!changes) return errorResponse(res, "未找到要删除的通行密钥", 404);
+    return successResponse(res, { removed: id });
+  });
+
   router.put("/profile", async (req: Request, res: Response) => {
     const user = (req as any).user;
     const { username, email } = req.body || {};
@@ -510,9 +532,50 @@ export function createUserRouter(ctx: AppContext) {
 
   router.get("/traffic-records", async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const limit = Number(req.query.limit ?? 50) || 50;
-    const logs = await ctx.dbService.listTrafficLogs(Number(user.id), Math.min(limit, 200));
-    return successResponse(res, logs);
+    const page = Math.max(1, Number(req.query.page ?? 1) || 1);
+    const limit = Math.min(Math.max(1, Number(req.query.limit ?? 20) || 20), 200);
+    const offset = (page - 1) * limit;
+
+    const totalRow = await ctx.dbService.db
+      .prepare("SELECT COUNT(*) as total FROM traffic_logs WHERE user_id = ?")
+      .bind(Number(user.id))
+      .first<{ total?: number | string | null }>();
+    const total = Number(totalRow?.total ?? 0);
+
+    const rows = await ctx.dbService.db
+      .prepare(
+        `
+        SELECT 
+          tl.id,
+          tl.user_id,
+          tl.node_id,
+          n.name as node_name,
+          tl.upload_traffic,
+          tl.download_traffic,
+          tl.actual_upload_traffic,
+          tl.actual_download_traffic,
+          (tl.upload_traffic + tl.download_traffic) as total_traffic,
+          tl.actual_traffic,
+          tl.deduction_multiplier,
+          DATE_FORMAT(tl.date, '%Y-%m-%d') as log_time,
+          tl.created_at
+        FROM traffic_logs tl
+        LEFT JOIN nodes n ON n.id = tl.node_id
+        WHERE tl.user_id = ?
+        ORDER BY tl.date DESC, tl.created_at DESC
+        LIMIT ? OFFSET ?
+      `
+      )
+      .bind(Number(user.id), limit, offset)
+      .all();
+
+    return successResponse(res, {
+      data: rows.results || [],
+      total,
+      page,
+      limit,
+      pages: limit > 0 ? Math.max(1, Math.ceil(total / limit)) : 1
+    });
   });
 
   router.get("/online-ips", async (req: Request, res: Response) => {
@@ -823,11 +886,76 @@ export function createUserRouter(ctx: AppContext) {
   // 用户流量趋势
   router.get("/traffic/trends", async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const period = (req.query.period as string) || "";
-    const daysParam = Number(req.query.days ?? 7) || 7;
-    const days = period === "today" ? 1 : Math.min(daysParam, 90);
-    const data = await trafficService.getUserTrafficTrends(Number(user.id), days);
-    return successResponse(res, data);
+    const period = String(req.query.period || "today");
+    const daysCount = period === "3days" ? 3 : period === "7days" ? 7 : 1;
+
+    const now = new Date();
+    const beijingTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+
+    const dayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+    const dateList: Array<{ date: string; label: string }> = [];
+    for (let i = daysCount - 1; i >= 0; i -= 1) {
+      const targetDate = new Date(beijingTime.getTime() - i * 24 * 60 * 60 * 1000);
+      const dateStr = targetDate.toISOString().split("T")[0];
+      const dayName = dayNames[targetDate.getUTCDay()];
+      dateList.push({
+        date: dateStr,
+        label: i === 0 ? "今天" : dayName
+      });
+    }
+
+    const startDate = dateList[0]?.date || beijingTime.toISOString().split("T")[0];
+    const dailyRows = await ctx.dbService.db
+      .prepare(
+        `
+        SELECT 
+          DATE_FORMAT(date, '%Y-%m-%d') as date,
+          COALESCE(SUM(actual_upload_traffic), 0) as upload_traffic,
+          COALESCE(SUM(actual_download_traffic), 0) as download_traffic,
+          COALESCE(SUM(actual_traffic), 0) as total_traffic
+        FROM traffic_logs
+        WHERE user_id = ?
+          AND date >= ?
+        GROUP BY date
+        ORDER BY date ASC
+      `
+      )
+      .bind(Number(user.id), startDate)
+      .all<{ date?: string; upload_traffic?: any; download_traffic?: any; total_traffic?: any }>();
+
+    const dataMap: Record<
+      string,
+      { upload_traffic: number; download_traffic: number; total_traffic: number }
+    > = {};
+    for (const row of dailyRows.results || []) {
+      if (!row?.date) continue;
+      dataMap[row.date] = {
+        upload_traffic: ensureNumber(row.upload_traffic),
+        download_traffic: ensureNumber(row.download_traffic),
+        total_traffic: ensureNumber(row.total_traffic)
+      };
+    }
+
+    const trends = dateList.map((item) => {
+      const data = dataMap[item.date] || { upload_traffic: 0, download_traffic: 0, total_traffic: 0 };
+      return {
+        date: item.date,
+        label: item.label,
+        upload_traffic: data.upload_traffic,
+        download_traffic: data.download_traffic,
+        total_traffic: data.total_traffic
+      };
+    });
+
+    const hasAny = trends.some(
+      (item) =>
+        ensureNumber(item.total_traffic) > 0 ||
+        ensureNumber(item.upload_traffic) > 0 ||
+        ensureNumber(item.download_traffic) > 0
+    );
+
+    // 没有任何记录时返回空数组，前端会回退到用户表的 upload_today/download_today
+    return successResponse(res, hasAny ? trends : []);
   });
 
   // 用户流量汇总

@@ -154,6 +154,76 @@ export function createAdminGiftCardRouter(ctx: AppContext) {
     return successResponse(res, { code: finalCode }, "礼品卡已创建");
   });
 
+  // 兼容 Worker/前端：PUT /api/admin/gift-cards/:id
+  router.put("/:id", async (req: Request, res: Response) => {
+    if (!ensureAdmin(req, res)) return;
+    const id = Number(req.params.id);
+    if (!id) return errorResponse(res, "ID 无效", 400);
+
+    const payload = req.body || {};
+    const allowedFields = [
+      "name",
+      "card_type",
+      "balance_amount",
+      "duration_days",
+      "traffic_value_gb",
+      "reset_traffic_gb",
+      "package_id",
+      "max_usage",
+      "per_user_limit",
+      "start_at",
+      "end_at"
+    ];
+
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    for (const field of allowedFields) {
+      if (payload[field] === undefined) continue;
+      if (field === "card_type") {
+        updates.push("card_type = ?");
+        values.push(String(payload[field] || "").trim());
+        continue;
+      }
+      if (field === "start_at" || field === "end_at") {
+        updates.push(`${field} = ?`);
+        values.push(payload[field] ? new Date(payload[field]).toISOString().slice(0, 19).replace("T", " ") : null);
+        continue;
+      }
+      if (field === "max_usage" || field === "per_user_limit") {
+        const v = payload[field];
+        if (v !== null && v !== undefined) {
+          const n = ensureNumber(v);
+          if (!Number.isFinite(n) || n <= 0) return errorResponse(res, `${field} 必须大于 0`, 400);
+          updates.push(`${field} = ?`);
+          values.push(n);
+        } else {
+          updates.push(`${field} = ?`);
+          values.push(null);
+        }
+        continue;
+      }
+      updates.push(`${field} = ?`);
+      values.push(payload[field]);
+    }
+
+    if (!updates.length) return errorResponse(res, "没有需要更新的字段", 400);
+
+    values.push(id);
+    await ctx.db.db
+      .prepare(
+        `
+        UPDATE gift_cards
+        SET ${updates.join(", ")}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `
+      )
+      .bind(...values)
+      .run();
+
+    return successResponse(res, { id, message: "礼品卡已更新" }, "礼品卡已更新");
+  });
+
   // 更新礼品卡状态
   router.post("/:id/status", async (req: Request, res: Response) => {
     if (!ensureAdmin(req, res)) return;
