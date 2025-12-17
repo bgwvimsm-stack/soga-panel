@@ -143,6 +143,7 @@ export class DatabaseService {
       WHERE u.id = ? 
         AND u.status = 1
         AND (u.expire_time IS NULL OR u.expire_time > datetime('now', '+8 hours'))
+        AND (u.class_expire_time IS NULL OR u.class_expire_time > datetime('now', '+8 hours'))
         AND n.status = 1
         AND n.node_class <= u.class
       ORDER BY n.node_class ASC, n.id ASC
@@ -160,6 +161,7 @@ export class DatabaseService {
       WHERE n.id = ? 
         AND u.status = 1 
         AND (u.expire_time IS NULL OR u.expire_time > datetime('now', '+8 hours'))
+        AND (u.class_expire_time IS NULL OR u.class_expire_time > datetime('now', '+8 hours'))
         AND u.transfer_enable > u.transfer_total
         AND u.class >= n.node_class
     `);

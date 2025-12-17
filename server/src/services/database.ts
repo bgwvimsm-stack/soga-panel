@@ -127,6 +127,7 @@ export class DatabaseService {
         WHERE u.id = ? 
           AND u.status = 1
           AND (u.expire_time IS NULL OR u.expire_time > CURRENT_TIMESTAMP)
+          AND (u.class_expire_time IS NULL OR u.class_expire_time > CURRENT_TIMESTAMP)
           AND n.status = 1
           AND n.node_class <= u.class
         ORDER BY n.node_class ASC, n.id ASC
@@ -147,6 +148,7 @@ export class DatabaseService {
         WHERE n.id = ? 
           AND u.status = 1 
           AND (u.expire_time IS NULL OR u.expire_time > CURRENT_TIMESTAMP)
+          AND (u.class_expire_time IS NULL OR u.class_expire_time > CURRENT_TIMESTAMP)
           AND u.transfer_enable > u.transfer_total
           AND u.class >= n.node_class
       `
@@ -2248,12 +2250,27 @@ export class DatabaseService {
       .run();
   }
 
-  async getExpiredLevelUsers(now: Date = new Date()) {
-    // 使用 UTC+8 时间对齐业务语义，避免服务器/数据库时区差异导致延迟
-    const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-    const nowStr = utc8.toISOString().slice(0, 19).replace("T", " "); // yyyy-MM-dd HH:mm:ss
+  async getExpiredLevelUsers(useLocalTime = false) {
+    if (!useLocalTime) {
+      const result = await this.db
+        .prepare(
+          `
+          SELECT id, email, username, class, class_expire_time,
+                 upload_traffic, download_traffic, transfer_today, 
+                 transfer_total, transfer_enable
+          FROM users 
+          WHERE class_expire_time IS NOT NULL 
+            AND class_expire_time <= CURRENT_TIMESTAMP
+            AND class > 0
+            AND status = 1
+        `
+        )
+        .all();
+      return result.results || [];
+    }
 
-    const result = await this.db
+    // 本地时间判断（JS 时区），避免数据库时区配置与业务期望不一致
+    const rows = await this.db
       .prepare(
         `
         SELECT id, email, username, class, class_expire_time,
@@ -2261,14 +2278,18 @@ export class DatabaseService {
                transfer_total, transfer_enable
         FROM users 
         WHERE class_expire_time IS NOT NULL 
-          AND class_expire_time <= ?
           AND class > 0
           AND status = 1
       `
       )
-      .bind(nowStr)
-      .all();
-    return result.results || [];
+      .all<any>();
+
+    const now = Date.now();
+    return (rows.results || []).filter((row) => {
+      if (!row?.class_expire_time) return false;
+      const ts = new Date(row.class_expire_time).getTime();
+      return Number.isFinite(ts) && ts <= now;
+    });
   }
 
   async resetExpiredUsersLevel(userIds: Array<number | string>) {
