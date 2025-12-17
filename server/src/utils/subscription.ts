@@ -390,11 +390,17 @@ export function generateClashConfig(nodes: SubscriptionNode[], user: Subscriptio
         };
         {
           const protocolParam =
-            config.protocol_param || (config as any)["protocol-param"] || config.protocolparam || user.passwd || "";
-          const obfsParam =
+            config.protocol_param ||
+            (config as any)["protocol-param"] ||
+            config.protocolparam ||
+            (Number(user.id) > 0 ? `${user.id}:${String(user.passwd || "")}` : "") ||
+            "";
+          const obfsParamCandidate =
             config.obfs_param || (config as any)["obfs-param"] || config.obfsparam || tlsHost || config.server || "";
+          const obfsName = String(config.obfs || "").toLowerCase();
+          const needObfsParam = ["http_simple", "http_post", "tls1.2_ticket_auth", "simple_obfs_http", "simple_obfs_tls"].includes(obfsName);
           if (protocolParam) proxy["protocol-param"] = protocolParam;
-          if (obfsParam) proxy["obfs-param"] = obfsParam;
+          if (needObfsParam && obfsParamCandidate) proxy["obfs-param"] = obfsParamCandidate;
         }
         break;
 
