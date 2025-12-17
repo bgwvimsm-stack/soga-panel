@@ -39,7 +39,7 @@ type BarkUser = {
 
 const schedulerState: SchedulerState = {
   startedAt: null,
-  timezone: "UTC+8",
+  timezone: "Asia/Shanghai",
   jobs: {
     userExpirationCheck: {
       key: "userExpirationCheck",
@@ -71,6 +71,8 @@ const schedulerState: SchedulerState = {
   }
 };
 
+const CRON_TIMEZONE = "Asia/Shanghai";
+
 function updateJobStatus(key: SchedulerJobKey, patch: Partial<SchedulerJobStatus>) {
   schedulerState.jobs[key] = {
     ...schedulerState.jobs[key],
@@ -91,177 +93,189 @@ export function startSchedulers(db: DatabaseService, cache: CacheService, env: A
   schedulerState.startedAt = new Date().toISOString();
 
   // 每分钟执行一次：检查过期用户（账号/等级），避免长时间挂在已过期状态
-  cron.schedule("*/1 * * * *", async () => {
-    const started = Date.now();
-    const startedAt = new Date().toISOString();
-    updateJobStatus("userExpirationCheck", {
-      lastRunAt: startedAt,
-      lastResult: null,
-      lastError: null,
-      lastDurationMs: null
-    });
-    try {
-      const expired = await db.getExpiredLevelUsers();
-      const ids = expired.map((u: any) => u.id);
-      await db.resetExpiredUsersLevel(ids);
-      await db.logLevelResets(
-        await Promise.all(ids.map((id: number) => db.resetUserLevel(id)))
-      );
-      console.log("[scheduler] user expiration check done", ids.length);
+  cron.schedule(
+    "*/1 * * * *",
+    async () => {
+      const started = Date.now();
+      const startedAt = new Date().toISOString();
       updateJobStatus("userExpirationCheck", {
-        lastResult: "success",
-        lastDurationMs: Date.now() - started
+        lastRunAt: startedAt,
+        lastResult: null,
+        lastError: null,
+        lastDurationMs: null
       });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      updateJobStatus("userExpirationCheck", {
-        lastResult: "error",
-        lastError: message,
-        lastDurationMs: Date.now() - started
-      });
-      console.error("[scheduler] user expiration check failed", error);
-    }
-  });
+      try {
+        const expired = await db.getExpiredLevelUsers();
+        const ids = expired.map((u: any) => u.id);
+        await db.resetExpiredUsersLevel(ids);
+        await db.logLevelResets(
+          await Promise.all(ids.map((id: number) => db.resetUserLevel(id)))
+        );
+        console.log("[scheduler] user expiration check done", ids.length);
+        updateJobStatus("userExpirationCheck", {
+          lastResult: "success",
+          lastDurationMs: Date.now() - started
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        updateJobStatus("userExpirationCheck", {
+          lastResult: "error",
+          lastError: message,
+          lastDurationMs: Date.now() - started
+        });
+        console.error("[scheduler] user expiration check failed", error);
+      }
+    },
+    { timezone: CRON_TIMEZONE }
+  );
 
   // 每天 00:00：每日流量重置 + 月度流量重置 + 节点状态/在线 IP 清理 + 流量汇总 + Bark 通知
-  cron.schedule("0 0 * * *", async () => {
-    const started = Date.now();
-    const startedAt = new Date().toISOString();
-    updateJobStatus("dailyTasks", {
-      lastRunAt: startedAt,
-      lastResult: null,
-      lastError: null,
-      lastDurationMs: null
-    });
-    try {
-      // 1）按用户聚合昨日流量并写入 daily_traffic / system_traffic_summary
-      const now = new Date(Date.now() + 8 * 60 * 60 * 1000); // UTC+8
-      now.setDate(now.getDate() - 1);
-      const dateStr = now.toISOString().slice(0, 10);
-      const aggResult = await db.aggregateTrafficForDate(dateStr);
-      console.log("[scheduler] daily traffic aggregation done", dateStr, aggResult);
-
-      // 2）发送 Bark 每日流量通知（使用重置前的 upload_today / download_today）
-      const barkResult = await sendDailyBarkNotifications(db, env);
-      console.log("[scheduler] daily Bark notifications", barkResult);
-
-      // 3）每日流量字段清零（upload_today / download_today）
-      await db.db
-        .prepare(
-          `
-          UPDATE users 
-          SET upload_today = 0,
-              download_today = 0,
-              updated_at = CURRENT_TIMESTAMP
-          WHERE upload_today > 0 OR download_today > 0
-        `
-        )
-        .run();
-      console.log("[scheduler] daily transfer reset done");
-
-      // 4）月度流量重置（复用 system_configs.traffic_reset_day）
+  cron.schedule(
+    "0 0 * * *",
+    async () => {
+      const started = Date.now();
+      const startedAt = new Date().toISOString();
+      updateJobStatus("dailyTasks", {
+        lastRunAt: startedAt,
+        lastResult: null,
+        lastError: null,
+        lastDurationMs: null
+      });
       try {
-        const configs = await db.db
-          .prepare("SELECT `value` FROM system_configs WHERE `key` = 'traffic_reset_day'")
-          .all<{ value: string | number | null }>();
-        const value = configs.results?.[0]?.value ?? 0;
-        const resetDay = Number.parseInt(String(value ?? "0"), 10);
-        if (resetDay > 0 && resetDay <= 31) {
-          const beijing = new Date(Date.now() + 8 * 60 * 60 * 1000);
-          const currentDay = beijing.getUTCDate();
-          if (currentDay === resetDay) {
-            const result = await db.db
-              .prepare(
+        // 1）按用户聚合昨日流量并写入 daily_traffic / system_traffic_summary
+        const now = new Date(Date.now() + 8 * 60 * 60 * 1000); // 业务按 UTC+8（对齐 Worker 的 date('now','+8 hours')）
+        now.setDate(now.getDate() - 1);
+        const dateStr = now.toISOString().slice(0, 10);
+        const aggResult = await db.aggregateTrafficForDate(dateStr);
+        console.log("[scheduler] daily traffic aggregation done", dateStr, aggResult);
+
+        // 2）发送 Bark 每日流量通知（使用重置前的 upload_today / download_today）
+        const barkResult = await sendDailyBarkNotifications(db, env);
+        console.log("[scheduler] daily Bark notifications", barkResult);
+
+        // 3）每日流量字段清零（upload_today / download_today）
+        await db.db
+          .prepare(
+            `
+            UPDATE users 
+            SET upload_today = 0,
+                download_today = 0,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE upload_today > 0 OR download_today > 0
+          `
+          )
+          .run();
+        console.log("[scheduler] daily transfer reset done");
+
+        // 4）月度流量重置（复用 system_configs.traffic_reset_day）
+        try {
+          const configs = await db.db
+            .prepare("SELECT `value` FROM system_configs WHERE `key` = 'traffic_reset_day'")
+            .all<{ value: string | number | null }>();
+          const value = configs.results?.[0]?.value ?? 0;
+          const resetDay = Number.parseInt(String(value ?? "0"), 10);
+          if (resetDay > 0 && resetDay <= 31) {
+            const beijing = new Date(Date.now() + 8 * 60 * 60 * 1000);
+            const currentDay = beijing.getUTCDate();
+            if (currentDay === resetDay) {
+              const result = await db.db
+                .prepare(
+                  `
+                  UPDATE users 
+                  SET transfer_total = 0,
+                      upload_traffic = 0,
+                      download_traffic = 0,
+                      updated_at = CURRENT_TIMESTAMP
+                  WHERE transfer_enable > 0
                 `
-                UPDATE users 
-                SET transfer_total = 0,
-                    upload_traffic = 0,
-                    download_traffic = 0,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE transfer_enable > 0
-              `
-              )
-              .run();
-            console.log(
-              "[scheduler] monthly traffic reset done",
-              "reset_day",
-              resetDay,
-              "affected",
-              result
-            );
+                )
+                .run();
+              console.log(
+                "[scheduler] monthly traffic reset done",
+                "reset_day",
+                resetDay,
+                "affected",
+                result
+              );
+            }
           }
+        } catch (e) {
+          console.error("[scheduler] monthly traffic reset failed", e);
         }
-      } catch (e) {
-        console.error("[scheduler] monthly traffic reset failed", e);
+
+        // 5）节点状态/在线 IP 清理（保留近 7 天）
+        await db.db
+          .prepare("DELETE FROM node_status WHERE created_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY)")
+          .run();
+        await db.db
+          .prepare("DELETE FROM online_ips WHERE last_seen < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY)")
+          .run();
+        console.log("[scheduler] node status/online ip cleanup done");
+
+        updateJobStatus("dailyTasks", {
+          lastResult: "success",
+          lastDurationMs: Date.now() - started
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        updateJobStatus("dailyTasks", {
+          lastResult: "error",
+          lastError: message,
+          lastDurationMs: Date.now() - started
+        });
+        console.error("[scheduler] daily tasks failed", error);
       }
-
-      // 5）节点状态/在线 IP 清理（保留近 7 天）
-      await db.db
-        .prepare("DELETE FROM node_status WHERE created_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY)")
-        .run();
-      await db.db
-        .prepare("DELETE FROM online_ips WHERE last_seen < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY)")
-        .run();
-      console.log("[scheduler] node status/online ip cleanup done");
-
-      updateJobStatus("dailyTasks", {
-        lastResult: "success",
-        lastDurationMs: Date.now() - started
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      updateJobStatus("dailyTasks", {
-        lastResult: "error",
-        lastError: message,
-        lastDurationMs: Date.now() - started
-      });
-      console.error("[scheduler] daily tasks failed", error);
-    }
-  });
+    },
+    { timezone: CRON_TIMEZONE }
+  );
 
   // 每天 01:00：清理 7 天前订阅记录，并清理订阅缓存
-  cron.schedule("0 1 * * *", async () => {
-    const started = Date.now();
-    const startedAt = new Date().toISOString();
-    updateJobStatus("subscriptionCleanup", {
-      lastRunAt: startedAt,
-      lastResult: null,
-      lastError: null,
-      lastDurationMs: null
-    });
-    try {
-      // 计算 7 天前时间（UTC+8），转为时间字符串
-      const now = new Date();
-      const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-      const sevenDaysAgo = new Date(utc8.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const cutoff = sevenDaysAgo.toISOString().replace("T", " ").split(".")[0];
+  cron.schedule(
+    "0 1 * * *",
+    async () => {
+      const started = Date.now();
+      const startedAt = new Date().toISOString();
+      updateJobStatus("subscriptionCleanup", {
+        lastRunAt: startedAt,
+        lastResult: null,
+        lastError: null,
+        lastDurationMs: null
+      });
+      try {
+        // 计算 7 天前时间（UTC+8），转为时间字符串
+        const now = new Date();
+        const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+        const sevenDaysAgo = new Date(utc8.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const cutoff = sevenDaysAgo.toISOString().replace("T", " ").split(".")[0];
 
-      await db.db
-        .prepare(
+        await db.db
+          .prepare(
+            `
+            DELETE FROM subscriptions
+            WHERE request_time < ?
           `
-          DELETE FROM subscriptions
-          WHERE request_time < ?
-        `
-        )
-        .bind(cutoff)
-        .run();
-      await cache.deleteByPrefix("sub_token_");
-      console.log("[scheduler] subscription logs cleanup done (7 days)");
+          )
+          .bind(cutoff)
+          .run();
+        await cache.deleteByPrefix("sub_token_");
+        console.log("[scheduler] subscription logs cleanup done (7 days)");
 
-      updateJobStatus("subscriptionCleanup", {
-        lastResult: "success",
-        lastDurationMs: Date.now() - started
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      updateJobStatus("subscriptionCleanup", {
-        lastResult: "error",
-        lastError: message,
-        lastDurationMs: Date.now() - started
-      });
-      console.error("[scheduler] subscription logs cleanup failed", error);
-    }
-  });
+        updateJobStatus("subscriptionCleanup", {
+          lastResult: "success",
+          lastDurationMs: Date.now() - started
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        updateJobStatus("subscriptionCleanup", {
+          lastResult: "error",
+          lastError: message,
+          lastDurationMs: Date.now() - started
+        });
+        console.error("[scheduler] subscription logs cleanup failed", error);
+      }
+    },
+    { timezone: CRON_TIMEZONE }
+  );
 }
 
 function formatBytes(bytes: number) {

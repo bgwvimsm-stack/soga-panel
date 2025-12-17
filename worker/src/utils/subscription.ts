@@ -132,7 +132,8 @@ function generateTrojanLink(node, config, user) {
 
   const queryString = params.toString();
   const host = formatHostForUrl(node.server);
-  const url = `trojan://${user.passwd}@${host}:${node.server_port}`;
+  const password = encodeURIComponent(String(user.passwd ?? ""));
+  const url = `trojan://${password}@${host}:${node.server_port}`;
 
   return queryString
     ? `${url}?${queryString}#${encodeURIComponent(node.name)}`
@@ -404,6 +405,54 @@ export function generateClashConfig(nodes, user) {
             mode: config.obfs === "simple_obfs_http" ? "http" : "tls",
             host: tlsHost || config.server || "bing.com",
           };
+        }
+        break;
+
+      case "ssr":
+      case "shadowsocksr":
+        proxy = {
+          name: node.name,
+          type: "ssr",
+          server,
+          port,
+          cipher: config.method || config.cipher || "aes-256-cfb",
+          password: String(config.password || ""),
+          protocol: config.protocol || "origin",
+          obfs: config.obfs || "plain",
+          udp: true,
+        };
+        {
+          const protocolParam =
+            config.protocol_param || config["protocol-param"] || config.protocolparam || user.passwd || "";
+          const obfsParam =
+            config.obfs_param || config["obfs-param"] || config.obfsparam || tlsHost || config.server || "";
+          if (protocolParam) proxy["protocol-param"] = protocolParam;
+          if (obfsParam) proxy["obfs-param"] = obfsParam;
+        }
+        break;
+
+      case "anytls":
+        proxy = {
+          name: node.name,
+          type: "anytls",
+          server,
+          port,
+          password: String(user.passwd || config.password || ""),
+          "client-fingerprint": config.fingerprint || "chrome",
+          udp: true,
+          "idle-session-check-interval": config.idle_session_check_interval ?? 30,
+          "idle-session-timeout": config.idle_session_timeout ?? 30,
+          "min-idle-session": config.min_idle_session ?? 0,
+          "skip-cert-verify": true,
+        };
+        {
+          const sni = tlsHost || config.sni || config.server;
+          if (sni) proxy.sni = sni;
+          const alpnRaw = config.alpn;
+          if (Array.isArray(alpnRaw) && alpnRaw.length) proxy.alpn = alpnRaw;
+          else if (typeof alpnRaw === "string" && alpnRaw.trim()) {
+            proxy.alpn = alpnRaw.split(",").map((v: string) => v.trim()).filter(Boolean);
+          }
         }
         break;
 

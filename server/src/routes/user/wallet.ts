@@ -289,6 +289,23 @@ export function createWalletRouter(ctx: AppContext) {
     return successResponse(res, { trade_no }, "已入账");
   });
 
+  // 兼容 Worker：GET /api/wallet/recharge/callback?trade_no=xxx
+  router.get("/recharge/callback", async (req: Request, res: Response) => {
+    const tradeNo = typeof req.query.trade_no === "string" ? req.query.trade_no.trim() : "";
+    if (!tradeNo) return errorResponse(res, "缺少 trade_no", 400);
+    const record = await ctx.dbService.markRechargePaid(tradeNo);
+    if (!record) return errorResponse(res, "订单不存在", 404);
+    await referralService.awardRebate({
+      inviteeId: Number(record.user_id),
+      amount: Number(record.amount ?? 0),
+      sourceType: "recharge",
+      sourceId: Number(record.id ?? 0) || null,
+      tradeNo,
+      eventType: "recharge_rebate"
+    });
+    return successResponse(res, { trade_no: tradeNo }, "已入账");
+  });
+
   // 礼品卡兑换（支持余额/时长/流量/重置/套餐）
   router.post("/gift-card/redeem", async (req: Request, res: Response) => {
     const user = (req as any).user;
