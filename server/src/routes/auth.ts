@@ -4,7 +4,7 @@ import { AuthService } from "../services/auth";
 import { errorResponse, successResponse } from "../utils/response";
 import { TwoFactorService } from "../services/twoFactor";
 import { ReferralService } from "../services/referral";
-import { generateRandomString, generateUUID, hashPassword } from "../utils/crypto";
+import { generateBase64Random, generateRandomString, generateUUID, hashPassword } from "../utils/crypto";
 import { ensureString } from "../utils/d1";
 import { createAuthMiddleware } from "../middleware/auth";
 import {
@@ -349,7 +349,7 @@ export function createAuthRouter(ctx: AppContext) {
         const username = usernameSeed.length > 2 ? usernameSeed : `google_${googleSub.slice(-6)}`;
         const passwordHash = hashPassword(generateRandomString(12));
         const uuid = generateUUID();
-        const passwd = generateRandomString(12);
+        const passwd = generateBase64Random(32);
         const token = generateRandomString(32);
         const userId = await ctx.dbService.createUser({
           email,
@@ -466,7 +466,7 @@ export function createAuthRouter(ctx: AppContext) {
         const username = usernameSeed.length > 2 ? usernameSeed : `github_${githubId.slice(-6)}`;
         const passwordHash = hashPassword(generateRandomString(12));
         const uuid = generateUUID();
-        const passwd = generateRandomString(12);
+        const passwd = generateBase64Random(32);
         const token = generateRandomString(32);
         const userId = await ctx.dbService.createUser({
           email,

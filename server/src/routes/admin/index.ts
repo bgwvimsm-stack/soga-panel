@@ -9,7 +9,7 @@ import { createAdminTrafficRouter } from "./admin-traffic";
 import { createAdminRebateRouter } from "./admin-rebate";
 import { createAdminSharedIdRouter } from "./admin-sharedid";
 import { createAdminExportRouter } from "./admin-export";
-import { generateRandomString, generateUUID } from "../../utils/crypto";
+import { generateBase64Random, generateRandomString, generateUUID } from "../../utils/crypto";
 import { getSchedulerStatus } from "../../scheduler";
 import { ensureNumber, ensureString, getChanges, toRunResult } from "../../utils/d1";
 import { fixMoneyPrecision } from "../../utils/money";
@@ -168,7 +168,7 @@ export function createAdminRouter(ctx: AppContext) {
     let count = 0;
     for (const row of users.results || []) {
       const uuid = generateUUID();
-      const passwd = generateRandomString(16);
+      const passwd = generateBase64Random(32);
       await ctx.db
         .prepare(
           `
@@ -723,7 +723,7 @@ export function createAdminRouter(ctx: AppContext) {
     if (!email || !username || !password) return errorResponse(res, "缺少必要参数", 400);
     const hash = require("../../utils/crypto").hashPassword(password);
     const uuid = require("../../utils/crypto").generateUUID();
-    const passwd = require("../../utils/crypto").generateRandomString(12);
+    const passwd = require("../../utils/crypto").generateBase64Random(32);
     const token = require("../../utils/crypto").generateRandomString(32);
     await ctx.dbService.createUser({
       email,

@@ -1,6 +1,7 @@
 import { CacheService } from "./cache";
 import { DatabaseService } from "./database";
 import {
+  generateBase64Random,
   generateRandomString,
   generateUUID,
   hashPassword,
@@ -74,7 +75,8 @@ export class AuthService {
 
     const passwordHash = hashPassword(password);
     const uuid = generateUUID();
-    const passwd = generateRandomString(12);
+    // 订阅/节点密码：需要兼容 SS2022 的 Base64 密钥格式（等价 openssl rand -base64 32）
+    const passwd = generateBase64Random(32);
     const token = generateRandomString(32);
 
     const configMap = await this.db.listSystemConfigsMap();

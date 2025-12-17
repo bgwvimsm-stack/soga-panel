@@ -132,7 +132,8 @@ function generateTrojanLink(node, config, user) {
 
   const queryString = params.toString();
   const host = formatHostForUrl(node.server);
-  const url = `trojan://${user.passwd}@${host}:${node.server_port}`;
+  const password = encodeURIComponent(String(user.passwd ?? ""));
+  const url = `trojan://${password}@${host}:${node.server_port}`;
 
   return queryString
     ? `${url}?${queryString}#${encodeURIComponent(node.name)}`
