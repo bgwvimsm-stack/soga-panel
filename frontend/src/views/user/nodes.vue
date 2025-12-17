@@ -583,17 +583,20 @@ const nodeConfigJson = computed(() => {
       case 'ssr':
       case 'shadowsocksr':
         const ssrCipher = nodeConfig.method || nodeConfig.cipher || "aes-256-cfb";
+        const obfsName = (nodeConfig.obfs || "").toLowerCase();
+        const needObfsParam = ["http_simple", "http_post", "tls1.2_ticket_auth", "simple_obfs_http", "simple_obfs_tls"].includes(obfsName);
         const ssrConfig: Record<string, any> = {
           server,
           port: finalPort,
           type: "ssr",
           cipher: ssrCipher,
-          method: ssrCipher,
           password: nodeConfig.password || userStore.user?.passwd || "",
           protocol: nodeConfig.protocol || "origin",
           "protocol-param": userStore.user?.passwd || "",
           obfs: nodeConfig.obfs || "plain",
-          "obfs-param": tlsHost || nodeConfig.obfs_param || nodeConfig.obfsparam || "",
+          ...(needObfsParam
+            ? { "obfs-param": tlsHost || nodeConfig.obfs_param || nodeConfig.obfsparam || "" }
+            : {}),
           remarks: selectedNode.value.name
         };
 
