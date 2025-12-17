@@ -105,7 +105,7 @@ export function startSchedulers(db: DatabaseService, cache: CacheService, env: A
         lastDurationMs: null
       });
       try {
-        const expired = await db.getExpiredLevelUsers();
+        const expired = await db.getExpiredLevelUsers(new Date());
         const ids = expired.map((u: any) => u.id);
         await db.resetExpiredUsersLevel(ids);
         await db.logLevelResets(

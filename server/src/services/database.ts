@@ -2248,7 +2248,11 @@ export class DatabaseService {
       .run();
   }
 
-  async getExpiredLevelUsers() {
+  async getExpiredLevelUsers(now: Date = new Date()) {
+    // 使用 UTC+8 时间对齐业务语义，避免服务器/数据库时区差异导致延迟
+    const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const nowStr = utc8.toISOString().slice(0, 19).replace("T", " "); // yyyy-MM-dd HH:mm:ss
+
     const result = await this.db
       .prepare(
         `
@@ -2257,11 +2261,12 @@ export class DatabaseService {
                transfer_total, transfer_enable
         FROM users 
         WHERE class_expire_time IS NOT NULL 
-          AND class_expire_time < CURRENT_TIMESTAMP
+          AND class_expire_time <= ?
           AND class > 0
           AND status = 1
       `
       )
+      .bind(nowStr)
       .all();
     return result.results || [];
   }
