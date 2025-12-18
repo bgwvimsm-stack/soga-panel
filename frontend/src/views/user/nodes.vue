@@ -585,6 +585,9 @@ const nodeConfigJson = computed(() => {
         const ssrCipher = nodeConfig.method || nodeConfig.cipher || "aes-256-cfb";
         const obfsName = (nodeConfig.obfs || "").toLowerCase();
         const needObfsParam = ["http_simple", "http_post", "tls1.2_ticket_auth", "simple_obfs_http", "simple_obfs_tls"].includes(obfsName);
+        const protocolParam = userStore.user?.id
+          ? `${userStore.user.id}:${userStore.user?.passwd || ""}`
+          : userStore.user?.passwd || "";
         const ssrConfig: Record<string, any> = {
           server,
           port: finalPort,
@@ -592,7 +595,7 @@ const nodeConfigJson = computed(() => {
           cipher: ssrCipher,
           password: nodeConfig.password || userStore.user?.passwd || "",
           protocol: nodeConfig.protocol || "origin",
-          "protocol-param": userStore.user?.passwd || "",
+          "protocol-param": protocolParam,
           obfs: nodeConfig.obfs || "plain",
           ...(needObfsParam
             ? { "obfs-param": tlsHost || nodeConfig.obfs_param || nodeConfig.obfsparam || "" }

@@ -37,6 +37,14 @@ type BarkUser = {
   class: number;
 };
 
+type ExpiredLevelUserRow = {
+  id: number;
+  email: string;
+  username: string;
+  class: number;
+  class_expire_time: string | null;
+};
+
 const schedulerState: SchedulerState = {
   startedAt: null,
   timezone: "Asia/Shanghai",
@@ -105,13 +113,62 @@ export function startSchedulers(db: DatabaseService, cache: CacheService, env: A
         lastDurationMs: null
       });
       try {
-        const expired = await db.getExpiredLevelUsers();
-        const ids = expired.map((u: any) => u.id);
-        await db.resetExpiredUsersLevel(ids);
-        await db.logLevelResets(
-          await Promise.all(ids.map((id: number) => db.resetUserLevel(id)))
-        );
-        console.log("[scheduler] user expiration check done", ids.length);
+        // 数据库时区由部署侧校准为 UTC+8，这里直接使用数据库时间判断（对齐 Worker 版 scheduler.checkExpiredUsers）
+
+        // 1) 账号到期：禁用用户
+        const expiredAccountResult = await db.db
+          .prepare(
+            `
+            SELECT id, email, username, expire_time
+            FROM users
+            WHERE expire_time IS NOT NULL
+              AND expire_time <= CURRENT_TIMESTAMP
+              AND status = 1
+          `
+          )
+          .all<{ id: number; email: string; username: string; expire_time: string | null }>();
+        const expiredAccounts = expiredAccountResult.results ?? [];
+
+        if (expiredAccounts.length) {
+          for (const user of expiredAccounts) {
+            await db.db
+              .prepare(
+                `
+                UPDATE users
+                SET status = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+              `
+              )
+              .bind(user.id)
+              .run();
+            await cache.deleteByPrefix(`user_${user.id}_`);
+          }
+        }
+
+        // 2) 等级到期：重置等级与流量/配额
+        const expiredLevels = (await db.getExpiredLevelUsers(false)) as ExpiredLevelUserRow[];
+        const resetResults = [];
+        for (const user of expiredLevels) {
+          const result = await db.resetUserLevel(user.id, {
+            email: user.email,
+            username: user.username,
+            expiredLevel: user.class,
+            expireTime: user.class_expire_time
+          });
+          resetResults.push(result);
+          if (result.success) {
+            await cache.deleteByPrefix(`user_${user.id}_`);
+          }
+        }
+
+        if (resetResults.length) {
+          await db.logLevelResets(resetResults);
+        }
+
+        console.log("[scheduler] user expiration check done", {
+          expired_accounts: expiredAccounts.length,
+          expired_levels: expiredLevels.length
+        });
         updateJobStatus("userExpirationCheck", {
           lastResult: "success",
           lastDurationMs: Date.now() - started

@@ -6,11 +6,6 @@ on:
     paths:
       - "worker/**"
       - ".github/workflows/backend_deploy.yaml"
-  workflow_run:
-    workflows:
-      - Upstream Sync
-    types:
-      - completed
 
 env:
   CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -19,13 +14,10 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

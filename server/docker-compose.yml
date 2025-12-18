@@ -31,6 +31,8 @@ services:
     volumes:
       - ./data/redis:/data
     command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      TZ: Asia/Shanghai
 
   phpmyadmin:
     image: phpmyadmin:latest
@@ -40,6 +42,7 @@ services:
       PMA_USER: soga
       PMA_PASSWORD: changeme
       PMA_ARBITRARY: "1"
+      TZ: Asia/Shanghai
     ports:
       - "8080:80"
     depends_on:
@@ -57,6 +60,7 @@ services:
     environment:
       DB_HOST: mariadb
       REDIS_HOST: redis
+      TZ: Asia/Shanghai
     depends_on:
       - mariadb
       - redis

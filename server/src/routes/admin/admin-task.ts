@@ -33,7 +33,7 @@ export function createAdminTaskRouter(ctx: AppContext) {
       .prepare(
         `
         UPDATE users 
-        SET upload_today = 0, download_today = 0, transfer_today = 0, updated_at = CURRENT_TIMESTAMP
+        SET upload_today = 0, download_today = 0, updated_at = CURRENT_TIMESTAMP
         WHERE id IN (${ids.map(() => "?").join(",")})
       `
       )
