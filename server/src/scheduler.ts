@@ -37,6 +37,14 @@ type BarkUser = {
   class: number;
 };
 
+type ExpiredLevelUserRow = {
+  id: number;
+  email: string;
+  username: string;
+  class: number;
+  class_expire_time: string | null;
+};
+
 const schedulerState: SchedulerState = {
   startedAt: null,
   timezone: "Asia/Shanghai",
@@ -105,13 +113,34 @@ export function startSchedulers(db: DatabaseService, cache: CacheService, env: A
         lastDurationMs: null
       });
       try {
-        const expired = await db.getExpiredLevelUsers(true);
-        const ids = expired.map((u: any) => u.id);
-        await db.resetExpiredUsersLevel(ids);
-        await db.logLevelResets(
-          await Promise.all(ids.map((id: number) => db.resetUserLevel(id)))
-        );
-        console.log("[scheduler] user expiration check done", ids.length);
+        // 数据库时区由部署侧校准为 UTC+8，这里直接使用数据库时间判断
+        const expiredUsers = (await db.getExpiredLevelUsers(false)) as ExpiredLevelUserRow[];
+        if (!expiredUsers.length) {
+          console.log("[scheduler] user expiration check done", 0);
+          updateJobStatus("userExpirationCheck", {
+            lastResult: "success",
+            lastDurationMs: Date.now() - started
+          });
+          return;
+        }
+
+        const resetResults = [];
+        for (const user of expiredUsers) {
+          const result = await db.resetUserLevel(user.id, {
+            email: user.email,
+            username: user.username,
+            expiredLevel: user.class,
+            expireTime: user.class_expire_time
+          });
+          resetResults.push(result);
+
+          if (result.success) {
+            await cache.deleteByPrefix(`user_${user.id}_`);
+          }
+        }
+
+        await db.logLevelResets(resetResults);
+        console.log("[scheduler] user expiration check done", expiredUsers.length);
         updateJobStatus("userExpirationCheck", {
           lastResult: "success",
           lastDurationMs: Date.now() - started

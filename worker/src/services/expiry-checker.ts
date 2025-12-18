@@ -126,6 +126,12 @@ export class ExpiryCheckerService {
         UPDATE users 
         SET class = 0, 
             class_expire_time = NULL,
+            transfer_enable = 0,
+            transfer_total = 0,
+            upload_today = 0,
+            download_today = 0,
+            upload_traffic = 0,
+            download_traffic = 0,
             updated_at = datetime('now', '+8 hours')
         WHERE id = ?
       `)
