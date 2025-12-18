@@ -1110,9 +1110,11 @@ export class DatabaseService {
     const users = await this.db.db
       .prepare(
         `
-        SELECT id, email, username, upload_today, download_today, transfer_today, transfer_total, transfer_enable
+        SELECT id, email, username, upload_today, download_today,
+               (upload_today + download_today) AS transfer_today,
+               transfer_total, transfer_enable
         FROM users
-        WHERE transfer_today > 0 OR upload_today > 0 OR download_today > 0
+        WHERE upload_today > 0 OR download_today > 0
       `
       )
       .all();
@@ -2256,7 +2258,7 @@ export class DatabaseService {
         .prepare(
           `
           SELECT id, email, username, class, class_expire_time,
-                 upload_traffic, download_traffic, transfer_today, 
+                 upload_traffic, download_traffic,
                  transfer_total, transfer_enable
           FROM users 
           WHERE class_expire_time IS NOT NULL 
@@ -2274,7 +2276,7 @@ export class DatabaseService {
       .prepare(
         `
         SELECT id, email, username, class, class_expire_time,
-               upload_traffic, download_traffic, transfer_today, 
+               upload_traffic, download_traffic,
                transfer_total, transfer_enable
         FROM users 
         WHERE class_expire_time IS NOT NULL 
@@ -2310,7 +2312,6 @@ export class DatabaseService {
             download_traffic = 0,
             upload_today = 0,
             download_today = 0,
-            transfer_today = 0,
             transfer_total = 0,
             transfer_enable = 0,
             updated_at = CURRENT_TIMESTAMP
@@ -2327,7 +2328,7 @@ export class DatabaseService {
         .prepare(
           `
           SELECT class, upload_traffic, download_traffic, 
-                 transfer_today, transfer_total, transfer_enable
+                 transfer_total, transfer_enable
           FROM users WHERE id = ?
         `
         )
@@ -2345,7 +2346,6 @@ export class DatabaseService {
                 download_traffic = 0,
                 upload_today = 0,
                 download_today = 0,
-                transfer_today = 0,
                 transfer_total = 0,
                 transfer_enable = 0,
                 updated_at = CURRENT_TIMESTAMP
