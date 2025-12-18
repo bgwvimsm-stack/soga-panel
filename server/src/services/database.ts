@@ -127,6 +127,7 @@ export class DatabaseService {
         WHERE u.id = ? 
           AND u.status = 1
           AND (u.expire_time IS NULL OR u.expire_time > CURRENT_TIMESTAMP)
+          AND (u.class_expire_time IS NULL OR u.class_expire_time > CURRENT_TIMESTAMP)
           AND n.status = 1
           AND n.node_class <= u.class
         ORDER BY n.node_class ASC, n.id ASC
@@ -147,6 +148,7 @@ export class DatabaseService {
         WHERE n.id = ? 
           AND u.status = 1 
           AND (u.expire_time IS NULL OR u.expire_time > CURRENT_TIMESTAMP)
+          AND (u.class_expire_time IS NULL OR u.class_expire_time > CURRENT_TIMESTAMP)
           AND u.transfer_enable > u.transfer_total
           AND u.class >= n.node_class
       `
@@ -1108,9 +1110,11 @@ export class DatabaseService {
     const users = await this.db.db
       .prepare(
         `
-        SELECT id, email, username, upload_today, download_today, transfer_today, transfer_total, transfer_enable
+        SELECT id, email, username, upload_today, download_today,
+               (upload_today + download_today) AS transfer_today,
+               transfer_total, transfer_enable
         FROM users
-        WHERE transfer_today > 0 OR upload_today > 0 OR download_today > 0
+        WHERE upload_today > 0 OR download_today > 0
       `
       )
       .all();
@@ -2248,22 +2252,46 @@ export class DatabaseService {
       .run();
   }
 
-  async getExpiredLevelUsers() {
-    const result = await this.db
+  async getExpiredLevelUsers(useLocalTime = false) {
+    if (!useLocalTime) {
+      const result = await this.db
+        .prepare(
+          `
+          SELECT id, email, username, class, class_expire_time,
+                 upload_traffic, download_traffic,
+                 transfer_total, transfer_enable
+          FROM users 
+          WHERE class_expire_time IS NOT NULL 
+            AND class_expire_time <= CURRENT_TIMESTAMP
+            AND class > 0
+            AND status = 1
+        `
+        )
+        .all();
+      return result.results || [];
+    }
+
+    // 本地时间判断（JS 时区），避免数据库时区配置与业务期望不一致
+    const rows = await this.db
       .prepare(
         `
         SELECT id, email, username, class, class_expire_time,
-               upload_traffic, download_traffic, transfer_today, 
+               upload_traffic, download_traffic,
                transfer_total, transfer_enable
         FROM users 
         WHERE class_expire_time IS NOT NULL 
-          AND class_expire_time < CURRENT_TIMESTAMP
           AND class > 0
           AND status = 1
       `
       )
-      .all();
-    return result.results || [];
+      .all<any>();
+
+    const now = Date.now();
+    return (rows.results || []).filter((row) => {
+      if (!row?.class_expire_time) return false;
+      const ts = new Date(row.class_expire_time).getTime();
+      return Number.isFinite(ts) && ts <= now;
+    });
   }
 
   async resetExpiredUsersLevel(userIds: Array<number | string>) {
@@ -2284,7 +2312,6 @@ export class DatabaseService {
             download_traffic = 0,
             upload_today = 0,
             download_today = 0,
-            transfer_today = 0,
             transfer_total = 0,
             transfer_enable = 0,
             updated_at = CURRENT_TIMESTAMP
@@ -2301,7 +2328,7 @@ export class DatabaseService {
         .prepare(
           `
           SELECT class, upload_traffic, download_traffic, 
-                 transfer_today, transfer_total, transfer_enable
+                 transfer_total, transfer_enable
           FROM users WHERE id = ?
         `
         )
@@ -2319,7 +2346,6 @@ export class DatabaseService {
                 download_traffic = 0,
                 upload_today = 0,
                 download_today = 0,
-                transfer_today = 0,
                 transfer_total = 0,
                 transfer_enable = 0,
                 updated_at = CURRENT_TIMESTAMP

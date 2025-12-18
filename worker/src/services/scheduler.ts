@@ -421,7 +421,8 @@ export class SchedulerService {
         FROM users 
         WHERE class_expire_time IS NOT NULL 
         AND class_expire_time <= datetime('now', '+8 hours')
-        AND class > 1
+        AND class > 0
+        AND status = 1
       `).all();
       const expiredLevelUsers = expiredLevelUsersResult.results || [];
       
@@ -429,17 +430,23 @@ export class SchedulerService {
       if (expiredLevelUsers && expiredLevelUsers.length > 0) {
         for (const user of expiredLevelUsers) {
           try {
-            // 重置用户等级为默认等级1
+            // 等级到期：重置等级与流量/配额
             await this.db.db.prepare(`
               UPDATE users 
-              SET class = 1,
+              SET class = 0,
                   class_expire_time = NULL,
+                  transfer_enable = 0,
+                  transfer_total = 0,
+                  upload_today = 0,
+                  download_today = 0,
+                  upload_traffic = 0,
+                  download_traffic = 0,
                   updated_at = datetime('now', '+8 hours')
               WHERE id = ?
             `).bind(user.id).run();
             
             resetLevelCount++;
-            console.log(`用户 ${user.username} 等级已从 ${user.class} 重置为 1`);
+            console.log(`用户 ${user.username} 等级已从 ${user.class} 重置为 0，且流量/配额已清零`);
           } catch (error) {
             console.error(`重置用户 ${user.username} 等级失败:`, error);
           }
