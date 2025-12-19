@@ -581,7 +581,7 @@ export function createUserRouter(ctx: AppContext) {
   router.get("/online-ips", async (req: Request, res: Response) => {
     const user = (req as any).user;
     const limit = Number(req.query.limit ?? 50) || 50;
-    const rows = await ctx.dbService.listOnlineIps(Number(user.id), Math.min(limit, 200));
+    const rows = await ctx.dbService.listOnlineIps(Number(user.id), Math.min(limit, 200), 5);
     return successResponse(res, rows);
   });
 
@@ -589,7 +589,8 @@ export function createUserRouter(ctx: AppContext) {
   router.get("/online-ips-detail", async (req: Request, res: Response) => {
     const user = (req as any).user;
     const limit = Math.min(Number(req.query.limit ?? 50) || 50, 200);
-    const rows = await ctx.dbService.listOnlineIps(Number(user.id), limit);
+    const userId = Number(user.id);
+    const rows = await ctx.dbService.listOnlineIps(userId, limit, 5);
     const data =
       rows?.map((row: any) => ({
         id: row.id,
@@ -598,13 +599,24 @@ export function createUserRouter(ctx: AppContext) {
         ip: row.ip,
         last_seen: row.last_seen
       })) || [];
-    return successResponse(res, data);
+    return successResponse(res, {
+      data,
+      count: data.length,
+      user_id: userId,
+      check_time: new Date().toISOString()
+    });
   });
 
   router.get("/online-devices", async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const rows = await ctx.dbService.listOnlineDevices(Number(user.id));
-    return successResponse(res, rows);
+    const userId = Number(user.id);
+    const rows = await ctx.dbService.listOnlineDevices(userId, 2);
+    return successResponse(res, {
+      count: rows.length,
+      user_id: userId,
+      check_time: new Date().toISOString(),
+      devices: rows
+    });
   });
 
   router.get("/bark-settings", async (req: Request, res: Response) => {

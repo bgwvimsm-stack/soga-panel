@@ -410,7 +410,13 @@ export class DatabaseService {
     return result.results || [];
   }
 
-  async listOnlineIps(userId: number, limit = 50) {
+  async listOnlineIps(userId: number, limit = 50, recentMinutes = 5) {
+    const safeLimit = Math.max(1, Math.min(limit, 200));
+    const minutes =
+      Number.isFinite(recentMinutes) && recentMinutes
+        ? Math.min(Math.max(Math.floor(Number(recentMinutes)), 1), 24 * 60)
+        : 5;
+
     const result = await this.db.db
       .prepare(
         `
@@ -418,11 +424,12 @@ export class DatabaseService {
         FROM online_ips oi
         LEFT JOIN nodes n ON oi.node_id = n.id
         WHERE oi.user_id = ?
+          AND oi.last_seen >= DATE_SUB(NOW(), INTERVAL ${minutes} MINUTE)
         ORDER BY oi.last_seen DESC
         LIMIT ?
       `
       )
-      .bind(userId, limit)
+      .bind(userId, safeLimit)
       .all();
     return result.results || [];
   }
@@ -749,13 +756,23 @@ export class DatabaseService {
       .run();
   }
 
-  async listOnlineDevices(userId: number) {
+  async listOnlineDevices(userId: number, recentMinutes = 2) {
+    const minutes =
+      Number.isFinite(recentMinutes) && recentMinutes
+        ? Math.min(Math.max(Math.floor(Number(recentMinutes)), 1), 24 * 60)
+        : 2;
+
     const result = await this.db.db
       .prepare(
         `
-        SELECT node_id, ip, last_seen 
+        SELECT 
+          ip,
+          MIN(node_id) as node_id,
+          MAX(last_seen) as last_seen
         FROM online_ips 
         WHERE user_id = ?
+          AND last_seen >= DATE_SUB(NOW(), INTERVAL ${minutes} MINUTE)
+        GROUP BY ip
         ORDER BY last_seen DESC
       `
       )
