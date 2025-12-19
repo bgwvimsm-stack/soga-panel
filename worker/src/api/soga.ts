@@ -191,7 +191,7 @@ export class SogaAPI {
         };
 
         // 根据节点类型返回不同字段
-        if (nodeType === "v2ray" || nodeType === "vless") {
+        if (nodeType === "v2ray" || nodeType === "vmess" || nodeType === "vless") {
           return { ...baseUser, uuid: user.uuid };
         } else if (nodeType === "ss" || nodeType === "shadowsocks") {
           const password = this.buildSSPassword(

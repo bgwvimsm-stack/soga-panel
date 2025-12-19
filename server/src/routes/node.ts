@@ -49,7 +49,7 @@ export function createNodeRouter(ctx: AppContext) {
         tcp_limit: u.tcp_limit || 0
       };
 
-      if (auth.nodeType === "v2ray" || auth.nodeType === "vless") {
+      if (auth.nodeType === "v2ray" || auth.nodeType === "vmess" || auth.nodeType === "vless") {
         return { ...base, uuid: u.uuid };
       } else if (auth.nodeType === "ss" || auth.nodeType === "shadowsocks") {
         const password = buildSSPassword(
