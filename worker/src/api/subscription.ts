@@ -7,13 +7,14 @@ import {
   generateV2rayConfig,
   generateClashConfig,
   generateQuantumultXConfig,
+  generateSingboxConfig,
   generateShadowrocketConfig,
   generateSurgeConfig,
 } from "../utils/subscription";
 import { ensureNumber } from "../utils/d1";
 import { createSystemConfigManager, SystemConfigManager } from "../utils/systemConfig";
 
-type SubscriptionType = "v2ray" | "clash" | "quantumultx" | "shadowrocket" | "surge";
+type SubscriptionType = "v2ray" | "clash" | "quantumultx" | "singbox" | "shadowrocket" | "surge";
 
 type SubscriptionUserRow = {
   id: number;
@@ -33,6 +34,7 @@ const GENERATORS: Record<SubscriptionType, SubscriptionGenerator> = {
   v2ray: generateV2rayConfig,
   clash: generateClashConfig,
   quantumultx: generateQuantumultXConfig,
+  singbox: generateSingboxConfig,
   shadowrocket: generateShadowrocketConfig,
   surge: generateSurgeConfig,
 };
@@ -41,6 +43,7 @@ const CONTENT_TYPES: Record<SubscriptionType, string> = {
   v2ray: "text/plain",
   clash: "text/yaml",
   quantumultx: "text/plain",
+  singbox: "application/json",
   shadowrocket: "text/plain",
   surge: "text/plain",
 };
@@ -49,6 +52,7 @@ const FILE_EXTENSIONS: Record<SubscriptionType, string> = {
   v2ray: "txt",
   clash: "yaml",
   quantumultx: "txt",
+  singbox: "json",
   shadowrocket: "txt",
   surge: "conf",
 };
@@ -109,6 +113,11 @@ export class SubscriptionAPI {
   // Quantumult X订阅
   async getQuantumultXSubscription(request) {
     return this._getSubscriptionByType(request, "quantumultx");
+  }
+
+  // Sing-box订阅
+  async getSingboxSubscription(request) {
+    return this._getSubscriptionByType(request, "singbox");
   }
 
   // Shadowrocket订阅
