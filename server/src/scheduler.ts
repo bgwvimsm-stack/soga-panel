@@ -393,25 +393,13 @@ async function sendDailyBarkNotifications(db: DatabaseService, env: AppEnv) {
 
     console.log("[scheduler] Bark users:", users.length);
 
-    const now = new Date();
-    const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-    const timeStr = utc8.toLocaleString("zh-CN", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit"
-    });
-
     let sentCount = 0;
     let failedCount = 0;
     const batchSize = 5;
 
     for (let i = 0; i < users.length; i += batchSize) {
       const batch = users.slice(i, i + batchSize);
-      const promises = batch.map((user) =>
-        sendBarkNotification(db, user, timeStr, siteName, siteUrl)
-      );
+      const promises = batch.map((user) => sendBarkNotification(db, user, siteName, siteUrl));
       const results = await Promise.allSettled(promises);
 
       results.forEach((result, index) => {
@@ -464,7 +452,6 @@ async function sendDailyBarkNotifications(db: DatabaseService, env: AppEnv) {
 async function sendBarkNotification(
   db: DatabaseService,
   user: BarkUser,
-  timeStr: string,
   siteName: string,
   siteUrl: string
 ) {
@@ -494,9 +481,9 @@ async function sendBarkNotification(
     const title = "每日流量使用情况";
     let body: string;
     if (todayUsageBytes > 0) {
-      body = `${user.username}，您好！\n\n您今日已用流量为 ${todayTotalTraffic}\n剩余流量为 ${remainTraffic}\n\n您的等级到期时间为 ${classExpireText}\n\n发送时间：${timeStr}\n祝您使用愉快！`;
+      body = `${user.username}，您好！\n\n您今日已用流量为 ${todayTotalTraffic}\n剩余流量为 ${remainTraffic}\n\n您的等级到期时间为 ${classExpireText}\n\n祝您使用愉快！`;
     } else {
-      body = `${user.username}，您好！\n\n今日您未使用流量\n剩余流量为 ${remainTraffic}\n\n您的等级到期时间为 ${classExpireText}\n\n发送时间：${timeStr}\n祝您使用愉快！`;
+      body = `${user.username}，您好！\n\n今日您未使用流量\n剩余流量为 ${remainTraffic}\n\n您的等级到期时间为 ${classExpireText}\n\n祝您使用愉快！`;
     }
 
     let endpoint = "https://api.day.app";
