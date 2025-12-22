@@ -1,5 +1,6 @@
 import { ensureNumber, ensureString } from "./d1";
 import { buildClashTemplate } from "./templates/clashTemplate";
+import { buildSingboxTemplate } from "./templates/singboxTemplate";
 import { buildSurgeTemplate } from "./templates/surgeTemplate";
 
 // Node 版没有浏览器的 btoa/atob，这里做一个简单兼容
@@ -113,6 +114,11 @@ function formatHostForUrl(host: string) {
   return host.includes(":") && !host.startsWith("[") && !host.endsWith("]")
     ? `[${host}]`
     : host;
+}
+
+function normalizePath(path: unknown): string {
+  if (!path || typeof path !== "string") return "/";
+  return path.startsWith("/") ? path : `/${path}`;
 }
 
 function generateVmessLink(node: any, config: any, user: SubscriptionUser) {
@@ -455,6 +461,263 @@ export function generateClashConfig(nodes: SubscriptionNode[], user: Subscriptio
 
   const clashConfig = buildClashTemplate(proxyNames, proxies);
   return dumpYaml(clashConfig);
+}
+
+// ---------------- Sing-box 配置（使用模板） ----------------
+
+type SingboxOutbound = Record<string, unknown>;
+
+const SINGBOX_GROUP_MATCHERS: Array<{ tag: string; patterns: RegExp[] }> = [
+  { tag: "🇭🇰 香港节点", patterns: [/香港/, /hong\s*kong/i, /\bHK\b/i, /🇭🇰/] },
+  { tag: "🇨🇳 台湾节点", patterns: [/台湾/, /台北/, /taiwan/i, /taipei/i, /\bTW\b/i, /🇹🇼/] },
+  { tag: "🇸🇬 狮城节点", patterns: [/狮城/, /新加坡/, /singapore/i, /\bSG\b/i, /🇸🇬/] },
+  { tag: "🇯🇵 日本节点", patterns: [/日本/, /东京/, /大阪/, /japan/i, /\bJP\b/i, /🇯🇵/] },
+  { tag: "🇺🇲 美国节点", patterns: [/美国/, /洛杉矶/, /纽约/, /硅谷/, /united\s*states/i, /\bUSA?\b/i, /🇺🇸|🇺🇲/] },
+  { tag: "🇰🇷 韩国节点", patterns: [/韩国/, /首尔/, /korea/i, /\bKR\b/i, /🇰🇷/] },
+  { tag: "🎥 奈飞节点", patterns: [/奈飞/, /netflix/i, /\bNF\b/i] }
+];
+
+function normalizeAlpn(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    const list = value
+      .map((item) => ensureString(item).trim())
+      .filter(Boolean);
+    return list.length ? list : undefined;
+  }
+  if (typeof value === "string") {
+    const list = value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return list.length ? list : undefined;
+  }
+  return undefined;
+}
+
+function resolveFirstString(value: unknown): string {
+  if (Array.isArray(value) && value.length > 0) {
+    return ensureString(value[0], "");
+  }
+  if (typeof value === "string") return value;
+  return "";
+}
+
+function resolveOutboundTag(node: SubscriptionNode, usedTags: Set<string>): string {
+  const fallback = `${ensureString(node.type, "node")}-${ensureString(node.id, "0")}`;
+  const rawName = ensureString(node.name, fallback).trim();
+  const base = rawName || fallback;
+  let tag = base;
+  let index = 2;
+  while (usedTags.has(tag)) {
+    tag = `${base}-${index}`;
+    index += 1;
+  }
+  usedTags.add(tag);
+  return tag;
+}
+
+function resolveSni(config: any, tlsHost: string, server: string): string {
+  return ensureString(config.sni || tlsHost || server, "");
+}
+
+function buildSingboxTls(config: any, tlsHost: string, server: string, mode: "none" | "tls" | "reality") {
+  if (mode === "none") return null;
+  const tls: Record<string, unknown> = {
+    enabled: true,
+    server_name: resolveSni(config, tlsHost, server),
+    insecure: false
+  };
+  const alpn = normalizeAlpn(config.alpn);
+  if (alpn?.length) tls.alpn = alpn;
+
+  if (mode === "reality") {
+    const serverName = resolveFirstString(config.server_names) || tlsHost || server;
+    tls.server_name = serverName;
+    const utlsFingerprint = ensureString(config.fingerprint, "chrome");
+    tls.utls = { enabled: true, fingerprint: utlsFingerprint };
+    const reality: Record<string, unknown> = {
+      enabled: true,
+      public_key: ensureString(config.public_key, "")
+    };
+    const shortId = resolveFirstString(config.short_ids);
+    if (shortId) reality.short_id = shortId;
+    tls.reality = reality;
+  }
+
+  return tls;
+}
+
+function applySingboxTransport(outbound: Record<string, unknown>, config: any, server: string, tlsHost: string) {
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  if (streamType === "ws") {
+    const host = ensureString(config.server || tlsHost || server, "");
+    const transport: Record<string, unknown> = {
+      type: "ws",
+      path: normalizePath(config.path)
+    };
+    if (host) transport.headers = { Host: host };
+    outbound.transport = transport;
+  } else if (streamType === "grpc") {
+    outbound.transport = {
+      type: "grpc",
+      service_name: ensureString(config.service_name, "grpc")
+    };
+  }
+}
+
+function collectSingboxGroups(name: string, tag: string, groups: Record<string, string[]>) {
+  if (!name) return;
+  for (const matcher of SINGBOX_GROUP_MATCHERS) {
+    if (matcher.patterns.some((pattern) => pattern.test(name))) {
+      groups[matcher.tag].push(tag);
+    }
+  }
+}
+
+export function generateSingboxConfig(nodes: SubscriptionNode[], user: SubscriptionUser): string {
+  const nodeOutbounds: SingboxOutbound[] = [];
+  const nodeTags: string[] = [];
+  const usedTags = new Set<string>();
+  const groupMatches: Record<string, string[]> = {};
+
+  for (const matcher of SINGBOX_GROUP_MATCHERS) {
+    groupMatches[matcher.tag] = [];
+  }
+
+  for (const node of nodes) {
+    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const tag = resolveOutboundTag(node, usedTags);
+    const matchName = ensureString(node.name, tag);
+    let outbound: SingboxOutbound | null = null;
+
+    switch (node.type) {
+      case "ss":
+        outbound = {
+          type: "shadowsocks",
+          tag,
+          server,
+          server_port: port,
+          method: config.cipher || "aes-128-gcm",
+          password: buildSS2022Password(config, String(user.passwd || config.password || "")),
+          network: config.network || "tcp",
+          tcp_fast_open: false
+        };
+        break;
+
+      case "v2ray": {
+        const vmess: Record<string, unknown> = {
+          type: "vmess",
+          tag,
+          server,
+          server_port: port,
+          uuid: user.uuid,
+          alter_id: config.aid || 0,
+          security: config.security || "auto",
+          network: config.network || "tcp",
+          tcp_fast_open: false
+        };
+        const tlsMode = config.tls_type === "tls" ? "tls" : "none";
+        const tls = buildSingboxTls(config, tlsHost, server, tlsMode);
+        if (tls) vmess.tls = tls;
+        applySingboxTransport(vmess, config, server, tlsHost);
+        outbound = vmess;
+        break;
+      }
+
+      case "vless": {
+        const vless: Record<string, unknown> = {
+          type: "vless",
+          tag,
+          server,
+          server_port: port,
+          uuid: user.uuid,
+          network: config.network || "tcp",
+          tcp_fast_open: false
+        };
+        if (config.flow) vless.flow = config.flow;
+        const tlsMode = config.tls_type === "reality" ? "reality" : config.tls_type === "tls" ? "tls" : "none";
+        const tls = buildSingboxTls(config, tlsHost, server, tlsMode);
+        if (tls) vless.tls = tls;
+        applySingboxTransport(vless, config, server, tlsHost);
+        outbound = vless;
+        break;
+      }
+
+      case "trojan": {
+        const trojan: Record<string, unknown> = {
+          type: "trojan",
+          tag,
+          server,
+          server_port: port,
+          password: ensureString(user.passwd, ""),
+          network: config.network || "tcp",
+          tcp_fast_open: false
+        };
+        const tls = buildSingboxTls(config, tlsHost, server, "tls");
+        if (tls) trojan.tls = tls;
+        applySingboxTransport(trojan, config, server, tlsHost);
+        outbound = trojan;
+        break;
+      }
+
+      case "hysteria": {
+        const hysteria: Record<string, unknown> = {
+          type: "hysteria2",
+          tag,
+          server,
+          server_port: port,
+          password: ensureString(user.passwd, ""),
+          up_mbps: ensureNumber(config.up_mbps, 100),
+          down_mbps: ensureNumber(config.down_mbps, 100),
+          network: config.network || "tcp",
+          tcp_fast_open: false
+        };
+        const tls = buildSingboxTls(config, tlsHost, server, "tls");
+        if (tls) hysteria.tls = tls;
+        if (config.obfs && config.obfs !== "plain") {
+          const obfs: Record<string, unknown> = { type: config.obfs };
+          if (config.obfs_password) obfs.password = config.obfs_password;
+          hysteria.obfs = obfs;
+        }
+        outbound = hysteria;
+        break;
+      }
+
+      case "anytls": {
+        const anytls: Record<string, unknown> = {
+          type: "anytls",
+          tag,
+          server,
+          server_port: port,
+          password: ensureString(user.passwd || config.password, ""),
+          network: config.network || "tcp",
+          tcp_fast_open: false
+        };
+        const tls = buildSingboxTls(config, tlsHost, server, "tls");
+        if (tls) anytls.tls = tls;
+        outbound = anytls;
+        break;
+      }
+    }
+
+    if (outbound) {
+      nodeOutbounds.push(outbound);
+      nodeTags.push(tag);
+      collectSingboxGroups(matchName, tag, groupMatches);
+    }
+  }
+
+  const groupOverrides: Record<string, string[]> = {
+    "🚀 手动切换": nodeTags,
+    "GLOBAL": ["DIRECT", ...nodeTags]
+  };
+
+  for (const [tag, matches] of Object.entries(groupMatches)) {
+    groupOverrides[tag] = matches.length ? [...matches, "DIRECT"] : ["DIRECT"];
+  }
+
+  const singboxConfig = buildSingboxTemplate(nodeOutbounds, groupOverrides);
+  return JSON.stringify(singboxConfig, null, 2);
 }
 
 // ---------------- QuantumultX / Shadowrocket / Surge ----------------

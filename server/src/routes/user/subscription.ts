@@ -4,6 +4,7 @@ import { errorResponse, successResponse } from "../../utils/response";
 import {
   generateClashConfig,
   generateQuantumultXConfig,
+  generateSingboxConfig,
   generateShadowrocketConfig,
   generateSurgeConfig,
   generateV2rayConfig,
@@ -16,6 +17,7 @@ const GENERATORS = {
   v2ray: generateV2rayConfig,
   clash: generateClashConfig,
   quantumultx: generateQuantumultXConfig,
+  singbox: generateSingboxConfig,
   shadowrocket: generateShadowrocketConfig,
   surge: generateSurgeConfig
 };
@@ -24,6 +26,7 @@ const CONTENT_TYPES = {
   v2ray: "text/plain",
   clash: "text/yaml",
   quantumultx: "text/plain",
+  singbox: "application/json",
   shadowrocket: "text/plain",
   surge: "text/plain"
 };
@@ -32,6 +35,7 @@ const FILE_EXTENSIONS = {
   v2ray: "txt",
   clash: "yaml",
   quantumultx: "txt",
+  singbox: "json",
   shadowrocket: "txt",
   surge: "conf"
 };
@@ -128,6 +132,7 @@ export function createSubscriptionRouter(ctx: AppContext) {
   router.get("/v2ray", (req, res) => handleSubscription(ctx, "v2ray", req, res));
   router.get("/clash", (req, res) => handleSubscription(ctx, "clash", req, res));
   router.get("/quantumultx", (req, res) => handleSubscription(ctx, "quantumultx", req, res));
+  router.get("/singbox", (req, res) => handleSubscription(ctx, "singbox", req, res));
   router.get("/shadowrocket", (req, res) => handleSubscription(ctx, "shadowrocket", req, res));
   router.get("/surge", (req, res) => handleSubscription(ctx, "surge", req, res));
 
