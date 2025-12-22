@@ -4,21 +4,15 @@
       <h2>订阅管理</h2>
       <p>管理和获取您的代理订阅链接</p>
     </div>
-    
+
     <!-- 用户状态警告 -->
-    <el-alert
-      v-if="userStore.isDisabledUser()"
-      title="账号已被禁用"
-      type="warning"
-      :closable="false"
-      show-icon
-      class="status-alert"
-    >
+    <el-alert v-if="userStore.isDisabledUser()" title="账号已被禁用" type="warning" :closable="false" show-icon
+      class="status-alert">
       <template #default>
         您的账号已被禁用，无法获取和使用订阅链接。如有疑问请联系管理员。
       </template>
     </el-alert>
-    
+
     <!-- 订阅状态概览 -->
     <div class="subscription-overview">
       <el-row :gutter="20" class="mobile-responsive-row">
@@ -30,7 +24,9 @@
                 <div class="stat-label">等级过期时间</div>
               </div>
               <div class="stat-icon active">
-                <el-icon><Clock /></el-icon>
+                <el-icon>
+                  <Clock />
+                </el-icon>
               </div>
             </div>
           </el-card>
@@ -43,7 +39,9 @@
                 <div class="stat-label">最后更新</div>
               </div>
               <div class="stat-icon update">
-                <el-icon><Clock /></el-icon>
+                <el-icon>
+                  <Clock />
+                </el-icon>
               </div>
             </div>
           </el-card>
@@ -56,44 +54,39 @@
                 <div class="stat-label">用户等级</div>
               </div>
               <div class="stat-icon level">
-                <el-icon><Star /></el-icon>
+                <el-icon>
+                  <Star />
+                </el-icon>
               </div>
             </div>
           </el-card>
         </el-col>
       </el-row>
     </div>
-    
+
     <!-- 订阅链接管理 -->
     <el-card class="subscription-card">
       <div class="card-header">
         <h3>订阅链接</h3>
         <div class="header-actions">
           <el-button @click="refreshToken" :loading="tokenRefreshing">
-            <el-icon><Refresh /></el-icon>
+            <el-icon>
+              <Refresh />
+            </el-icon>
             重置订阅信息
           </el-button>
         </div>
       </div>
-      
+
       <div class="subscription-content">
-        <el-alert
-          title="订阅说明"
-          type="info"
-          :closable="false"
-          show-icon
-        >
+        <el-alert title="订阅说明" type="info" :closable="false" show-icon>
           <template #default>
             <p>请将以下订阅链接复制到您的代理客户端中使用。订阅链接会根据您的权限自动更新可用节点。</p>
-</template>
+          </template>
         </el-alert>
-        
+
         <div class="subscription-list">
-          <div 
-            v-for="sub in subscriptionTypes" 
-            :key="sub.type"
-            class="subscription-item"
-          >
+          <div v-for="sub in subscriptionTypes" :key="sub.type" class="subscription-item">
             <div class="sub-info">
               <div class="sub-title">
                 <el-icon>
@@ -106,25 +99,25 @@
               </div>
               <div class="sub-description">{{ sub.description }}</div>
             </div>
-            
+
             <div class="sub-actions">
               <div class="sub-url">
-                <el-input
-                  :value="getSubscriptionUrl(sub.type)"
-                  readonly
-                  class="url-input"
-                >
+                <el-input :value="getSubscriptionUrl(sub.type)" readonly class="url-input">
                   <template #append>
                     <el-button @click="copyLink(sub.type, sub.name)">
-                      <el-icon><CopyDocument /></el-icon>
+                      <el-icon>
+                        <CopyDocument />
+                      </el-icon>
                     </el-button>
-</template>
+                  </template>
                 </el-input>
               </div>
-              
+
               <div class="sub-import">
                 <el-button @click="oneClickImport(sub.type, sub.name)">
-                  <el-icon><Link /></el-icon>
+                  <el-icon>
+                    <Link />
+                  </el-icon>
                   一键导入
                 </el-button>
               </div>
@@ -133,13 +126,13 @@
         </div>
       </div>
     </el-card>
-    
+
     <!-- 使用指南 -->
     <el-card class="guide-card">
       <div class="guide-header">
         <h3>使用指南</h3>
       </div>
-      
+
       <el-collapse v-model="activeGuides">
         <el-collapse-item name="clash" title="Clash 客户端">
           <div class="guide-content">
@@ -152,7 +145,7 @@
             <p><strong>推荐客户端：</strong>Clash for Windows、ClashX (macOS)、Clash for Android</p>
           </div>
         </el-collapse-item>
-        
+
         <el-collapse-item name="shadowrocket" title="Shadowrocket 客户端">
           <div class="guide-content">
             <ol>
@@ -164,7 +157,7 @@
             <p><strong>注意：</strong>仅适用于 iOS 平台的 Shadowrocket 客户端</p>
           </div>
         </el-collapse-item>
-        
+
         <el-collapse-item name="quantumultx" title="Quantumult X 客户端">
           <div class="guide-content">
             <ol>
@@ -176,7 +169,7 @@
             <p><strong>注意：</strong>仅适用于 iOS 平台的 Quantumult X</p>
           </div>
         </el-collapse-item>
-        
+
         <el-collapse-item name="surge" title="Surge 客户端">
           <div class="guide-content">
             <ol>
@@ -227,6 +220,13 @@ const subscriptionTypes = [
     recommended: true
   },
   {
+    type: 'singbox',
+    name: 'Singbox',
+    description: 'Singbox 客户端',
+    icon: markRaw(Platform),
+    recommended: false
+  },
+  {
     type: 'shadowrocket',
     name: 'Shadowrocket',
     description: '适用于 iOS 平台的 Shadowrocket 客户端',
@@ -253,16 +253,16 @@ const subscriptionTypes = [
 const formatClassExpireTime = () => {
   const classExpireTime = userStore.user?.class_expire_time;
   if (!classExpireTime) return '永久';
-  
+
   let date: Date;
   if (typeof classExpireTime === 'number') {
     date = new Date(classExpireTime * 1000);
   } else {
     date = new Date(classExpireTime);
   }
-  
+
   if (isNaN(date.getTime())) return '永久';
-  
+
   return date.toLocaleDateString('zh-CN', {
     year: 'numeric',
     month: '2-digit',
@@ -298,7 +298,7 @@ const copyLink = async (type: string, name: string) => {
     ElMessage.error('您的账号已被禁用，无法获取订阅链接');
     return;
   }
-  
+
   const url = getSubscriptionUrl(type);
   try {
     await navigator.clipboard.writeText(url);
@@ -316,10 +316,10 @@ const oneClickImport = async (type: string, name: string) => {
     ElMessage.error('您的账号已被禁用，无法获取订阅链接');
     return;
   }
-  
+
   const subscriptionUrl = getSubscriptionUrl(type);
   let schemeUrl = '';
-  
+
   switch (type) {
     case 'clash':
       schemeUrl = `clash://install-config?url=${encodeURIComponent(subscriptionUrl)}`;
@@ -337,7 +337,7 @@ const oneClickImport = async (type: string, name: string) => {
       ElMessage.error('不支持的订阅类型');
       return;
   }
-  
+
   try {
     window.location.href = schemeUrl;
     ElMessage.success(`正在启动 ${name} 客户端...`);
@@ -424,17 +424,17 @@ onMounted(async () => {
 
 .subscription-overview {
   margin-bottom: 20px;
-  
+
   .overview-card {
     :deep(.el-card__body) {
       padding: 20px;
     }
-    
+
     .stat-item {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      
+
       .stat-content {
         .stat-value {
           font-size: 28px;
@@ -442,13 +442,13 @@ onMounted(async () => {
           color: #303133;
           margin-bottom: 5px;
         }
-        
+
         .stat-label {
           color: #909399;
           font-size: 14px;
         }
       }
-      
+
       .stat-icon {
         display: flex;
         align-items: center;
@@ -456,10 +456,21 @@ onMounted(async () => {
         font-size: 32px;
         color: #909399;
         opacity: 0.7;
-        
-        &.active { color: #67c23a; opacity: 0.85; }
-        &.update { color: #409eff; opacity: 0.85; }
-        &.level { color: #e6a23c; opacity: 0.85; }
+
+        &.active {
+          color: #67c23a;
+          opacity: 0.85;
+        }
+
+        &.update {
+          color: #409eff;
+          opacity: 0.85;
+        }
+
+        &.level {
+          color: #e6a23c;
+          opacity: 0.85;
+        }
       }
     }
   }
@@ -467,28 +478,28 @@ onMounted(async () => {
 
 .subscription-card {
   margin-bottom: 20px;
-  
+
   .card-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 20px;
-    
+
     h3 {
       margin: 0;
       color: #303133;
     }
-    
+
     .header-actions {
       display: flex;
       gap: 10px;
     }
   }
-  
+
   .subscription-content {
     .el-alert {
       margin-bottom: 20px;
-      
+
       :deep(.el-alert__content) {
         p {
           margin: 0;
@@ -496,44 +507,44 @@ onMounted(async () => {
         }
       }
     }
-    
+
     .subscription-list {
       .subscription-item {
         padding: 20px;
         border: 1px solid #e4e7ed;
         border-radius: 8px;
         margin-bottom: 16px;
-        
+
         &:last-child {
           margin-bottom: 0;
         }
-        
+
         .sub-info {
           margin-bottom: 16px;
-          
+
           .sub-title {
             display: flex;
             align-items: center;
             gap: 8px;
             margin-bottom: 8px;
-            
+
             .el-icon {
               color: #409eff;
             }
-            
+
             span {
               font-size: 16px;
               font-weight: 600;
               color: #303133;
             }
           }
-          
+
           .sub-description {
             color: #606266;
             font-size: 14px;
           }
         }
-        
+
         .sub-actions {
           display: flex;
           gap: 12px;
@@ -562,30 +573,30 @@ onMounted(async () => {
 .guide-card {
   .guide-header {
     margin-bottom: 20px;
-    
+
     h3 {
       margin: 0;
       color: #303133;
     }
   }
-  
+
   .guide-content {
     ol {
       padding-left: 20px;
-      
+
       li {
         margin-bottom: 8px;
         line-height: 1.6;
       }
     }
-    
+
     p {
       margin: 12px 0 0 0;
       padding: 10px;
       background: #f5f7fa;
       border-radius: 4px;
       font-size: 14px;
-      
+
       strong {
         color: #409eff;
       }
@@ -595,10 +606,10 @@ onMounted(async () => {
 
 .qr-content {
   text-align: center;
-  
+
   .qr-code {
     margin-bottom: 20px;
-    
+
     .qr-loading {
       width: 200px;
       height: 200px;
@@ -610,22 +621,22 @@ onMounted(async () => {
       align-items: center;
       justify-content: center;
       color: #409eff;
-      
+
       .el-icon {
         font-size: 24px;
         margin-bottom: 10px;
       }
-      
+
       p {
         margin: 0;
         font-size: 14px;
       }
     }
-    
+
     .qr-image {
       display: flex;
       justify-content: center;
-      
+
       img {
         width: 200px;
         height: 200px;
@@ -633,7 +644,7 @@ onMounted(async () => {
         border: 1px solid #e4e7ed;
       }
     }
-    
+
     .qr-placeholder {
       width: 200px;
       height: 200px;
@@ -646,12 +657,12 @@ onMounted(async () => {
       justify-content: center;
       font-size: 48px;
       color: #909399;
-      
+
       p {
         margin: 10px 0 0 0;
         font-size: 16px;
       }
-      
+
       small {
         margin-top: 10px;
         font-size: 12px;
@@ -660,7 +671,7 @@ onMounted(async () => {
       }
     }
   }
-  
+
   .qr-tips {
     p {
       margin: 0;
@@ -668,7 +679,7 @@ onMounted(async () => {
       font-size: 14px;
     }
   }
-  
+
   .status-alert {
     margin-bottom: 20px;
   }
@@ -680,49 +691,49 @@ onMounted(async () => {
     .page-header {
       margin-bottom: 15px;
       text-align: center;
-      
+
       h2 {
         font-size: 18px;
       }
-      
+
       p {
         font-size: 13px;
       }
     }
-    
+
     .status-alert {
       margin-bottom: 15px;
-      
+
       :deep(.el-alert__content) {
         font-size: 13px;
       }
     }
   }
-  
+
   .subscription-overview {
     margin-bottom: 15px;
-    
+
     .mobile-responsive-row {
       margin-left: -8px !important;
       margin-right: -8px !important;
-      
+
       .el-col {
         padding-left: 8px !important;
         padding-right: 8px !important;
         margin-bottom: 10px;
       }
     }
-    
+
     .overview-card {
       :deep(.el-card__body) {
         padding: 12px !important;
       }
-      
+
       .stat-item {
         flex-direction: column;
         align-items: flex-start;
         position: relative;
-        
+
         .stat-content {
           width: calc(100% - 40px);
           padding-right: 8px;
@@ -739,7 +750,7 @@ onMounted(async () => {
             line-height: 1.3;
           }
         }
-        
+
         .stat-icon {
           position: absolute;
           top: 4px;
@@ -751,7 +762,7 @@ onMounted(async () => {
       }
     }
   }
-  
+
   .subscription-card {
     margin-bottom: 15px;
 
@@ -975,34 +986,34 @@ onMounted(async () => {
   .subscription-page {
     .page-header {
       margin-bottom: 12px;
-      
+
       h2 {
         font-size: 16px;
       }
-      
+
       p {
         font-size: 12px;
       }
     }
   }
-  
+
   .subscription-overview {
     .mobile-responsive-row {
       margin-left: -6px !important;
       margin-right: -6px !important;
-      
+
       .el-col {
         padding-left: 6px !important;
         padding-right: 6px !important;
         margin-bottom: 8px;
       }
     }
-    
+
     .overview-card {
       :deep(.el-card__body) {
         padding: 10px !important;
       }
-      
+
       .stat-item {
         .stat-content {
           width: calc(100% - 36px);
@@ -1015,7 +1026,7 @@ onMounted(async () => {
             font-size: 11px;
           }
         }
-        
+
         .stat-icon {
           top: 3px;
           right: 3px;
@@ -1025,23 +1036,23 @@ onMounted(async () => {
       }
     }
   }
-  
+
   .subscription-card {
     :deep(.el-card__body) {
       padding: 12px !important;
     }
-    
+
     .card-header {
       .header-actions {
         gap: 6px;
-        
+
         .el-button {
           font-size: 11px !important;
           padding: 6px 8px !important;
         }
       }
     }
-    
+
     .subscription-content {
       .subscription-links {
         .subscription-item {
@@ -1051,7 +1062,7 @@ onMounted(async () => {
                 font-size: 11px !important;
                 padding: 6px !important;
               }
-              
+
               .link-actions {
                 .el-button {
                   font-size: 10px !important;
