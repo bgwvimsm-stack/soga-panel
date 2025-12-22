@@ -10,6 +10,9 @@ const REGION_MATCHERS: GroupMatcher[] = [
   { tag: "🎥 奈飞节点", patterns: [/奈飞/, /netflix/i, /\bNF\b/i] }
 ];
 
+const REGION_TAGS = REGION_MATCHERS.map((matcher) => matcher.tag);
+const REGION_TAG_SET = new Set(REGION_TAGS);
+
 function formatList(items?: string[]): string {
   return Array.isArray(items) ? items.join(",") : "";
 }
@@ -41,6 +44,10 @@ function collectRegionMatches(proxyNames: string[]): Record<string, string[]> {
   return matches;
 }
 
+function filterRegionTags(values: string[], availableRegionTags: Set<string>): string[] {
+  return values.filter((item) => !REGION_TAG_SET.has(item) || availableRegionTags.has(item));
+}
+
 function withFallback(values: string[], fallback: string[] = ["DIRECT"]): string[] {
   return values.length ? values : fallback;
 }
@@ -52,176 +59,260 @@ export function buildSurgeTemplate(proxies: string[] = [], proxyNames: string[] 
   const safeProxyNames = uniqueNames(proxyNames);
   const manualList = withFallback(safeProxyNames);
   const regionMatches = collectRegionMatches(safeProxyNames);
+  const availableRegionTags = REGION_TAGS.filter((tag) => regionMatches[tag]?.length);
+  const availableRegionSet = new Set(availableRegionTags);
   const proxyLines = ["DIRECT = direct", ...proxies].filter(Boolean);
   const proxySection = proxyLines.join("\n");
 
-  const groups: string[] = [
-    `🚀 节点选择 = select,${formatList([
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇸🇬 狮城节点",
-      "🇯🇵 日本节点",
-      "🇺🇲 美国节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换",
-      "DIRECT"
-    ])}`,
-    `🚀 手动切换 = select,${formatList(manualList)}`,
-    `📲 电报消息 = select,${formatList([
-      "🚀 节点选择",
-      "🇸🇬 狮城节点",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇯🇵 日本节点",
-      "🇺🇲 美国节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换",
-      "DIRECT"
-    ])}`,
-    `💬 Ai平台 = select,${formatList([
-      "🚀 节点选择",
-      "🇸🇬 狮城节点",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇯🇵 日本节点",
-      "🇺🇲 美国节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换",
-      "DIRECT"
-    ])}`,
-    `📹 油管视频 = select,${formatList([
-      "🚀 节点选择",
-      "🇸🇬 狮城节点",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇯🇵 日本节点",
-      "🇺🇲 美国节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换",
-      "DIRECT"
-    ])}`,
-    `🎥 奈飞视频 = select,${formatList([
-      "🎥 奈飞节点",
-      "🚀 节点选择",
-      "🇸🇬 狮城节点",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇯🇵 日本节点",
-      "🇺🇲 美国节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换",
-      "DIRECT"
-    ])}`,
-    `📺 巴哈姆特 = select,${formatList(["🇨🇳 台湾节点", "🚀 节点选择", "🚀 手动切换", "DIRECT"])}`,
-    `📺 哔哩哔哩 = select,${formatList(["🎯 全球直连", "🇨🇳 台湾节点", "🇭🇰 香港节点"])}`,
-    `🌍 国外媒体 = select,${formatList([
-      "🚀 节点选择",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇸🇬 狮城节点",
-      "🇯🇵 日本节点",
-      "🇺🇲 美国节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换",
-      "DIRECT"
-    ])}`,
-    `🌏 国内媒体 = select,${formatList([
-      "DIRECT",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇸🇬 狮城节点",
-      "🇯🇵 日本节点",
-      "🚀 手动切换"
-    ])}`,
-    `📢 谷歌FCM = select,${formatList([
-      "DIRECT",
-      "🚀 节点选择",
-      "🇺🇲 美国节点",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇸🇬 狮城节点",
-      "🇯🇵 日本节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换"
-    ])}`,
-    `Ⓜ️ 微软Bing = select,${formatList([
-      "DIRECT",
-      "🚀 节点选择",
-      "🇺🇲 美国节点",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇸🇬 狮城节点",
-      "🇯🇵 日本节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换"
-    ])}`,
-    `Ⓜ️ 微软云盘 = select,${formatList([
-      "DIRECT",
-      "🚀 节点选择",
-      "🇺🇲 美国节点",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇸🇬 狮城节点",
-      "🇯🇵 日本节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换"
-    ])}`,
-    `Ⓜ️ 微软服务 = select,${formatList([
-      "DIRECT",
-      "🚀 节点选择",
-      "🇺🇲 美国节点",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇸🇬 狮城节点",
-      "🇯🇵 日本节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换"
-    ])}`,
-    `🍎 苹果服务 = select,${formatList([
-      "DIRECT",
-      "🚀 节点选择",
-      "🇺🇲 美国节点",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇸🇬 狮城节点",
-      "🇯🇵 日本节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换"
-    ])}`,
-    `🎮 游戏平台 = select,${formatList([
-      "DIRECT",
-      "🚀 节点选择",
-      "🇺🇲 美国节点",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇸🇬 狮城节点",
-      "🇯🇵 日本节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换"
-    ])}`,
-    `🎶 网易音乐 = select,${formatList(["DIRECT", "🚀 节点选择"])}`,
-    `🎯 全球直连 = select,${formatList(["DIRECT", "🚀 节点选择"])}`,
-    `🛑 广告拦截 = select,${formatList(["REJECT", "DIRECT"])}`,
-    `🍃 应用净化 = select,${formatList(["REJECT", "DIRECT"])}`,
-    `🐟 漏网之鱼 = select,${formatList([
-      "🚀 节点选择",
-      "DIRECT",
-      "🇭🇰 香港节点",
-      "🇨🇳 台湾节点",
-      "🇸🇬 狮城节点",
-      "🇯🇵 日本节点",
-      "🇺🇲 美国节点",
-      "🇰🇷 韩国节点",
-      "🚀 手动切换"
-    ])}`,
-    `🇭🇰 香港节点 = select,${formatList(withFallback(regionMatches["🇭🇰 香港节点"]))}`,
-    `🇨🇳 台湾节点 = select,${formatList(withFallback(regionMatches["🇨🇳 台湾节点"]))}`,
-    `🇸🇬 狮城节点 = select,${formatList(withFallback(regionMatches["🇸🇬 狮城节点"]))}`,
-    `🇯🇵 日本节点 = select,${formatList(withFallback(regionMatches["🇯🇵 日本节点"]))}`,
-    `🇺🇲 美国节点 = select,${formatList(withFallback(regionMatches["🇺🇲 美国节点"]))}`,
-    `🇰🇷 韩国节点 = select,${formatList(withFallback(regionMatches["🇰🇷 韩国节点"]))}`,
-    `🎥 奈飞节点 = select,${formatList(withFallback(regionMatches["🎥 奈飞节点"]))}`
-  ];
+  const groups: string[] = [];
+
+  groups.push(`🚀 节点选择 = select,${formatList(["🚀 手动切换", ...availableRegionTags, "DIRECT"])}`);
+  groups.push(`🚀 手动切换 = select,${formatList(manualList)}`);
+  groups.push(
+    `📲 电报消息 = select,${formatList(
+      filterRegionTags(
+        [
+          "🚀 节点选择",
+          "🇸🇬 狮城节点",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇯🇵 日本节点",
+          "🇺🇲 美国节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换",
+          "DIRECT"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(
+    `💬 Ai平台 = select,${formatList(
+      filterRegionTags(
+        [
+          "🚀 节点选择",
+          "🇸🇬 狮城节点",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇯🇵 日本节点",
+          "🇺🇲 美国节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换",
+          "DIRECT"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(
+    `📹 油管视频 = select,${formatList(
+      filterRegionTags(
+        [
+          "🚀 节点选择",
+          "🇸🇬 狮城节点",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇯🇵 日本节点",
+          "🇺🇲 美国节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换",
+          "DIRECT"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(
+    `🎥 奈飞视频 = select,${formatList(
+      filterRegionTags(
+        [
+          "🎥 奈飞节点",
+          "🚀 节点选择",
+          "🇸🇬 狮城节点",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇯🇵 日本节点",
+          "🇺🇲 美国节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换",
+          "DIRECT"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(
+    `📺 巴哈姆特 = select,${formatList(
+      filterRegionTags(["🇨🇳 台湾节点", "🚀 节点选择", "🚀 手动切换", "DIRECT"], availableRegionSet)
+    )}`
+  );
+  groups.push(
+    `📺 哔哩哔哩 = select,${formatList(
+      filterRegionTags(["🎯 全球直连", "🇨🇳 台湾节点", "🇭🇰 香港节点"], availableRegionSet)
+    )}`
+  );
+  groups.push(
+    `🌍 国外媒体 = select,${formatList(
+      filterRegionTags(
+        [
+          "🚀 节点选择",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇸🇬 狮城节点",
+          "🇯🇵 日本节点",
+          "🇺🇲 美国节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换",
+          "DIRECT"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(
+    `🌏 国内媒体 = select,${formatList(
+      filterRegionTags(
+        ["DIRECT", "🇭🇰 香港节点", "🇨🇳 台湾节点", "🇸🇬 狮城节点", "🇯🇵 日本节点", "🚀 手动切换"],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(
+    `📢 谷歌FCM = select,${formatList(
+      filterRegionTags(
+        [
+          "DIRECT",
+          "🚀 节点选择",
+          "🇺🇲 美国节点",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇸🇬 狮城节点",
+          "🇯🇵 日本节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(
+    `Ⓜ️ 微软Bing = select,${formatList(
+      filterRegionTags(
+        [
+          "DIRECT",
+          "🚀 节点选择",
+          "🇺🇲 美国节点",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇸🇬 狮城节点",
+          "🇯🇵 日本节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(
+    `Ⓜ️ 微软云盘 = select,${formatList(
+      filterRegionTags(
+        [
+          "DIRECT",
+          "🚀 节点选择",
+          "🇺🇲 美国节点",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇸🇬 狮城节点",
+          "🇯🇵 日本节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(
+    `Ⓜ️ 微软服务 = select,${formatList(
+      filterRegionTags(
+        [
+          "DIRECT",
+          "🚀 节点选择",
+          "🇺🇲 美国节点",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇸🇬 狮城节点",
+          "🇯🇵 日本节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(
+    `🍎 苹果服务 = select,${formatList(
+      filterRegionTags(
+        [
+          "DIRECT",
+          "🚀 节点选择",
+          "🇺🇲 美国节点",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇸🇬 狮城节点",
+          "🇯🇵 日本节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(
+    `🎮 游戏平台 = select,${formatList(
+      filterRegionTags(
+        [
+          "DIRECT",
+          "🚀 节点选择",
+          "🇺🇲 美国节点",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇸🇬 狮城节点",
+          "🇯🇵 日本节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+  groups.push(`🎶 网易音乐 = select,${formatList(["DIRECT", "🚀 节点选择"])}`);
+  groups.push(`🎯 全球直连 = select,${formatList(["DIRECT", "🚀 节点选择"])}`);
+  groups.push(`🛑 广告拦截 = select,${formatList(["REJECT", "DIRECT"])}`);
+  groups.push(`🍃 应用净化 = select,${formatList(["REJECT", "DIRECT"])}`);
+  groups.push(
+    `🐟 漏网之鱼 = select,${formatList(
+      filterRegionTags(
+        [
+          "🚀 节点选择",
+          "DIRECT",
+          "🇭🇰 香港节点",
+          "🇨🇳 台湾节点",
+          "🇸🇬 狮城节点",
+          "🇯🇵 日本节点",
+          "🇺🇲 美国节点",
+          "🇰🇷 韩国节点",
+          "🚀 手动切换"
+        ],
+        availableRegionSet
+      )
+    )}`
+  );
+
+  for (const tag of availableRegionTags) {
+    const matched = uniqueNames(regionMatches[tag]);
+    if (!matched.length) continue;
+    groups.push(`${tag} = select,${formatList(matched)}`);
+  }
 
   return `#!MANAGED-CONFIG
 
@@ -244,7 +335,7 @@ wifi-access-http-port = 6152
 wifi-access-socks5-port = 6153
 
 [Script]
-http-request https?:\\/\\/.*\\.iqiyi\\.com\\/.*authcookie= script-path=https://raw.githubusercontent.com/NobyDa/Script/master/iQIYI-DailyBonus/iQIYI.js
+http-request https?:\/\/.*\.iqiyi\.com\/.*authcookie= script-path=https://raw.githubusercontent.com/NobyDa/Script/master/iQIYI-DailyBonus/iQIYI.js
 
 [Proxy]
 ${proxySection}

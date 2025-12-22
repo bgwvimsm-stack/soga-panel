@@ -707,16 +707,22 @@ export function generateSingboxConfig(nodes: SubscriptionNode[], user: Subscript
     }
   }
 
+  const allRegionTags = SINGBOX_GROUP_MATCHERS.map((matcher) => matcher.tag);
+  const availableRegionTags = allRegionTags.filter((tag) => (groupMatches[tag] || []).length > 0);
   const groupOverrides: Record<string, string[]> = {
     "🚀 手动切换": nodeTags,
     "GLOBAL": ["DIRECT", ...nodeTags]
   };
 
-  for (const [tag, matches] of Object.entries(groupMatches)) {
-    groupOverrides[tag] = matches.length ? [...matches, "DIRECT"] : ["DIRECT"];
+  for (const tag of availableRegionTags) {
+    const matches = groupMatches[tag] || [];
+    if (matches.length) groupOverrides[tag] = matches;
   }
 
-  const singboxConfig = buildSingboxTemplate(nodeOutbounds, groupOverrides);
+  const singboxConfig = buildSingboxTemplate(nodeOutbounds, groupOverrides, {
+    regionTags: allRegionTags,
+    availableRegionTags
+  });
   return JSON.stringify(singboxConfig, null, 2);
 }
 
