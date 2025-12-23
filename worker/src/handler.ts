@@ -134,6 +134,7 @@ export async function handleRequest(
     "GET /api/subscription/v2ray": () => subscriptionAPI.getV2RaySubscription(request),
     "GET /api/subscription/clash": () => subscriptionAPI.getClashSubscription(request),
     "GET /api/subscription/quantumultx": () => subscriptionAPI.getQuantumultXSubscription(request),
+    "GET /api/subscription/singbox": () => subscriptionAPI.getSingboxSubscription(request),
     "GET /api/subscription/shadowrocket": () => subscriptionAPI.getShadowrocketSubscription(request),
     "GET /api/subscription/surge": () => subscriptionAPI.getSurgeSubscription(request),
 
