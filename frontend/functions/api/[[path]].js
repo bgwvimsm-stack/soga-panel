@@ -4,6 +4,26 @@
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
+
+  const getClientIp = () => {
+    const candidates = [
+      request.headers.get('CF-Connecting-IP'),
+      request.headers.get('True-Client-IP'),
+      request.headers.get('X-Forwarded-For'),
+      request.headers.get('X-Real-IP')
+    ];
+    const raw = candidates.find((value) => value && value.trim());
+    if (!raw) return '';
+    return raw.split(',')[0].trim();
+  };
+
+  const applyClientIpHeaders = (headers) => {
+    const clientIp = getClientIp();
+    if (!clientIp) return;
+    headers.set('X-Client-IP', clientIp);
+    headers.set('X-Real-IP', clientIp);
+    headers.set('X-Forwarded-For', clientIp);
+  };
   
   // 处理 CORS 预检请求
   if (request.method === 'OPTIONS') {
@@ -32,9 +52,12 @@ export async function onRequest(context) {
       }
       
       // 通过服务绑定直接调用后端
+      const headers = new Headers(request.headers);
+      applyClientIpHeaders(headers);
+
       const proxyRequest = new Request(`https://backend${url.pathname}${url.search}`, {
         method: request.method,
-        headers: request.headers,
+        headers: headers,
         body: body
       });
       
@@ -101,6 +124,7 @@ export async function onRequest(context) {
     // 添加内部标识
     headers.set('X-Cloudflare-Service-Binding', 'true');
     headers.set('CF-Worker', 'pages-functions');
+    applyClientIpHeaders(headers);
     
     // 准备请求体
     let body = null;

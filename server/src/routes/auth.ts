@@ -55,10 +55,10 @@ export function createAuthRouter(ctx: AppContext) {
 
   const getClientIp = (req: Request) => {
     return (
-      extractIp((req.headers["cf-connecting-ip"] as any) ?? null) ||
-      extractIp((req.headers["true-client-ip"] as any) ?? null) ||
       extractIp((req.headers["x-client-ip"] as any) ?? null) ||
       extractIp((req.headers["x-forwarded-for"] as any) ?? null) ||
+      extractIp((req.headers["cf-connecting-ip"] as any) ?? null) ||
+      extractIp((req.headers["true-client-ip"] as any) ?? null) ||
       extractIp((req.headers["x-real-ip"] as any) ?? null) ||
       extractIp(req.ip) ||
       extractIp((req.socket as any)?.remoteAddress ?? null)
