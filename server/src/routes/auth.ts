@@ -58,10 +58,10 @@ export function createAuthRouter(ctx: AppContext) {
       extractIp((req.headers["cf-connecting-ip"] as any) ?? null) ||
       extractIp((req.headers["true-client-ip"] as any) ?? null) ||
       extractIp((req.headers["x-client-ip"] as any) ?? null) ||
-      extractIp((req.headers["x-real-ip"] as any) ?? null) ||
       extractIp((req.headers["x-forwarded-for"] as any) ?? null) ||
-      extractIp((req.socket as any)?.remoteAddress ?? null) ||
-      extractIp(req.ip)
+      extractIp((req.headers["x-real-ip"] as any) ?? null) ||
+      extractIp(req.ip) ||
+      extractIp((req.socket as any)?.remoteAddress ?? null)
     );
   };
 
