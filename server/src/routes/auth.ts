@@ -4,7 +4,8 @@ import { AuthService } from "../services/auth";
 import { errorResponse, successResponse } from "../utils/response";
 import { TwoFactorService } from "../services/twoFactor";
 import { ReferralService } from "../services/referral";
-import { generateBase64Random, generateRandomString, generateUUID, hashPassword } from "../utils/crypto";
+import { EmailService } from "../services/email";
+import { generateRandomString } from "../utils/crypto";
 import { ensureString } from "../utils/d1";
 import { createAuthMiddleware } from "../middleware/auth";
 import {
@@ -22,6 +23,7 @@ export function createAuthRouter(ctx: AppContext) {
   const authService = new AuthService(ctx.dbService, ctx.cache, ctx.env);
   const twoFactorService = new TwoFactorService(ctx.env);
   const referralService = new ReferralService(ctx.dbService);
+  const emailService = new EmailService(ctx.env);
 
   type PasskeyChallengePayload = {
     type: "registration" | "authentication";
@@ -33,10 +35,26 @@ export function createAuthRouter(ctx: AppContext) {
     createdAt: number;
   };
 
+  type PendingOAuthRegistration = {
+    provider: "google" | "github";
+    email: string;
+    providerId: string;
+    usernameCandidates: string[];
+    fallbackUsernameSeed: string;
+    remember: boolean;
+    clientIp?: string | null;
+    userAgent?: string | null;
+  };
+
   const PASSKEY_CHALLENGE_TTL = 300;
+  const OAUTH_PENDING_TTL = 600;
   const localPasskeyChallenges = new Map<
     string,
     { payload: PasskeyChallengePayload; expiresAt: number }
+  >();
+  const localPendingOAuth = new Map<
+    string,
+    { payload: PendingOAuthRegistration; expiresAt: number }
   >();
 
   const buildPasskeyCacheKey = (challenge: string) =>
@@ -156,6 +174,366 @@ export function createAuthRouter(ctx: AppContext) {
     }
   };
 
+  const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const isGmailAlias = (email: string) => {
+    const [local = "", domain = ""] = email.toLowerCase().split("@");
+    if (domain !== "gmail.com" && domain !== "googlemail.com") return false;
+    return local.includes("+") || local.includes(".");
+  };
+
+  const escapeHtml = (value: string) =>
+    value
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+
+  const isEmailConfigured = () => {
+    const provider = (ctx.env.MAIL_PROVIDER || "").toLowerCase();
+    if (provider === "resend") {
+      return Boolean(ctx.env.RESEND_API_KEY || ctx.env.MAIL_RESEND_KEY);
+    }
+    if (provider === "smtp") {
+      return Boolean(ctx.env.MAIL_SMTP_HOST);
+    }
+    if (provider === "sendgrid") {
+      return Boolean(ctx.env.SENDGRID_API_KEY);
+    }
+    return Boolean(
+      ctx.env.MAIL_SMTP_HOST ||
+        ctx.env.MAIL_RESEND_KEY ||
+        ctx.env.RESEND_API_KEY ||
+        ctx.env.SENDGRID_API_KEY
+    );
+  };
+
+  const toIntConfig = (
+    value: unknown,
+    fallback: number,
+    options: { min?: number; allowZero?: boolean } = {}
+  ) => {
+    const parsed =
+      typeof value === "number"
+        ? value
+        : typeof value === "string"
+        ? Number.parseInt(value, 10)
+        : Number.NaN;
+    const min = options.min ?? 0;
+    const allowZero = options.allowZero ?? true;
+    if (!Number.isFinite(parsed)) return fallback;
+    if (parsed < min) return fallback;
+    if (!allowZero && parsed === 0) return fallback;
+    return parsed;
+  };
+
+  const resolveVerificationFlags = async () => {
+    const configs = await ctx.dbService.listSystemConfigsMap();
+    const registerMode = String(configs["register_enabled"] ?? "1");
+    const registerEnabled = registerMode !== "0";
+    const inviteRequired = registerMode === "2";
+    const emailVerifyEnabled =
+      String(configs["register_email_verification_enabled"] ?? "1") !== "0";
+    const emailProviderEnabled = isEmailConfigured();
+    return {
+      configs,
+      registerMode,
+      registerEnabled,
+      inviteRequired,
+      emailVerifyEnabled,
+      emailProviderEnabled
+    };
+  };
+
+  const getPurposeMeta = (purpose: "register" | "password_reset") => {
+    if (purpose === "password_reset") {
+      return {
+        successMessage: "验证码已发送，请查收邮箱",
+        disabledMessage: "当前未开启密码重置功能",
+        missingUserMessage: "该邮箱未注册账户，请检查邮箱是否正确",
+        existingUserMessage: "",
+        logPrefix: "password-reset"
+      };
+    }
+
+    return {
+      successMessage: "验证码已发送，请查收邮箱",
+      disabledMessage: "当前未开启邮箱验证码功能",
+      existingUserMessage: "该邮箱已被注册，请使用其他邮箱或直接登录",
+      missingUserMessage: "该邮箱地址不存在，请先注册账号",
+      logPrefix: "email-code"
+    };
+  };
+
+  const handleVerificationCodeRequest = async (
+    req: Request,
+    res: Response,
+    options: {
+      purpose: "register" | "password_reset";
+      requireExistingUser?: boolean;
+      disallowExistingUser?: boolean;
+    }
+  ) => {
+    const { purpose, requireExistingUser, disallowExistingUser } = options;
+    const rawEmail =
+      typeof req.body?.email === "string" ? req.body.email : "";
+    const email = rawEmail.trim().toLowerCase();
+
+    if (!email) {
+      return errorResponse(res, "请填写邮箱地址", 400);
+    }
+    if (!EMAIL_REGEX.test(email)) {
+      return errorResponse(res, "请输入有效的邮箱地址", 400);
+    }
+    if (purpose === "register" && isGmailAlias(email)) {
+      return errorResponse(
+        res,
+        "暂不支持使用 Gmail 别名注册，请使用不含点和加号的原始邮箱地址",
+        400
+      );
+    }
+
+    const meta = getPurposeMeta(purpose);
+    const { registerMode, registerEnabled, emailVerifyEnabled, emailProviderEnabled } =
+      await resolveVerificationFlags();
+    const verificationEnabled =
+      purpose === "register"
+        ? registerEnabled && emailVerifyEnabled && emailProviderEnabled
+        : emailVerifyEnabled && emailProviderEnabled;
+
+    if (!verificationEnabled) {
+      return errorResponse(res, meta.disabledMessage, 403);
+    }
+
+    if (purpose === "register" && registerMode !== "1") {
+      return errorResponse(res, "系统暂时关闭注册功能", 403);
+    }
+
+    const existingUser = await ctx.dbService.getUserByEmail(email);
+    if (requireExistingUser && !existingUser) {
+      return errorResponse(res, meta.missingUserMessage, 400);
+    }
+    if (disallowExistingUser && existingUser) {
+      return errorResponse(res, meta.existingUserMessage || "该邮箱已被注册", 409);
+    }
+
+    await ctx.dbService.db
+      .prepare(
+        `
+        UPDATE email_verification_codes
+        SET used_at = CURRENT_TIMESTAMP
+        WHERE email = ? AND purpose = ? AND used_at IS NULL
+      `
+      )
+      .bind(email, purpose)
+      .run();
+
+    const clientIp = getClientIp(req) || "unknown";
+    const userAgent = req.headers["user-agent"] as string | undefined;
+    const cooldownSeconds = toIntConfig(
+      ctx.env.MAIL_VERIFICATION_COOLDOWN_SECONDS,
+      60,
+      { min: 0, allowZero: true }
+    );
+    const dailyLimit = toIntConfig(
+      ctx.env.MAIL_VERIFICATION_DAILY_LIMIT,
+      5,
+      { min: 0, allowZero: true }
+    );
+    const ipHourlyLimit = toIntConfig(
+      ctx.env.MAIL_VERIFICATION_IP_HOURLY_LIMIT,
+      10,
+      { min: 0, allowZero: true }
+    );
+
+    if (cooldownSeconds > 0) {
+      const cooldownResult = await ctx.dbService.db
+        .prepare(
+          `
+          SELECT COUNT(*) as count
+          FROM email_verification_codes
+          WHERE email = ?
+            AND purpose = ?
+            AND created_at > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ${cooldownSeconds} SECOND)
+        `
+        )
+        .bind(email, purpose)
+        .first<{ count?: number }>();
+      if (Number(cooldownResult?.count ?? 0) > 0) {
+        return errorResponse(
+          res,
+          `验证码发送频繁，请在 ${cooldownSeconds} 秒后重试`,
+          429
+        );
+      }
+    }
+
+    if (dailyLimit > 0) {
+      const dailyResult = await ctx.dbService.db
+        .prepare(
+          `
+          SELECT COUNT(*) as count
+          FROM email_verification_codes
+          WHERE email = ?
+            AND purpose = ?
+            AND created_at > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 1 DAY)
+        `
+        )
+        .bind(email, purpose)
+        .first<{ count?: number }>();
+      if (Number(dailyResult?.count ?? 0) >= dailyLimit) {
+        return errorResponse(res, "今日验证码发送次数已达上限，请24小时后再试", 429);
+      }
+    }
+
+    if (ipHourlyLimit > 0 && clientIp && clientIp !== "unknown") {
+      const ipResult = await ctx.dbService.db
+        .prepare(
+          `
+          SELECT COUNT(*) as count
+          FROM email_verification_codes
+          WHERE request_ip = ?
+            AND purpose = ?
+            AND created_at > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 1 HOUR)
+        `
+        )
+        .bind(clientIp, purpose)
+        .first<{ count?: number }>();
+      if (Number(ipResult?.count ?? 0) >= ipHourlyLimit) {
+        return errorResponse(res, "请求过于频繁，请稍后再试或更换网络", 429);
+      }
+    }
+
+    const result = await authService.sendEmailCode(email, purpose, {
+      ip: clientIp,
+      ua: userAgent ? userAgent.slice(0, 500) : undefined
+    });
+    console.log(
+      `[${meta.logPrefix}] purpose=${purpose} email=${email} code=${result.code}`
+    );
+    return successResponse(
+      res,
+      { expires_at: result.expires_at },
+      meta.successMessage
+    );
+  };
+
+  const sendOAuthWelcomeEmail = async (
+    providerLabel: string,
+    email: string,
+    password: string
+  ) => {
+    if (!isEmailConfigured()) return false;
+    const configs = await ctx.dbService.listSystemConfigsMap();
+    const siteName = configs["site_name"] || ctx.env.SITE_NAME || "Soga Panel";
+    const siteUrl = (configs["site_url"] || ctx.env.SITE_URL || "").trim();
+    const subject = `${siteName} 账户已创建`;
+    const safeSiteUrl = siteUrl ? escapeHtml(siteUrl) : "";
+    const html = `
+      <p>您好，</p>
+      <p>您已使用 ${escapeHtml(providerLabel)} 账号成功创建 ${escapeHtml(
+      siteName
+    )} 账户。</p>
+      <p>我们为您生成了一组初始密码，请妥善保管：</p>
+      <pre style="padding:12px;background:#f4f4f5;border-radius:6px;">${escapeHtml(
+        password
+      )}</pre>
+      <p>建议您登录后尽快在个人资料页面修改密码。</p>
+      ${
+        safeSiteUrl
+          ? `<p>立即访问：<a href="${safeSiteUrl}" target="_blank" rel="noopener">${safeSiteUrl}</a></p>`
+          : ""
+      }
+      <p>祝您使用愉快！</p>
+    `;
+    const text = [
+      "您好，",
+      `您已使用 ${providerLabel} 账号成功创建 ${siteName} 账户。`,
+      "我们为您生成了一组初始密码，请妥善保管：",
+      password,
+      "建议您登录后尽快在个人资料页面修改密码。",
+      siteUrl ? `立即访问：${siteUrl}` : "",
+      "祝您使用愉快！"
+    ]
+      .filter(Boolean)
+      .join("\n");
+    try {
+      await emailService.sendMail({
+        to: email,
+        subject,
+        text,
+        html
+      });
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("[oauth] welcome email send failed:", message);
+      return false;
+    }
+  };
+
+  const cachePendingOAuthRegistration = async (
+    data: PendingOAuthRegistration
+  ) => {
+    const token = generateRandomString(48);
+    const cacheKey = `oauth_pending_${token}`;
+    await ctx.cache.set(cacheKey, JSON.stringify(data), OAUTH_PENDING_TTL);
+    localPendingOAuth.set(cacheKey, {
+      payload: data,
+      expiresAt: Date.now() + OAUTH_PENDING_TTL * 1000
+    });
+    return token;
+  };
+
+  const consumePendingOAuthRegistration = async (token: string) => {
+    const cacheKey = `oauth_pending_${token}`;
+    const raw = await ctx.cache.get(cacheKey);
+    if (raw) {
+      await ctx.cache.delete(cacheKey);
+      localPendingOAuth.delete(cacheKey);
+      try {
+        return JSON.parse(raw) as PendingOAuthRegistration;
+      } catch {
+        return null;
+      }
+    }
+    const local = localPendingOAuth.get(cacheKey);
+    if (!local) return null;
+    if (local.expiresAt <= Date.now()) {
+      localPendingOAuth.delete(cacheKey);
+      return null;
+    }
+    localPendingOAuth.delete(cacheKey);
+    return local.payload;
+  };
+
+  const normalizeUsernameCandidate = (value: string) =>
+    value.trim().replace(/\s+/g, "_");
+
+  const generateUniqueUsername = async (
+    candidates: string[],
+    fallbackSeed: string
+  ) => {
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+      const normalized = normalizeUsernameCandidate(candidate);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      const existing = await ctx.dbService.getUserByUsername(normalized);
+      if (!existing) return normalized;
+    }
+
+    const base = normalizeUsernameCandidate(fallbackSeed) || "user";
+    for (let i = 0; i < 6; i++) {
+      const next = `${base}_${generateRandomString(4)}`;
+      const existing = await ctx.dbService.getUserByUsername(next);
+      if (!existing) return next;
+    }
+
+    return `${base}_${generateRandomString(6)}`;
+  };
+
   const buildPayload = (userRow: any) => ({
     id: Number(userRow.id),
     email: ensureString(userRow.email),
@@ -186,43 +564,98 @@ export function createAuthRouter(ctx: AppContext) {
   };
 
   router.get("/register-config", async (_req: Request, res: Response) => {
-    const configs = await ctx.dbService.listSystemConfigsMap();
-    const registerEnabled = Number(configs["register_enabled"] ?? 1);
-    const emailVerify = Number(configs["register_email_verification_enabled"] ?? 1);
-    const inviteRequired = registerEnabled === 2;
+    const { registerMode, registerEnabled, inviteRequired, emailVerifyEnabled, emailProviderEnabled } =
+      await resolveVerificationFlags();
+    const verificationEnabled = registerEnabled && emailVerifyEnabled && emailProviderEnabled;
+    const passwordResetEnabled = emailVerifyEnabled && emailProviderEnabled;
     return successResponse(res, {
-      registerEnabled: registerEnabled !== 0,
-      registerMode: String(registerEnabled),
+      registerEnabled,
+      registerMode,
       inviteRequired,
-      verificationEnabled: emailVerify !== 0,
-      passwordResetEnabled: true,
-      emailProviderEnabled: Boolean(
-        ctx.env.MAIL_SMTP_HOST || ctx.env.MAIL_RESEND_KEY || ctx.env.MAIL_SMTP_USER
-      )
+      verificationEnabled,
+      passwordResetEnabled,
+      emailProviderEnabled
     });
   });
 
   router.post("/register", async (req: Request, res: Response) => {
     const { email, username, password } = req.body || {};
+    const verificationCode =
+      typeof req.body?.verificationCode === "string"
+        ? req.body.verificationCode.trim()
+        : typeof req.body?.verification_code === "string"
+        ? req.body.verification_code.trim()
+        : "";
     const inviteCodeRaw =
       typeof req.body?.inviteCode === "string"
         ? req.body.inviteCode
         : typeof req.body?.invite_code === "string"
         ? req.body.invite_code
         : "";
-    if (!email || !username || !password) {
+    const normalizedEmail =
+      typeof email === "string" ? email.trim().toLowerCase() : "";
+    const normalizedUsername =
+      typeof username === "string" ? username.trim() : "";
+    if (!normalizedEmail || !normalizedUsername || !password) {
       return errorResponse(res, "参数缺失", 400);
     }
 
     try {
-      const clientIp = getClientIp(req);
-      let inviterId: number | null = null;
-      const inviter = await referralService.findInviterByCode(inviteCodeRaw);
-      if (inviter) {
-        inviterId = Number(inviter.id);
+      if (!EMAIL_REGEX.test(normalizedEmail)) {
+        return errorResponse(res, "请输入有效的邮箱地址", 400);
+      }
+      if (isGmailAlias(normalizedEmail)) {
+        return errorResponse(
+          res,
+          "暂不支持使用 Gmail 别名注册，请使用不含点和加号的原始邮箱地址",
+          400
+        );
       }
 
-      const result = await authService.register(email, username, password, clientIp, inviterId);
+      const { registerMode, emailVerifyEnabled, emailProviderEnabled } =
+        await resolveVerificationFlags();
+      if (registerMode === "0") {
+        return errorResponse(res, "系统暂时关闭注册功能", 403);
+      }
+
+      const clientIp = getClientIp(req);
+      let inviterId: number | null = null;
+      const inviteCode = referralService.normalizeInviteCode(inviteCodeRaw);
+      if (inviteCode) {
+        const inviter = await referralService.findInviterByCode(inviteCode);
+        if (!inviter) {
+          return errorResponse(res, "邀请码无效或已失效，请联系邀请人", 400);
+        }
+        const inviteLimit = Number(inviter.invite_limit ?? 0);
+        const inviteUsed = Number(inviter.invite_used ?? 0);
+        if (inviteLimit > 0 && inviteUsed >= inviteLimit) {
+          return errorResponse(res, "该邀请码使用次数已达上限，请联系邀请人", 400);
+        }
+        inviterId = Number(inviter.id);
+      } else if (registerMode === "2") {
+        return errorResponse(res, "当前仅允许受邀注册，请填写有效邀请码", 403);
+      }
+
+      const verificationEnabled = emailVerifyEnabled && emailProviderEnabled;
+      if (verificationEnabled) {
+        const verifyResult = await authService.verifyEmailCode(
+          normalizedEmail,
+          "register",
+          verificationCode
+        );
+        if (!verifyResult.success) {
+          const status = verifyResult.message?.includes("次数过多") ? 429 : 400;
+          return errorResponse(res, verifyResult.message, status);
+        }
+      }
+
+      const result = await authService.register(
+        normalizedEmail,
+        normalizedUsername,
+        password,
+        clientIp,
+        inviterId
+      );
       if (!result.success) {
         return errorResponse(res, result.message, 400);
       }
@@ -231,7 +664,7 @@ export function createAuthRouter(ctx: AppContext) {
         await referralService.saveReferralRelation({
           inviterId,
           inviteeId: Number(result.userId),
-          inviteCode: inviteCodeRaw ?? "",
+          inviteCode: inviteCode || "",
           inviteIp: clientIp
         });
         await referralService.incrementInviteUsage(inviterId);
@@ -289,15 +722,152 @@ export function createAuthRouter(ctx: AppContext) {
     }
   });
 
-  // OAuth 注册补全（Node 版暂不接三方校验，仅返回占位响应）
+  // OAuth 注册补全
   router.post("/oauth/complete", async (req: Request, res: Response) => {
-    const { pendingToken, inviteCode } = req.body || {};
+    const inviteCodeRaw =
+      typeof req.body?.inviteCode === "string"
+        ? req.body.inviteCode
+        : typeof req.body?.invite_code === "string"
+        ? req.body.invite_code
+        : "";
+    const pendingToken = ensureString(
+      req.body?.pendingToken || req.body?.pending_token
+    );
     if (!pendingToken) return errorResponse(res, "缺少注册会话标识", 400);
-    // 可以在此接入实际的第三方注册完成逻辑
-    return errorResponse(res, "暂未启用第三方登录，请改用邮箱注册", 400, {
-      pendingToken,
-      inviteCode: inviteCode ?? null
+
+    const pending = await consumePendingOAuthRegistration(pendingToken);
+    if (!pending) {
+      return errorResponse(res, "注册会话已过期，请重新登录并同意条款", 410);
+    }
+
+    const identifierField =
+      pending.provider === "google" ? "google_sub" : "github_id";
+
+    let user = await ctx.dbService.db
+      .prepare(`SELECT * FROM users WHERE ${identifierField} = ?`)
+      .bind(pending.providerId)
+      .first<any>();
+
+    if (!user) {
+      const byEmail = await ctx.dbService.getUserByEmail(pending.email);
+      if (
+        byEmail &&
+        (byEmail as any)?.[identifierField] &&
+        ensureString((byEmail as any)?.[identifierField]) !== pending.providerId
+      ) {
+        return errorResponse(
+          res,
+          "该邮箱已绑定其他第三方账号，请使用原账号登录",
+          409
+        );
+      }
+      user = byEmail;
+    }
+
+    let isNewUser = false;
+    let tempPassword: string | null = null;
+    let passwordEmailSent = false;
+
+    const configs = await ctx.dbService.listSystemConfigsMap();
+    const registerEnabled = Number(configs["register_enabled"] ?? 1);
+    const registerMode = String(registerEnabled);
+    const inviteCode = referralService.normalizeInviteCode(inviteCodeRaw);
+
+    let inviterId = 0;
+
+    if (!user) {
+      if (registerMode === "0") {
+        return errorResponse(res, "系统暂时关闭注册功能", 403);
+      }
+      if (inviteCode) {
+        const inviter = await referralService.findInviterByCode(inviteCode);
+        if (!inviter) {
+          return errorResponse(res, "邀请码无效或已失效，请联系邀请人", 400);
+        }
+        const inviteLimit = Number(inviter.invite_limit ?? 0);
+        const inviteUsed = Number(inviter.invite_used ?? 0);
+        if (inviteLimit > 0 && inviteUsed >= inviteLimit) {
+          return errorResponse(res, "该邀请码使用次数已达上限，请联系邀请人", 400);
+        }
+        inviterId = Number(inviter.id);
+      } else if (registerMode === "2") {
+        return errorResponse(res, "当前仅允许受邀注册，请输入有效邀请码", 403);
+      }
+
+      const username = await generateUniqueUsername(
+        pending.usernameCandidates,
+        pending.fallbackUsernameSeed
+      );
+      tempPassword = generateRandomString(32);
+      const registerResult = await authService.register(
+        pending.email,
+        username,
+        tempPassword,
+        pending.clientIp ?? null,
+        inviterId || null
+      );
+      if (!registerResult.success) {
+        return errorResponse(res, registerResult.message || "注册失败", 400);
+      }
+      if (!registerResult.userId) {
+        return errorResponse(res, "注册失败", 400);
+      }
+      user = await ctx.dbService.getUserById(Number(registerResult.userId));
+      if (!user) return errorResponse(res, "创建用户失败", 500);
+
+      if (inviterId) {
+        await referralService.saveReferralRelation({
+          inviterId,
+          inviteeId: Number(user.id),
+          inviteCode: inviteCode || "",
+          inviteIp: pending.clientIp ?? null
+        });
+        await referralService.incrementInviteUsage(inviterId);
+      }
+
+      await referralService.ensureUserInviteCode(Number(user.id));
+
+      const providerLabel = pending.provider === "google" ? "Google" : "GitHub";
+      passwordEmailSent = await sendOAuthWelcomeEmail(
+        providerLabel,
+        pending.email,
+        tempPassword
+      );
+      isNewUser = true;
+    }
+
+    if (!user) return errorResponse(res, "无法创建或加载用户信息", 500);
+    if (Number(user.status ?? 0) !== 1) {
+      return errorResponse(res, "账户已禁用", 403);
+    }
+
+    await ctx.dbService.db
+      .prepare(
+        `
+        UPDATE users
+        SET ${identifierField} = ?,
+            oauth_provider = ?,
+            first_oauth_login_at = COALESCE(first_oauth_login_at, CURRENT_TIMESTAMP),
+            last_oauth_login_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `
+      )
+      .bind(pending.providerId, pending.provider, user.id)
+      .run();
+
+    const refreshed = await ctx.dbService.getUserById(Number(user.id));
+    if (refreshed) user = refreshed;
+
+    const method =
+      pending.provider === "google" ? "google_oauth" : "github_oauth";
+    const result = await finalizeOauthLogin(user, method, req, {
+      provider: pending.provider,
+      isNewUser,
+      tempPassword,
+      passwordEmailSent
     });
+    return successResponse(res, result, "登录成功");
   });
 
   // Google/GitHub 入口占位（当前未启用第三方登录，避免 404）
@@ -323,11 +893,12 @@ export function createAuthRouter(ctx: AppContext) {
         return errorResponse(res, "iss 不合法", 401);
       }
       const googleSub = ensureString(tokenInfo.sub);
-      const email = ensureString(tokenInfo.email);
+      const email = ensureString(tokenInfo.email).toLowerCase();
       const emailVerified = tokenInfo.email_verified === "true" || tokenInfo.email_verified === true;
       if (!googleSub) return errorResponse(res, "无效的 Google sub", 400);
       if (!email) return errorResponse(res, "未获取到邮箱", 400);
       const clientIp = getClientIp(req);
+      const userAgent = req.headers["user-agent"] as string | undefined;
 
       // 查找用户
       let user = await ctx.dbService.db
@@ -343,24 +914,42 @@ export function createAuthRouter(ctx: AppContext) {
         user = byEmail;
       }
 
-      // 创建新用户
       if (!user) {
-        const usernameSeed = email.split("@")[0] || `google_${googleSub.slice(-6)}`;
-        const username = usernameSeed.length > 2 ? usernameSeed : `google_${googleSub.slice(-6)}`;
-        const passwordHash = hashPassword(generateRandomString(12));
-        const uuid = generateUUID();
-        const passwd = generateBase64Random(32);
-        const token = generateRandomString(32);
-        const userId = await ctx.dbService.createUser({
+        const emailLocal = email.split("@")[0] || "";
+        const usernameCandidates = [
+          tokenInfo.given_name,
+          tokenInfo.name,
+          emailLocal,
+          `google_${googleSub.slice(-6)}`
+        ].filter(
+          (item): item is string => typeof item === "string" && item.trim().length > 0
+        );
+        const pendingToken = await cachePendingOAuthRegistration({
+          provider: "google",
           email,
-          username,
-          password_hash: passwordHash,
-          uuid,
-          passwd,
-          token,
-          register_ip: clientIp || null
+          providerId: googleSub,
+          usernameCandidates,
+          fallbackUsernameSeed: emailLocal || googleSub.slice(-6),
+          remember,
+          clientIp: clientIp || null,
+          userAgent: userAgent ?? null
         });
-        user = await ctx.dbService.getUserById(Number(userId));
+        const profileUsername =
+          usernameCandidates[0] || emailLocal || `google_${googleSub.slice(-6)}`;
+        return successResponse(
+          res,
+          {
+            need_terms_agreement: true,
+            pending_terms_token: pendingToken,
+            provider: "google",
+            profile: {
+              email,
+              username: profileUsername,
+              avatar: ensureString(tokenInfo.picture)
+            }
+          },
+          "请先同意服务条款"
+        );
       }
 
       if (!user) return errorResponse(res, "创建用户失败", 500);
@@ -383,7 +972,10 @@ export function createAuthRouter(ctx: AppContext) {
 
       const result = await finalizeOauthLogin(user, "google_oauth", req, {
         provider: "google",
-        email_verified: emailVerified
+        email_verified: emailVerified,
+        isNewUser: false,
+        tempPassword: null,
+        passwordEmailSent: false
       });
       return successResponse(res, result, "登录成功");
     } catch (error: any) {
@@ -449,11 +1041,14 @@ export function createAuthRouter(ctx: AppContext) {
         }
       }
       if (!email) return errorResponse(res, "未获取到邮箱，请在 GitHub 公开邮箱后重试", 400);
+      const normalizedEmail = email.toLowerCase();
+      const clientIp = getClientIp(req);
+      const userAgent = req.headers["user-agent"] as string | undefined;
 
       // 查找用户
       let user = await ctx.dbService.db.prepare("SELECT * FROM users WHERE github_id = ?").bind(githubId).first<any>();
-      if (!user && email) {
-        const byEmail = await ctx.dbService.getUserByEmail(email);
+      if (!user && normalizedEmail) {
+        const byEmail = await ctx.dbService.getUserByEmail(normalizedEmail);
         if (byEmail && byEmail.github_id && byEmail.github_id !== githubId) {
           return errorResponse(res, "邮箱已绑定其它 GitHub 账号", 400);
         }
@@ -461,23 +1056,39 @@ export function createAuthRouter(ctx: AppContext) {
       }
 
       if (!user) {
-        const clientIp = getClientIp(req);
-        const usernameSeed = ghUser?.login || ghUser?.name || email.split("@")[0] || `github_${githubId.slice(-6)}`;
-        const username = usernameSeed.length > 2 ? usernameSeed : `github_${githubId.slice(-6)}`;
-        const passwordHash = hashPassword(generateRandomString(12));
-        const uuid = generateUUID();
-        const passwd = generateBase64Random(32);
-        const token = generateRandomString(32);
-        const userId = await ctx.dbService.createUser({
-          email,
-          username,
-          password_hash: passwordHash,
-          uuid,
-          passwd,
-          token,
-          register_ip: clientIp || null
+        const emailLocal = normalizedEmail.split("@")[0] || "";
+        const usernameCandidates = [
+          ghUser?.login,
+          ghUser?.name,
+          emailLocal,
+          `github_${githubId.slice(-6)}`
+        ].filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+        const pendingToken = await cachePendingOAuthRegistration({
+          provider: "github",
+          email: normalizedEmail,
+          providerId: githubId,
+          usernameCandidates,
+          fallbackUsernameSeed: emailLocal || githubId.slice(-6),
+          remember: Boolean(remember),
+          clientIp: clientIp || null,
+          userAgent: userAgent ?? null
         });
-        user = await ctx.dbService.getUserById(Number(userId));
+        const profileUsername =
+          usernameCandidates[0] || emailLocal || `github_${githubId.slice(-6)}`;
+        return successResponse(
+          res,
+          {
+            need_terms_agreement: true,
+            pending_terms_token: pendingToken,
+            provider: "github",
+            profile: {
+              email: normalizedEmail,
+              username: profileUsername,
+              avatar: ensureString(ghUser?.avatar_url)
+            }
+          },
+          "请先同意服务条款"
+        );
       }
 
       if (!user) return errorResponse(res, "创建用户失败", 500);
@@ -497,7 +1108,12 @@ export function createAuthRouter(ctx: AppContext) {
         .bind(githubId, user.id)
         .run();
 
-      const result = await finalizeOauthLogin(user, "github_oauth", req, { provider: "github" });
+      const result = await finalizeOauthLogin(user, "github_oauth", req, {
+        provider: "github",
+        isNewUser: false,
+        tempPassword: null,
+        passwordEmailSent: false
+      });
       return successResponse(res, result, "登录成功");
     } catch (error: any) {
       return errorResponse(res, error?.message || "GitHub 登录失败", 500);
@@ -897,19 +1513,11 @@ export function createAuthRouter(ctx: AppContext) {
   });
 
   router.post("/send-email-code", async (req: Request, res: Response) => {
-    const { email, purpose } = req.body || {};
-    if (!email || !purpose) {
-      return errorResponse(res, "参数缺失", 400);
-    }
     try {
-      const clientIp = getClientIp(req);
-      const result = await authService.sendEmailCode(email, purpose, {
-        ip: clientIp,
-        ua: req.headers["user-agent"]
+      return await handleVerificationCodeRequest(req, res, {
+        purpose: "register",
+        disallowExistingUser: true
       });
-      // 为方便自托管调试，直接返回过期时间，验证码仅打印日志
-      console.log(`[email-code] purpose=${purpose} email=${email} code=${result.code}`);
-      return successResponse(res, { expires_at: result.expires_at }, "验证码已发送（请查看邮件，开发模式下已在日志输出）");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return errorResponse(res, message, 500);
@@ -917,18 +1525,11 @@ export function createAuthRouter(ctx: AppContext) {
   });
 
   router.post("/password-reset/request", async (req: Request, res: Response) => {
-    const { email } = req.body || {};
-    if (!email) {
-      return errorResponse(res, "参数缺失", 400);
-    }
     try {
-      const clientIp = getClientIp(req);
-      const result = await authService.sendEmailCode(email, "password_reset", {
-        ip: clientIp,
-        ua: req.headers["user-agent"]
+      return await handleVerificationCodeRequest(req, res, {
+        purpose: "password_reset",
+        requireExistingUser: true
       });
-      console.log(`[password-reset] email=${email} code=${result.code}`);
-      return successResponse(res, { expires_at: result.expires_at }, "重置验证码已发送");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return errorResponse(res, message, 500);
@@ -937,13 +1538,29 @@ export function createAuthRouter(ctx: AppContext) {
 
   router.post("/password-reset/confirm", async (req: Request, res: Response) => {
     const { email, code, new_password } = req.body || {};
-    if (!email || !code || !new_password) {
+    const normalizedEmail =
+      typeof email === "string" ? email.trim().toLowerCase() : "";
+    if (!normalizedEmail || !code || !new_password) {
       return errorResponse(res, "参数缺失", 400);
     }
     try {
-      const result = await authService.resetPasswordWithCode(email, code, new_password);
+      if (!EMAIL_REGEX.test(normalizedEmail)) {
+        return errorResponse(res, "请输入有效的邮箱地址", 400);
+      }
+      const { emailVerifyEnabled, emailProviderEnabled } =
+        await resolveVerificationFlags();
+      if (!emailVerifyEnabled || !emailProviderEnabled) {
+        return errorResponse(res, "当前未开启密码重置功能", 403);
+      }
+
+      const result = await authService.resetPasswordWithCode(
+        normalizedEmail,
+        code,
+        new_password
+      );
       if (!result.success) {
-        return errorResponse(res, result.message || "重置失败", 400);
+        const status = result.message?.includes("次数过多") ? 429 : 400;
+        return errorResponse(res, result.message || "重置失败", status);
       }
       return successResponse(res, null, "密码已重置");
     } catch (error) {

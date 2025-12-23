@@ -29,12 +29,36 @@ export class EmailCodeService {
     return { code, expires_at: expires.toISOString() };
   }
 
-  async verifyCode(email: string, purpose: string, code: string) {
+  async verifyCode(
+    email: string,
+    purpose: string,
+    code: string,
+    options: { attemptLimit?: number } = {}
+  ) {
     const entry = await this.db.getValidEmailCode(email.toLowerCase(), purpose);
     if (!entry) return { success: false, message: "验证码不存在或已过期" };
     const hash = sha256Hex(code);
     if (hash !== entry.code_hash) {
-      return { success: false, message: "验证码错误" };
+      const attemptLimit = options.attemptLimit ?? 0;
+      const currentAttempts = Number(entry.attempts ?? 0);
+      const nextAttempts = currentAttempts + 1;
+      const reachLimit = attemptLimit > 0 && nextAttempts >= attemptLimit;
+
+      await this.db.db
+        .prepare(
+          `
+          UPDATE email_verification_codes
+          SET attempts = ?, used_at = ${reachLimit ? "CURRENT_TIMESTAMP" : "used_at"}
+          WHERE id = ?
+        `
+        )
+        .bind(nextAttempts, entry.id)
+        .run();
+
+      return {
+        success: false,
+        message: reachLimit ? "验证码错误次数过多，请重新获取验证码" : "验证码错误"
+      };
     }
     await this.db.markEmailCodeUsed(Number(entry.id));
     return { success: true, entry };
