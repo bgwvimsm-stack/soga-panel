@@ -61,13 +61,22 @@ export class EmailService {
     const from = this.env.MAIL_FROM || "no-reply@example.com";
 
     if (this.provider === "resend" && this.resend) {
-      await this.resend.emails.send({
+      const result = await this.resend.emails.send({
         from,
         to: options.to,
         subject: options.subject,
         text: options.text ?? "",
         html: options.html
       });
+      const error = (result as any)?.error;
+      if (error) {
+        const message =
+          typeof error === "string"
+            ? error
+            : error?.message || JSON.stringify(error);
+        console.error("[mail] Resend 发送失败", message);
+        throw new Error(message || "Resend 发送失败");
+      }
       return;
     }
 
