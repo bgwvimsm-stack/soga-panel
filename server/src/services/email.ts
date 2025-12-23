@@ -9,46 +9,48 @@ type SendMailOptions = {
   html?: string;
 };
 
+type MailProvider = "resend" | "smtp" | "sendgrid" | "none";
+
 export class EmailService {
   private readonly env: AppEnv;
-  private readonly provider: string | undefined;
+  private readonly provider: MailProvider;
   private readonly resend?: Resend;
   // 使用 any 避免与 nodemailer 类型命名空间冲突
   private readonly transporter?: any;
 
   constructor(env: AppEnv) {
     this.env = env;
-    this.provider = env.MAIL_PROVIDER?.toLowerCase();
+    this.provider = this.resolveProvider(env);
 
     if (this.provider === "resend") {
-      const apiKey = env.RESEND_API_KEY || env.MAIL_RESEND_KEY;
+      const apiKey = this.readEnv("RESEND_API_KEY") || this.readEnv("MAIL_RESEND_KEY");
       if (apiKey) {
         this.resend = new Resend(apiKey);
       }
-    } else if (this.provider === "smtp" && env.MAIL_SMTP_HOST) {
-      const secureEnv = (env.SMTP_SECURE || "").toLowerCase();
+    } else if (this.provider === "smtp" && this.getSmtpHost()) {
+      const secureEnv = (this.readEnv("SMTP_SECURE") || "").toLowerCase();
       const secure = secureEnv === "true" || secureEnv === "1";
-      const port = env.MAIL_SMTP_PORT || (secure ? 465 : 587);
-      const startTlsEnv = (env.SMTP_STARTTLS || "").toLowerCase();
+      const port = this.getSmtpPort() || (secure ? 465 : 587);
+      const startTlsEnv = (this.readEnv("SMTP_STARTTLS") || "").toLowerCase();
       const requireTls =
         startTlsEnv !== ""
           ? startTlsEnv === "true" || startTlsEnv === "1"
           : !secure;
-      const authTypeEnv = (env.SMTP_AUTH_TYPE || "").toLowerCase();
+      const authTypeEnv = (this.readEnv("SMTP_AUTH_TYPE") || "").toLowerCase();
       const authMethod =
         authTypeEnv === "login" || authTypeEnv === "plain"
           ? authTypeEnv.toUpperCase()
           : undefined;
 
       this.transporter = nodemailer.createTransport({
-        host: env.MAIL_SMTP_HOST,
+        host: this.getSmtpHost(),
         port,
         secure,
         auth:
-          env.MAIL_SMTP_USER && env.MAIL_SMTP_PASS
+          this.getSmtpUser() && this.getSmtpPass()
             ? {
-                user: env.MAIL_SMTP_USER,
-                pass: env.MAIL_SMTP_PASS
+                user: this.getSmtpUser(),
+                pass: this.getSmtpPass()
               }
             : undefined,
         requireTLS: requireTls,
@@ -58,9 +60,13 @@ export class EmailService {
   }
 
   async sendMail(options: SendMailOptions) {
-    const from = this.env.MAIL_FROM || "no-reply@example.com";
+    const from = this.getFromAddress();
 
-    if (this.provider === "resend" && this.resend) {
+    if (this.provider === "resend") {
+      if (!this.resend) {
+        throw new Error("未配置 RESEND_API_KEY（或 MAIL_RESEND_KEY），无法发送邮件");
+      }
+      this.assertResendFromDomain(from);
       const result = await this.resend.emails.send({
         from,
         to: options.to,
@@ -80,7 +86,10 @@ export class EmailService {
       return;
     }
 
-    if (this.provider === "smtp" && this.transporter) {
+    if (this.provider === "smtp") {
+      if (!this.transporter) {
+        throw new Error("未配置 SMTP_HOST（或 MAIL_SMTP_HOST），无法发送邮件");
+      }
       await this.transporter.sendMail({
         from,
         to: options.to,
@@ -91,7 +100,10 @@ export class EmailService {
       return;
     }
 
-    if (this.provider === "sendgrid" && this.env.SENDGRID_API_KEY) {
+    if (this.provider === "sendgrid") {
+      if (!this.readEnv("SENDGRID_API_KEY")) {
+        throw new Error("未配置 SENDGRID_API_KEY，无法发送邮件");
+      }
       await this.sendViaSendgrid({
         to: options.to,
         subject: options.subject,
@@ -102,7 +114,9 @@ export class EmailService {
       return;
     }
 
-    console.warn("[mail] no provider configured, skip sending. subject:", options.subject);
+    throw new Error(
+      "未配置邮件发送提供商：请设置 MAIL_PROVIDER 为 resend/smtp/sendgrid，并补齐对应密钥"
+    );
   }
 
   private async sendViaSendgrid(message: {
@@ -162,4 +176,79 @@ export class EmailService {
       throw new Error(`SendGrid API 调用失败: ${response.status} ${errorText}`);
     }
   }
+
+  private readEnv(key: keyof AppEnv): string | undefined {
+    const value = this.env[key];
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  }
+
+  private resolveProvider(env: AppEnv): MailProvider {
+    const raw = (this.readEnv("MAIL_PROVIDER") || "").toLowerCase();
+    if (raw === "resend" || raw === "smtp" || raw === "sendgrid") return raw;
+    if (raw === "none") return "none";
+
+    if (this.readEnv("RESEND_API_KEY") || this.readEnv("MAIL_RESEND_KEY")) {
+      return "resend";
+    }
+    if (this.getSmtpHost()) return "smtp";
+    if (this.readEnv("SENDGRID_API_KEY")) return "sendgrid";
+    return "none";
+  }
+
+  private getSmtpHost() {
+    return this.readEnv("MAIL_SMTP_HOST") || this.readEnv("SMTP_HOST");
+  }
+
+  private getSmtpPort() {
+    return this.env.MAIL_SMTP_PORT || this.env.SMTP_PORT;
+  }
+
+  private getSmtpUser() {
+    return this.readEnv("MAIL_SMTP_USER") || this.readEnv("SMTP_USER");
+  }
+
+  private getSmtpPass() {
+    return this.readEnv("MAIL_SMTP_PASS") || this.readEnv("SMTP_PASS");
+  }
+
+  private getFromAddress() {
+    const configured = this.readEnv("MAIL_FROM");
+    if (configured) return configured;
+    if (this.provider === "resend") {
+      // Resend 支持使用官方测试域名发件（无需验证域名）
+      return "onboarding@resend.dev";
+    }
+    return "no-reply@example.com";
+  }
+
+  private assertResendFromDomain(from: string) {
+    const email = extractEmailAddress(from);
+    if (!email) {
+      throw new Error("MAIL_FROM 格式不正确，需为 email 或 `Name <email>`");
+    }
+
+    const domain = email.split("@")[1]?.toLowerCase() || "";
+    if (!domain) {
+      throw new Error("MAIL_FROM 格式不正确，缺少域名部分");
+    }
+
+    // Resend 不支持使用公共邮箱域名作为发件人域名（例如 gmail.com）
+    if (domain === "gmail.com" || domain === "googlemail.com") {
+      throw new Error(
+        "Resend 不支持使用 gmail.com 作为发件人域名；请将 MAIL_FROM 改为已在 Resend 验证的自有域名邮箱，或测试用 onboarding@resend.dev"
+      );
+    }
+  }
+}
+
+function extractEmailAddress(from: string) {
+  const trimmed = from.trim();
+  const match = /<([^>]+)>/.exec(trimmed);
+  const candidate = (match?.[1] || trimmed).trim();
+  if (!candidate) return null;
+  // 粗略校验，避免误把 Name 当 email
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate)) return null;
+  return candidate;
 }

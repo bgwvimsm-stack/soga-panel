@@ -196,13 +196,15 @@ export function createAuthRouter(ctx: AppContext) {
       return Boolean(ctx.env.RESEND_API_KEY || ctx.env.MAIL_RESEND_KEY);
     }
     if (provider === "smtp") {
-      return Boolean(ctx.env.MAIL_SMTP_HOST);
+      return Boolean(ctx.env.MAIL_SMTP_HOST || ctx.env.SMTP_HOST);
     }
     if (provider === "sendgrid") {
       return Boolean(ctx.env.SENDGRID_API_KEY);
     }
+    if (provider === "none") return false;
     return Boolean(
       ctx.env.MAIL_SMTP_HOST ||
+        ctx.env.SMTP_HOST ||
         ctx.env.MAIL_RESEND_KEY ||
         ctx.env.RESEND_API_KEY ||
         ctx.env.SENDGRID_API_KEY
