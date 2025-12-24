@@ -485,6 +485,15 @@
                       </el-form-item>
                     </el-col>
                   </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="24">
+                      <el-form-item>
+                        <el-button type="primary" plain @click="regenerateVlessReality">
+                          一键生成 Short IDs / PrivateKey / PublicKey
+                        </el-button>
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
                 </template>
               </template>
 
@@ -1081,6 +1090,10 @@ const ensureVlessRealityDefaults = (forceRegenerate = false) => {
     const derived = deriveX25519PublicKey(nodeForm.config_private_key);
     if (derived) nodeForm.client_publickey = derived;
   }
+};
+
+const regenerateVlessReality = () => {
+  ensureVlessRealityDefaults(true);
 };
 
 const nodeRules = {
