@@ -801,7 +801,7 @@ function buildQuantumultXVlessEntry(node: any, config: any, user: SubscriptionUs
   pushOption(options, "method", "none");
   pushOption(options, "password", user.uuid);
   pushOption(options, "fast-open", false);
-  pushOption(options, "udp-relay", false);
+  pushOption(options, "udp-relay", true);
 
   if (config.tls_type === "reality") {
     pushOption(options, "obfs", "over-tls");
