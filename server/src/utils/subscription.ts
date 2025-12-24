@@ -70,6 +70,30 @@ function resolveNodeEndpoint(node: any) {
   };
 }
 
+function normalizeStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function pickRandomShortId(value: unknown): string {
+  const list = normalizeStringList(value);
+  if (!list.length) return "";
+  const index = Math.floor(Math.random() * list.length);
+  return list[index];
+}
+
+function resolveRealityPublicKey(config: any, client: any) {
+  return ensureString(client?.publickey || client?.public_key || config.public_key, "");
+}
+
 // ---------------- V2Ray 订阅 ----------------
 
 export function generateV2rayConfig(nodes: SubscriptionNode[], user: SubscriptionUser): string {
@@ -84,13 +108,14 @@ export function generateV2rayConfig(nodes: SubscriptionNode[], user: Subscriptio
       tls_host: endpoint.tlsHost
     };
     const config = endpoint.config;
+    const client = endpoint.client;
 
     switch (node.type) {
       case "v2ray":
         links.push(generateVmessLink(resolvedNode, config, user));
         break;
       case "vless":
-        links.push(generateVlessLink(resolvedNode, config, user));
+        links.push(generateVlessLink(resolvedNode, config, user, client));
         break;
       case "trojan":
         links.push(generateTrojanLink(resolvedNode, config, user));
@@ -141,7 +166,7 @@ function generateVmessLink(node: any, config: any, user: SubscriptionUser) {
   return `vmess://${b64encodeUtf8(JSON.stringify(vmessConfig))}`;
 }
 
-function generateVlessLink(node: any, config: any, user: SubscriptionUser) {
+function generateVlessLink(node: any, config: any, user: SubscriptionUser, client: any) {
   const params = new URLSearchParams();
   params.set("encryption", "none");
   params.set("type", config.stream_type || "tcp");
@@ -152,10 +177,11 @@ function generateVlessLink(node: any, config: any, user: SubscriptionUser) {
     if (config.alpn) params.set("alpn", config.alpn);
   } else if (config.tls_type === "reality") {
     params.set("security", "reality");
-    params.set("pbk", config.public_key || "");
+    params.set("pbk", resolveRealityPublicKey(config, client));
     params.set("fp", config.fingerprint || "chrome");
-    if (config.server_names) params.set("sni", config.server_names[0]);
-    if (config.short_ids) params.set("sid", config.short_ids[0]);
+    if (node.tls_host) params.set("sni", node.tls_host);
+    const shortId = pickRandomShortId(config.short_ids);
+    if (shortId) params.set("sid", shortId);
   }
 
   if (config.flow) params.set("flow", config.flow);
@@ -273,7 +299,7 @@ export function generateClashConfig(nodes: SubscriptionNode[], user: Subscriptio
   const proxyNames: string[] = [];
 
   for (const node of nodes) {
-    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
     let proxy: any = null;
 
     switch (node.type) {
@@ -320,14 +346,16 @@ export function generateClashConfig(nodes: SubscriptionNode[], user: Subscriptio
           if (config.alpn) proxy.alpn = String(config.alpn).split(",");
         }
         if (config.tls_type === "reality") {
-          proxy["reality-opts"] = {
-            "public-key": config.public_key || "",
-            "short-id": config.short_ids ? config.short_ids[0] : ""
+          const realityOpts: Record<string, string> = {
+            "public-key": resolveRealityPublicKey(config, client)
           };
-          proxy["client-fingerprint"] = config.fingerprint || "chrome";
-          if (config.server_names?.length) {
-            proxy.servername = config.server_names[0];
+          const shortId = pickRandomShortId(config.short_ids);
+          if (shortId) {
+            realityOpts["short-id"] = shortId;
           }
+          proxy["reality-opts"] = realityOpts;
+          proxy["client-fingerprint"] = config.fingerprint || "chrome";
+          if (tlsHost) proxy.servername = tlsHost;
         }
         if (config.flow) proxy.flow = config.flow;
         if (config.stream_type === "ws") {
@@ -520,7 +548,7 @@ function resolveSni(config: any, tlsHost: string, server: string): string {
   return ensureString(config.sni || tlsHost || server, "");
 }
 
-function buildSingboxTls(config: any, tlsHost: string, server: string, mode: "none" | "tls" | "reality") {
+function buildSingboxTls(config: any, tlsHost: string, server: string, mode: "none" | "tls" | "reality", client?: any) {
   if (mode === "none") return null;
   const tls: Record<string, unknown> = {
     enabled: true,
@@ -531,15 +559,15 @@ function buildSingboxTls(config: any, tlsHost: string, server: string, mode: "no
   if (alpn?.length) tls.alpn = alpn;
 
   if (mode === "reality") {
-    const serverName = resolveFirstString(config.server_names) || tlsHost || server;
+    const serverName = tlsHost || resolveFirstString(config.server_names) || server;
     tls.server_name = serverName;
     const utlsFingerprint = ensureString(config.fingerprint, "chrome");
     tls.utls = { enabled: true, fingerprint: utlsFingerprint };
     const reality: Record<string, unknown> = {
       enabled: true,
-      public_key: ensureString(config.public_key, "")
+      public_key: resolveRealityPublicKey(config, client)
     };
-    const shortId = resolveFirstString(config.short_ids);
+    const shortId = pickRandomShortId(config.short_ids);
     if (shortId) reality.short_id = shortId;
     tls.reality = reality;
   }
@@ -585,7 +613,7 @@ export function generateSingboxConfig(nodes: SubscriptionNode[], user: Subscript
   }
 
   for (const node of nodes) {
-    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
     const tag = resolveOutboundTag(node, usedTags);
     const matchName = ensureString(node.name, tag);
     let outbound: SingboxOutbound | null = null;
@@ -617,7 +645,7 @@ export function generateSingboxConfig(nodes: SubscriptionNode[], user: Subscript
           tcp_fast_open: false
         };
         const tlsMode = config.tls_type === "tls" ? "tls" : "none";
-        const tls = buildSingboxTls(config, tlsHost, server, tlsMode);
+        const tls = buildSingboxTls(config, tlsHost, server, tlsMode, client);
         if (tls) vmess.tls = tls;
         applySingboxTransport(vmess, config, server, tlsHost);
         outbound = vmess;
@@ -636,7 +664,7 @@ export function generateSingboxConfig(nodes: SubscriptionNode[], user: Subscript
         };
         if (config.flow) vless.flow = config.flow;
         const tlsMode = config.tls_type === "reality" ? "reality" : config.tls_type === "tls" ? "tls" : "none";
-        const tls = buildSingboxTls(config, tlsHost, server, tlsMode);
+        const tls = buildSingboxTls(config, tlsHost, server, tlsMode, client);
         if (tls) vless.tls = tls;
         applySingboxTransport(vless, config, server, tlsHost);
         outbound = vless;
@@ -653,7 +681,7 @@ export function generateSingboxConfig(nodes: SubscriptionNode[], user: Subscript
           network: config.network || "tcp",
           tcp_fast_open: false
         };
-        const tls = buildSingboxTls(config, tlsHost, server, "tls");
+        const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
         if (tls) trojan.tls = tls;
         applySingboxTransport(trojan, config, server, tlsHost);
         outbound = trojan;
@@ -672,7 +700,7 @@ export function generateSingboxConfig(nodes: SubscriptionNode[], user: Subscript
           network: config.network || "tcp",
           tcp_fast_open: false
         };
-        const tls = buildSingboxTls(config, tlsHost, server, "tls");
+        const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
         if (tls) hysteria.tls = tls;
         if (config.obfs && config.obfs !== "plain") {
           const obfs: Record<string, unknown> = { type: config.obfs };
@@ -693,7 +721,7 @@ export function generateSingboxConfig(nodes: SubscriptionNode[], user: Subscript
           network: config.network || "tcp",
           tcp_fast_open: false
         };
-        const tls = buildSingboxTls(config, tlsHost, server, "tls");
+        const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
         if (tls) anytls.tls = tls;
         outbound = anytls;
         break;
@@ -726,6 +754,74 @@ export function generateSingboxConfig(nodes: SubscriptionNode[], user: Subscript
   return JSON.stringify(singboxConfig, null, 2);
 }
 
+function pushOption(options: string[], key: string, value: unknown) {
+  if (value === undefined || value === null || value === "") return;
+  if (typeof value === "boolean") {
+    options.push(`${key}=${value ? "true" : "false"}`);
+  } else {
+    options.push(`${key}=${value}`);
+  }
+}
+
+function formatQuantumultXEntry(protocol: string, server: string, port: number, options: string[]) {
+  const endpoint = `${formatHostForUrl(server)}:${port}`;
+  return options.length ? `${protocol}=${endpoint}, ${options.join(", ")}` : `${protocol}=${endpoint}`;
+}
+
+function getHeaderHost(node: any, config: any) {
+  return node.tls_host || config.sni || config.host || config.server || node.server;
+}
+
+function applyStreamOptions(options: string[], node: any, config: any) {
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  const isTLS = config.tls_type === "tls";
+  const host = getHeaderHost(node, config);
+
+  if (streamType === "ws") {
+    pushOption(options, "obfs", isTLS ? "wss" : "ws");
+    pushOption(options, "obfs-host", host);
+    pushOption(options, "obfs-uri", normalizePath(config.path));
+  } else if (streamType === "http") {
+    pushOption(options, "obfs", "http");
+    pushOption(options, "obfs-host", host);
+    pushOption(options, "obfs-uri", normalizePath(config.path));
+  } else if (isTLS) {
+    pushOption(options, "obfs", "over-tls");
+    pushOption(options, "obfs-host", host);
+  }
+}
+
+function buildQuantumultXVlessEntry(node: any, config: any, user: SubscriptionUser, client: any) {
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  if (streamType === "grpc") {
+    return "";
+  }
+
+  const options: string[] = [];
+  pushOption(options, "method", "none");
+  pushOption(options, "password", user.uuid);
+  pushOption(options, "fast-open", false);
+  pushOption(options, "udp-relay", false);
+
+  if (config.tls_type === "reality") {
+    pushOption(options, "obfs", "over-tls");
+    pushOption(options, "obfs-host", getHeaderHost(node, config));
+    pushOption(options, "reality-base64-pubkey", resolveRealityPublicKey(config, client));
+    const shortId = pickRandomShortId(config.short_ids);
+    if (shortId) {
+      pushOption(options, "reality-hex-shortid", shortId);
+    }
+    if (config.flow) {
+      pushOption(options, "vless-flow", config.flow);
+    }
+  } else {
+    applyStreamOptions(options, node, config);
+  }
+
+  pushOption(options, "tag", node.name);
+  return formatQuantumultXEntry("vless", node.server, node.server_port, options);
+}
+
 // ---------------- QuantumultX / Shadowrocket / Surge ----------------
 
 export function generateQuantumultXConfig(nodes: SubscriptionNode[], user: SubscriptionUser): string {
@@ -733,7 +829,7 @@ export function generateQuantumultXConfig(nodes: SubscriptionNode[], user: Subsc
   const entries: string[] = [];
 
   for (const node of nodes) {
-    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
     let line = "";
 
     switch (node.type) {
@@ -743,9 +839,12 @@ export function generateQuantumultXConfig(nodes: SubscriptionNode[], user: Subsc
         }, tag=${node.name}`;
         break;
       case "vless":
-        line = `vmess=${server}:${port}, method=${config.security || "auto"}, password=${
-          user.uuid
-        }, tag=${node.name}`;
+        line = buildQuantumultXVlessEntry(
+          { ...node, server, server_port: port, tls_host: tlsHost },
+          config,
+          user,
+          client
+        );
         break;
       case "trojan":
         line = `trojan=${server}:${port}, password=${user.passwd}, sni=${tlsHost || config.sni || server}, tag=${
@@ -772,13 +871,15 @@ export function generateShadowrocketConfig(nodes: SubscriptionNode[], user: Subs
   const lines: string[] = [];
 
   for (const node of nodes) {
-    const { config, server, port } = resolveNodeEndpoint(node);
+    const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
     let line = "";
 
     switch (node.type) {
       case "v2ray":
-      case "vless":
         line = `vmess://${user.uuid}@${server}:${port}#${encodeURIComponent(String(node.name))}`;
+        break;
+      case "vless":
+        line = generateVlessLink({ ...node, server, server_port: port, tls_host: tlsHost }, config, user, client);
         break;
       case "trojan":
         line = `trojan://${encodeURIComponent(String(user.passwd ?? ""))}@${server}:${port}#${encodeURIComponent(
