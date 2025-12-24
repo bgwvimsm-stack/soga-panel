@@ -50,11 +50,19 @@ export class AuthService {
     this.env = env;
     const expireMinutesEnv = env.MAIL_VERIFICATION_EXPIRE_MINUTES;
     const expireMinutes = expireMinutesEnv
-      ? Math.max(1, Number.parseInt(expireMinutesEnv, 10) || 15)
-      : 15;
+      ? Math.max(1, Number.parseInt(expireMinutesEnv, 10) || 10)
+      : 10;
     this.emailCodeService = new EmailCodeService(db, expireMinutes * 60);
     this.emailService = new EmailService(env);
     this.twoFactorService = new TwoFactorService(env);
+  }
+
+  private getVerificationAttemptLimit() {
+    const raw = this.env.MAIL_VERIFICATION_ATTEMPT_LIMIT;
+    const parsed =
+      typeof raw === "string" ? Number.parseInt(raw, 10) : Number.NaN;
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    return 5;
   }
 
   async register(
@@ -334,13 +342,30 @@ export class AuthService {
     return result;
   }
 
+  async verifyEmailCode(email: string, purpose: string, code: string) {
+    const trimmedCode = (code || "").trim();
+    if (!trimmedCode) {
+      return { success: false, message: "请填写邮箱验证码" };
+    }
+    if (!/^\d{6}$/.test(trimmedCode)) {
+      return { success: false, message: "验证码格式不正确，请输入6位数字验证码" };
+    }
+    const attemptLimit = this.getVerificationAttemptLimit();
+    return await this.emailCodeService.verifyCode(
+      email.toLowerCase(),
+      purpose,
+      trimmedCode,
+      { attemptLimit }
+    );
+  }
+
   async resetPasswordWithCode(email: string, code: string, newPassword: string) {
-    const verifyResult = await this.emailCodeService.verifyCode(email, "password_reset", code);
+    const verifyResult = await this.verifyEmailCode(email, "password_reset", code);
     if (!verifyResult.success) {
       return { success: false, message: verifyResult.message };
     }
 
-    const user = await this.db.getUserByEmail(email);
+    const user = await this.db.getUserByEmail(email.toLowerCase());
     if (!user) {
       return { success: false, message: "用户不存在" };
     }

@@ -260,14 +260,9 @@ export function startSchedulers(db: DatabaseService, cache: CacheService, env: A
           console.error("[scheduler] monthly traffic reset failed", e);
         }
 
-        // 5）节点状态/在线 IP 清理（保留近 7 天）
-        await db.db
-          .prepare("DELETE FROM node_status WHERE created_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY)")
-          .run();
-        await db.db
-          .prepare("DELETE FROM online_ips WHERE last_seen < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY)")
-          .run();
-        console.log("[scheduler] node status/online ip cleanup done");
+        // 5）节点状态清理（对齐 Worker：每日清空）
+        await db.db.prepare("DELETE FROM node_status").run();
+        console.log("[scheduler] node status cleanup done");
 
         updateJobStatus("dailyTasks", {
           lastResult: "success",

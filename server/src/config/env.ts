@@ -1,6 +1,9 @@
 import dotenv from "dotenv";
+import path from "node:path";
 import { z } from "zod";
 
+// 兼容从不同工作目录启动（例如在仓库根目录执行 `node server/dist/index.js`）
+dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 dotenv.config();
 
 const envSchema = z.object({
@@ -26,6 +29,11 @@ const envSchema = z.object({
   MAIL_SMTP_PORT: z.coerce.number().int().positive().optional(),
   MAIL_SMTP_USER: z.string().optional(),
   MAIL_SMTP_PASS: z.string().optional(),
+  // 兼容 worker/docs 里使用的 SMTP_* 命名
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().positive().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASS: z.string().optional(),
   SMTP_SECURE: z.string().optional(),
   SMTP_STARTTLS: z.string().optional(),
   SMTP_AUTH_TYPE: z.string().optional(),
@@ -70,7 +78,7 @@ export function loadEnv(): AppEnv {
   const parsed = envSchema.safeParse(process.env);
 
   if (!parsed.success) {
-    const message = parsed.error.errors
+    const message = parsed.error.issues
       .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
       .join("; ");
     throw new Error(`Invalid environment variables: ${message}`);
