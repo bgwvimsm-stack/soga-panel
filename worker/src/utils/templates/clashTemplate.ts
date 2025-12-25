@@ -348,16 +348,31 @@ export function buildClashTemplate(
   }
 
   return {
-    port: 7890,
+    "mixed-port": 7890,
     "socks-port": 7891,
     "allow-lan": true,
-    mode: "Rule",
+    "bind-address": "*",
+    mode: "rule",
     "log-level": "info",
-    "external-controller": ":9090",
+    "external-controller": "127.0.0.1:9090",
     dns: {
       enable: true,
-      nameserver: ["119.29.29.29", "223.5.5.5"],
-      fallback: ["8.8.8.8", "8.8.4.4", "1.1.1.1", "tls://1.0.0.1:853", "tls://dns.google:853"]
+      ipv6: false,
+      "default-nameserver": ["223.5.5.5", "119.29.29.29", "114.114.114.114"],
+      "enhanced-mode": "fake-ip",
+      "fake-ip-range": "198.18.0.1/16",
+      "use-hosts": true,
+      "respect-rules": true,
+      "proxy-server-nameserver": ["223.5.5.5", "119.29.29.29", "114.114.114.114"],
+      nameserver: ["223.5.5.5", "119.29.29.29", "114.114.114.114"],
+      fallback: ["1.1.1.1", "8.8.8.8"],
+      "fallback-filter": {
+        geoip: true,
+        "geoip-code": "CN",
+        geosite: ["gfw"],
+        ipcidr: ["240.0.0.0/4"],
+        domain: ["+.google.com", "+.facebook.com", "+.youtube.com"]
+      }
     },
     proxies,
     "proxy-groups": groups,
