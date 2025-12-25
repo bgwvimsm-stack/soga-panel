@@ -29,6 +29,7 @@ const envSchema = z.object({
   MAIL_SMTP_PORT: z.coerce.number().int().positive().optional(),
   MAIL_SMTP_USER: z.string().optional(),
   MAIL_SMTP_PASS: z.string().optional(),
+  MAIL_SMTP_DRIVER: z.string().optional(),
   // 兼容 worker/docs 里使用的 SMTP_* 命名
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().int().positive().optional(),
@@ -37,6 +38,7 @@ const envSchema = z.object({
   SMTP_SECURE: z.string().optional(),
   SMTP_STARTTLS: z.string().optional(),
   SMTP_AUTH_TYPE: z.string().optional(),
+  SMTP_DRIVER: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().optional(),

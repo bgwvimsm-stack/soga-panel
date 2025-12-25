@@ -26,6 +26,8 @@ Node/Express 后端，复用 Worker 逻辑但改用 MariaDB/Redis，支持本地
 - 邮件：`MAIL_PROVIDER`（none/resend/smtp/sendgrid）、`MAIL_FROM`（Resend 需使用已验证域名或 `onboarding@resend.dev`）
   - Resend：`RESEND_API_KEY`（或兼容 `MAIL_RESEND_KEY`）
   - SMTP：`MAIL_SMTP_HOST/PORT/USER/PASS`（或兼容 `SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS`）
+    - 驱动：`MAIL_SMTP_DRIVER`（或 `SMTP_DRIVER`，可选：nodemailer/emailjs；默认 Gmail 主机优先 emailjs）
+    - Gmail 建议：使用“应用专用密码”（需开启两步验证后生成），并配置 `MAIL_SMTP_HOST=smtp.gmail.com`、`MAIL_SMTP_PORT=465`、`SMTP_SECURE=true`
   - SendGrid：`SENDGRID_API_KEY`
 - 节点鉴权：`NODE_API_KEY`
 - 支付：`EPAY_PID/EPAY_KEY/EPAY_API_URL/EPAY_NOTIFY_URL/EPAY_RETURN_URL`、`EPUSDT_TOKEN/EPUSDT_API_URL/EPUSDT_NOTIFY_URL/EPUSDT_RETURN_URL`

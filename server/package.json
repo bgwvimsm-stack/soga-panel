@@ -17,6 +17,7 @@
     "mysql2": "^3.16.0",
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.12",
+    "emailjs": "^5.0.0",
     "qrcode": "^1.5.4",
     "resend": "^6.6.0",
     "speakeasy": "^2.0.0",
