@@ -351,7 +351,6 @@ export function buildClashTemplate(
     "mixed-port": 7890,
     "socks-port": 7891,
     "allow-lan": true,
-    "bind-address": "*",
     mode: "rule",
     "log-level": "info",
     "external-controller": "127.0.0.1:9090",
