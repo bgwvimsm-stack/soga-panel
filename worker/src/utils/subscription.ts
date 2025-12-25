@@ -921,7 +921,6 @@ function buildQuantumultXTrojanEntry(node, config, user) {
     return "";
   }
   const isWebsocket = streamType === "ws";
-  const tlsEnabled = config.tls_type === "tls" || isWebsocket;
   const host = getHeaderHost(node, config);
 
   pushOption(options, "password", user.passwd);
@@ -929,15 +928,13 @@ function buildQuantumultXTrojanEntry(node, config, user) {
   pushOption(options, "tls-verification", false);
 
   if (isWebsocket) {
-    pushOption(options, "obfs", tlsEnabled ? "wss" : "ws");
+    pushOption(options, "obfs", "wss");
     pushOption(options, "obfs-host", host);
     pushOption(options, "obfs-uri", normalizePath(config.path));
     pushOption(options, "udp-relay", true);
   } else {
-    if (tlsEnabled) {
-      pushOption(options, "over-tls", true);
-      pushOption(options, "tls-host", host);
-    }
+    pushOption(options, "over-tls", true);
+    pushOption(options, "tls-host", host);
     pushOption(options, "udp-relay", false);
   }
 

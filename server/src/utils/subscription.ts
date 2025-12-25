@@ -822,6 +822,35 @@ function buildQuantumultXVlessEntry(node: any, config: any, user: SubscriptionUs
   return formatQuantumultXEntry("vless", node.server, node.server_port, options);
 }
 
+function buildQuantumultXTrojanEntry(node: any, config: any, user: SubscriptionUser) {
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  if (streamType === "grpc") {
+    return "";
+  }
+
+  const options: string[] = [];
+  const isWebsocket = streamType === "ws";
+  const host = getHeaderHost(node, config);
+
+  pushOption(options, "password", user.passwd);
+  pushOption(options, "fast-open", false);
+  pushOption(options, "tls-verification", false);
+
+  if (isWebsocket) {
+    pushOption(options, "obfs", "wss");
+    pushOption(options, "obfs-host", host);
+    pushOption(options, "obfs-uri", normalizePath(config.path));
+    pushOption(options, "udp-relay", true);
+  } else {
+    pushOption(options, "over-tls", true);
+    pushOption(options, "tls-host", host);
+    pushOption(options, "udp-relay", false);
+  }
+
+  pushOption(options, "tag", node.name);
+  return formatQuantumultXEntry("trojan", node.server, node.server_port, options);
+}
+
 // ---------------- QuantumultX / Shadowrocket / Surge ----------------
 
 export function generateQuantumultXConfig(nodes: SubscriptionNode[], user: SubscriptionUser): string {
@@ -847,9 +876,11 @@ export function generateQuantumultXConfig(nodes: SubscriptionNode[], user: Subsc
         );
         break;
       case "trojan":
-        line = `trojan=${server}:${port}, password=${user.passwd}, sni=${tlsHost || config.sni || server}, tag=${
-          node.name
-        }`;
+        line = buildQuantumultXTrojanEntry(
+          { ...node, server, server_port: port, tls_host: tlsHost },
+          config,
+          user
+        );
         break;
       case "ss":
         line = `shadowsocks=${server}:${port}, method=${config.cipher || "aes-128-gcm"}, password=${buildSS2022Password(
