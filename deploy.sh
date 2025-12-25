@@ -73,7 +73,7 @@ cd worker
 
 # 部署后端到 Cloudflare Workers
 print_info "部署后端到 Cloudflare Workers..."
-wrangler deploy --var BUILD_TIME:"$(date +"%Y/%m/%d %H:%M:%S")"
+wrangler deploy --minify --var BUILD_TIME:"$(date +"%Y/%m/%d %H:%M:%S")"
 
 print_success "后端部署完成"
 

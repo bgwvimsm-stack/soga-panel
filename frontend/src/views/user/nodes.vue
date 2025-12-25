@@ -676,8 +676,9 @@ const nodeConfigJson = computed(() => {
 
         // Reality 配置
         if (nodeConfig.tls_type === "reality") {
+          const publicKey = client?.publickey || (client as any)?.public_key || nodeConfig.public_key || "";
           vlessConfig["reality-opts"] = {
-            "public-key": nodeConfig.public_key || "",
+            "public-key": publicKey,
             "short-id": nodeConfig.short_ids ? nodeConfig.short_ids[0] : ""
           };
           vlessConfig["client-fingerprint"] = nodeConfig.fingerprint || "chrome";

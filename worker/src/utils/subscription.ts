@@ -32,6 +32,30 @@ function resolveNodeEndpoint(node: any) {
   };
 }
 
+function normalizeStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function pickRandomShortId(value: unknown): string {
+  const list = normalizeStringList(value);
+  if (!list.length) return "";
+  const index = Math.floor(Math.random() * list.length);
+  return list[index];
+}
+
+function resolveRealityPublicKey(config: any, client: any) {
+  return ensureString(client?.publickey || client?.public_key || config.public_key, "");
+}
+
 /**
  * 生成 V2Ray 订阅配置
  * @param {Array} nodes - 节点列表
@@ -45,13 +69,14 @@ export function generateV2rayConfig(nodes, user) {
     const endpoint = resolveNodeEndpoint(node);
     const nodeResolved = { ...node, server: endpoint.server, server_port: endpoint.port, tls_host: endpoint.tlsHost };
     const config = endpoint.config;
+    const client = endpoint.client;
 
     switch (node.type) {
       case "v2ray":
         links.push(generateVmessLink(nodeResolved, config, user));
         break;
       case "vless":
-        links.push(generateVlessLink(nodeResolved, config, user));
+        links.push(generateVlessLink(nodeResolved, config, user, client));
         break;
       case "trojan":
         links.push(generateTrojanLink(nodeResolved, config, user));
@@ -94,7 +119,7 @@ function generateVmessLink(node, config, user) {
 /**
  * 生成 VLESS 链接
  */
-function generateVlessLink(node, config, user) {
+function generateVlessLink(node, config, user, client) {
   const params = new URLSearchParams();
 
   params.set("encryption", "none");
@@ -106,10 +131,11 @@ function generateVlessLink(node, config, user) {
     if (config.alpn) params.set("alpn", config.alpn);
   } else if (config.tls_type === "reality") {
     params.set("security", "reality");
-    params.set("pbk", config.public_key || "");
+    params.set("pbk", resolveRealityPublicKey(config, client));
     params.set("fp", config.fingerprint || "chrome");
-    if (config.server_names) params.set("sni", config.server_names[0]);
-    if (config.short_ids) params.set("sid", config.short_ids[0]);
+    if (node.tls_host) params.set("sni", node.tls_host);
+    const shortId = pickRandomShortId(config.short_ids);
+    if (shortId) params.set("sid", shortId);
   }
 
   if (config.flow) params.set("flow", config.flow);
@@ -249,7 +275,7 @@ export function generateClashConfig(nodes, user) {
   const proxyNames = [];
 
   for (const node of nodes) {
-    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
     let proxy = null;
 
     switch (node.type) {
@@ -329,13 +355,17 @@ export function generateClashConfig(nodes, user) {
 
         // Reality 配置
         if (config.tls_type === "reality") {
-          proxy["reality-opts"] = {
-            "public-key": config.public_key || "",
-            "short-id": config.short_ids ? config.short_ids[0] : "",
+          const realityOpts: Record<string, string> = {
+            "public-key": resolveRealityPublicKey(config, client)
           };
+          const shortId = pickRandomShortId(config.short_ids);
+          if (shortId) {
+            realityOpts["short-id"] = shortId;
+          }
+          proxy["reality-opts"] = realityOpts;
           proxy["client-fingerprint"] = config.fingerprint || "chrome";
-          if (config.server_names && config.server_names.length > 0) {
-            proxy.servername = config.server_names[0];
+          if (tlsHost) {
+            proxy.servername = tlsHost;
           }
         }
 
@@ -570,7 +600,7 @@ function resolveSni(config: any, tlsHost: string, server: string): string {
   return ensureString(config.sni || tlsHost || server, "");
 }
 
-function buildSingboxTls(config: any, tlsHost: string, server: string, mode: "none" | "tls" | "reality") {
+function buildSingboxTls(config: any, tlsHost: string, server: string, mode: "none" | "tls" | "reality", client?: any) {
   if (mode === "none") return null;
   const tls: Record<string, unknown> = {
     enabled: true,
@@ -581,15 +611,15 @@ function buildSingboxTls(config: any, tlsHost: string, server: string, mode: "no
   if (alpn?.length) tls.alpn = alpn;
 
   if (mode === "reality") {
-    const serverName = resolveFirstString(config.server_names) || tlsHost || server;
+    const serverName = tlsHost || resolveFirstString(config.server_names) || server;
     tls.server_name = serverName;
     const utlsFingerprint = ensureString(config.fingerprint, "chrome");
     tls.utls = { enabled: true, fingerprint: utlsFingerprint };
     const reality: Record<string, unknown> = {
       enabled: true,
-      public_key: ensureString(config.public_key, "")
+      public_key: resolveRealityPublicKey(config, client)
     };
-    const shortId = resolveFirstString(config.short_ids);
+    const shortId = pickRandomShortId(config.short_ids);
     if (shortId) reality.short_id = shortId;
     tls.reality = reality;
   }
@@ -635,7 +665,7 @@ export function generateSingboxConfig(nodes, user): string {
   }
 
   for (const node of nodes) {
-    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
     const tag = resolveOutboundTag(node, usedTags);
     const matchName = ensureString(node.name, tag);
     let outbound: SingboxOutbound | null = null;
@@ -667,7 +697,7 @@ export function generateSingboxConfig(nodes, user): string {
           tcp_fast_open: false
         };
         const tlsMode = config.tls_type === "tls" ? "tls" : "none";
-        const tls = buildSingboxTls(config, tlsHost, server, tlsMode);
+        const tls = buildSingboxTls(config, tlsHost, server, tlsMode, client);
         if (tls) vmess.tls = tls;
         applySingboxTransport(vmess, config, server, tlsHost);
         outbound = vmess;
@@ -686,7 +716,7 @@ export function generateSingboxConfig(nodes, user): string {
         };
         if (config.flow) vless.flow = config.flow;
         const tlsMode = config.tls_type === "reality" ? "reality" : config.tls_type === "tls" ? "tls" : "none";
-        const tls = buildSingboxTls(config, tlsHost, server, tlsMode);
+        const tls = buildSingboxTls(config, tlsHost, server, tlsMode, client);
         if (tls) vless.tls = tls;
         applySingboxTransport(vless, config, server, tlsHost);
         outbound = vless;
@@ -703,7 +733,7 @@ export function generateSingboxConfig(nodes, user): string {
           network: config.network || "tcp",
           tcp_fast_open: false
         };
-        const tls = buildSingboxTls(config, tlsHost, server, "tls");
+        const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
         if (tls) trojan.tls = tls;
         applySingboxTransport(trojan, config, server, tlsHost);
         outbound = trojan;
@@ -722,7 +752,7 @@ export function generateSingboxConfig(nodes, user): string {
           network: config.network || "tcp",
           tcp_fast_open: false
         };
-        const tls = buildSingboxTls(config, tlsHost, server, "tls");
+        const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
         if (tls) hysteria.tls = tls;
         if (config.obfs && config.obfs !== "plain") {
           const obfs: Record<string, unknown> = { type: config.obfs };
@@ -743,7 +773,7 @@ export function generateSingboxConfig(nodes, user): string {
           network: config.network || "tcp",
           tcp_fast_open: false
         };
-        const tls = buildSingboxTls(config, tlsHost, server, "tls");
+        const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
         if (tls) anytls.tls = tls;
         outbound = anytls;
         break;
@@ -786,7 +816,7 @@ export function generateQuantumultXConfig(nodes, user) {
   const entries = [];
 
   for (const node of nodes) {
-    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
     let line = "";
 
     switch (node.type) {
@@ -794,7 +824,7 @@ export function generateQuantumultXConfig(nodes, user) {
         line = buildQuantumultXVmessEntry({ ...node, server, server_port: port, tls_host: tlsHost }, config, user);
         break;
       case "vless":
-        line = buildQuantumultXVlessEntry({ ...node, server, server_port: port, tls_host: tlsHost }, config, user);
+        line = buildQuantumultXVlessEntry({ ...node, server, server_port: port, tls_host: tlsHost }, config, user, client);
         break;
       case "trojan":
         line = buildQuantumultXTrojanEntry({ ...node, server, server_port: port, tls_host: tlsHost }, config, user);
@@ -853,9 +883,9 @@ function buildQuantumultXVmessEntry(node, config, user) {
   return formatQuantumultXEntry("vmess", node.server, node.server_port, options);
 }
 
-function buildQuantumultXVlessEntry(node, config, user) {
+function buildQuantumultXVlessEntry(node, config, user, client) {
   const streamType = String(config.stream_type || "tcp").toLowerCase();
-  if (streamType === "grpc" || config.tls_type === "reality") {
+  if (streamType === "grpc") {
     return "";
   }
 
@@ -865,7 +895,20 @@ function buildQuantumultXVlessEntry(node, config, user) {
   pushOption(options, "fast-open", false);
   pushOption(options, "udp-relay", false);
 
-  applyStreamOptions(options, node, config);
+  if (config.tls_type === "reality") {
+    pushOption(options, "obfs", "over-tls");
+    pushOption(options, "obfs-host", getHeaderHost(node, config));
+    pushOption(options, "reality-base64-pubkey", resolveRealityPublicKey(config, client));
+    const shortId = pickRandomShortId(config.short_ids);
+    if (shortId) {
+      pushOption(options, "reality-hex-shortid", shortId);
+    }
+    if (config.flow) {
+      pushOption(options, "vless-flow", config.flow);
+    }
+  } else {
+    applyStreamOptions(options, node, config);
+  }
   pushOption(options, "tag", node.name);
   return formatQuantumultXEntry("vless", node.server, node.server_port, options);
 }
@@ -974,7 +1017,7 @@ export function generateShadowrocketConfig(nodes, user) {
   const links = [];
 
   for (const node of nodes) {
-    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
     const nodeResolved = { ...node, server, server_port: port, tls_host: tlsHost };
 
     switch (nodeResolved.type) {
@@ -982,7 +1025,7 @@ export function generateShadowrocketConfig(nodes, user) {
         links.push(generateVmessLink(nodeResolved, config, user));
         break;
       case "vless":
-        links.push(generateVlessLink(nodeResolved, config, user));
+        links.push(generateVlessLink(nodeResolved, config, user, client));
         break;
       case "trojan":
         links.push(generateTrojanLink(nodeResolved, config, user));

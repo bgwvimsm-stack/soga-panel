@@ -479,6 +479,20 @@
                         <el-input v-model="nodeForm.config_private_key" placeholder="Reality private key" />
                       </el-form-item>
                     </el-col>
+                    <el-col :span="12">
+                      <el-form-item label="PublicKey">
+                        <el-input v-model="nodeForm.client_publickey" placeholder="Reality public key" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="24">
+                      <el-form-item>
+                        <el-button type="primary" plain @click="regenerateVlessReality">
+                          一键生成 Short IDs / PrivateKey / PublicKey
+                        </el-button>
+                      </el-form-item>
+                    </el-col>
                   </el-row>
                 </template>
               </template>
@@ -746,6 +760,7 @@ const nodeForm = reactive({
   basic_push_interval: 60,
   basic_speed_limit: 0,
   client_tls_host: '',
+  client_publickey: '',
   config_method: '',
   config_password: '',
   config_protocol: '',
@@ -807,6 +822,278 @@ const ensureHysteriaObfsPassword = (forceRegenerate = false) => {
   if (needAuto && (forceRegenerate || !nodeForm.config_obfs_password)) {
     nodeForm.config_obfs_password = generateHysteriaObfsPassword();
   }
+};
+
+const getRandomBytes = (length: number) => {
+  const bytes = new Uint8Array(length);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return bytes;
+};
+
+const generateRandomString = (length: number, charset: string) => {
+  const bytes = getRandomBytes(length);
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += charset[bytes[i] % charset.length];
+  }
+  return result;
+};
+
+const generateSSRPassword = (length = 8) => generateRandomString(length, 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789');
+
+const ensureSSRPassword = (forceRegenerate = false) => {
+  if (nodeForm.type !== 'ssr') return;
+  if (forceRegenerate || !nodeForm.config_password) {
+    nodeForm.config_password = generateSSRPassword();
+  }
+};
+
+const bytesToBase64Url = (bytes: Uint8Array) => {
+  let binary = '';
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+
+const base64UrlToBytes = (value: string) => {
+  if (!value) return new Uint8Array(0);
+  let normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padding = normalized.length % 4;
+  if (padding) normalized += '='.repeat(4 - padding);
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+};
+
+const gf = (init?: number[]) => {
+  const r = new Float64Array(16);
+  if (init) {
+    for (let i = 0; i < init.length; i++) r[i] = init[i];
+  }
+  return r;
+};
+
+const X25519_BASE = new Uint8Array(32);
+X25519_BASE[0] = 9;
+const x25519Const = gf([0xDB41, 1]);
+
+const car25519 = (o: Float64Array) => {
+  for (let i = 0; i < 16; i++) {
+    o[i] += 65536;
+    const c = Math.floor(o[i] / 65536);
+    if (i < 15) {
+      o[i + 1] += c - 1;
+    } else {
+      o[0] += 38 * (c - 1);
+    }
+    o[i] -= c * 65536;
+  }
+};
+
+const sel25519 = (p: Float64Array, q: Float64Array, b: number) => {
+  const c = ~(b - 1);
+  for (let i = 0; i < 16; i++) {
+    const t = c & (p[i] ^ q[i]);
+    p[i] ^= t;
+    q[i] ^= t;
+  }
+};
+
+const pack25519 = (o: Uint8Array, n: Float64Array) => {
+  const m = gf();
+  const t = gf();
+  for (let i = 0; i < 16; i++) t[i] = n[i];
+  car25519(t);
+  car25519(t);
+  car25519(t);
+  for (let j = 0; j < 2; j++) {
+    m[0] = t[0] - 0xffed;
+    for (let i = 1; i < 15; i++) {
+      m[i] = t[i] - 0xffff - ((m[i - 1] >> 16) & 1);
+      m[i - 1] &= 0xffff;
+    }
+    m[15] = t[15] - 0x7fff - ((m[14] >> 16) & 1);
+    const b = (m[15] >> 16) & 1;
+    m[14] &= 0xffff;
+    sel25519(t, m, 1 - b);
+  }
+  for (let i = 0; i < 16; i++) {
+    o[2 * i] = t[i] & 0xff;
+    o[2 * i + 1] = t[i] >> 8;
+  }
+};
+
+const unpack25519 = (o: Float64Array, n: Uint8Array) => {
+  for (let i = 0; i < 16; i++) o[i] = n[2 * i] + (n[2 * i + 1] << 8);
+  o[15] &= 0x7fff;
+};
+
+const A = (o: Float64Array, a: Float64Array, b: Float64Array) => {
+  for (let i = 0; i < 16; i++) o[i] = a[i] + b[i];
+};
+
+const Z = (o: Float64Array, a: Float64Array, b: Float64Array) => {
+  for (let i = 0; i < 16; i++) o[i] = a[i] - b[i];
+};
+
+const M = (o: Float64Array, a: Float64Array, b: Float64Array) => {
+  const t = new Float64Array(31);
+  for (let i = 0; i < 16; i++) {
+    for (let j = 0; j < 16; j++) {
+      t[i + j] += a[i] * b[j];
+    }
+  }
+  for (let i = 0; i < 15; i++) {
+    t[i] += 38 * t[i + 16];
+  }
+  for (let i = 0; i < 16; i++) o[i] = t[i];
+  car25519(o);
+  car25519(o);
+};
+
+const S = (o: Float64Array, a: Float64Array) => {
+  M(o, a, a);
+};
+
+const inv25519 = (o: Float64Array, i: Float64Array) => {
+  const c = gf();
+  for (let a = 0; a < 16; a++) c[a] = i[a];
+  for (let a = 253; a >= 0; a--) {
+    S(c, c);
+    if (a !== 2 && a !== 4) M(c, c, i);
+  }
+  for (let a = 0; a < 16; a++) o[a] = c[a];
+};
+
+const scalarMult = (q: Uint8Array, n: Uint8Array, p: Uint8Array) => {
+  const z = new Uint8Array(32);
+  const x = gf();
+  const a = gf();
+  const b = gf();
+  const c = gf();
+  const d = gf();
+  const e = gf();
+  const f = gf();
+  for (let i = 0; i < 31; i++) z[i] = n[i];
+  z[31] = (n[31] & 127) | 64;
+  z[0] &= 248;
+  unpack25519(x, p);
+  for (let i = 0; i < 16; i++) {
+    b[i] = x[i];
+    d[i] = 0;
+    a[i] = 0;
+    c[i] = 0;
+  }
+  a[0] = 1;
+  d[0] = 1;
+  for (let i = 254; i >= 0; --i) {
+    const r = (z[i >>> 3] >>> (i & 7)) & 1;
+    sel25519(a, b, r);
+    sel25519(c, d, r);
+    A(e, a, c);
+    Z(a, a, c);
+    A(c, b, d);
+    Z(b, b, d);
+    S(d, e);
+    S(f, a);
+    M(a, c, a);
+    M(c, b, e);
+    A(e, a, c);
+    Z(a, a, c);
+    S(b, a);
+    Z(c, d, f);
+    M(a, c, x25519Const);
+    A(a, a, d);
+    M(c, c, a);
+    M(a, d, f);
+    M(d, b, x);
+    S(b, e);
+    sel25519(a, b, r);
+    sel25519(c, d, r);
+  }
+  inv25519(c, c);
+  M(a, a, c);
+  pack25519(q, a);
+};
+
+const clampScalar = (scalar: Uint8Array) => {
+  scalar[0] &= 248;
+  scalar[31] &= 127;
+  scalar[31] |= 64;
+};
+
+const generateX25519KeyPair = () => {
+  const privateKeyBytes = getRandomBytes(32);
+  clampScalar(privateKeyBytes);
+  const publicKeyBytes = new Uint8Array(32);
+  scalarMult(publicKeyBytes, privateKeyBytes, X25519_BASE);
+  return {
+    privateKey: bytesToBase64Url(privateKeyBytes),
+    publicKey: bytesToBase64Url(publicKeyBytes)
+  };
+};
+
+const deriveX25519PublicKey = (privateKey: string) => {
+  try {
+    const privateKeyBytes = base64UrlToBytes(privateKey);
+    if (privateKeyBytes.length !== 32) return '';
+    clampScalar(privateKeyBytes);
+    const publicKeyBytes = new Uint8Array(32);
+    scalarMult(publicKeyBytes, privateKeyBytes, X25519_BASE);
+    return bytesToBase64Url(publicKeyBytes);
+  } catch {
+    return '';
+  }
+};
+
+const generateShortIds = (count = 5, byteLength = 8) => {
+  const list: string[] = [];
+  for (let i = 0; i < count; i++) {
+    const bytes = getRandomBytes(byteLength);
+    let hex = '';
+    bytes.forEach((b) => { hex += b.toString(16).padStart(2, '0'); });
+    list.push(hex);
+  }
+  return list;
+};
+
+const ensureVlessRealityDefaults = (forceRegenerate = false) => {
+  if (nodeForm.type !== 'vless' || nodeForm.config_tls_type !== 'reality') return;
+
+  if (forceRegenerate || !nodeForm.config_flow) {
+    nodeForm.config_flow = 'xtls-rprx-vision';
+  }
+
+  if (forceRegenerate || !nodeForm.config_short_ids) {
+    nodeForm.config_short_ids = generateShortIds().join(',');
+  }
+
+  if (forceRegenerate) {
+    const pair = generateX25519KeyPair();
+    nodeForm.config_private_key = pair.privateKey;
+    nodeForm.client_publickey = pair.publicKey;
+    return;
+  }
+
+  if (!nodeForm.config_private_key && !nodeForm.client_publickey) {
+    const pair = generateX25519KeyPair();
+    nodeForm.config_private_key = pair.privateKey;
+    nodeForm.client_publickey = pair.publicKey;
+    return;
+  }
+
+  if (nodeForm.config_private_key && !nodeForm.client_publickey) {
+    const derived = deriveX25519PublicKey(nodeForm.config_private_key);
+    if (derived) nodeForm.client_publickey = derived;
+  }
+};
+
+const regenerateVlessReality = () => {
+  ensureVlessRealityDefaults(true);
 };
 
 const nodeRules = {
@@ -961,6 +1248,7 @@ type NodeConfigState = {
     server: string;
     port: number | null;
     tls_host: string;
+    publickey?: string;
   };
 };
 
@@ -990,7 +1278,7 @@ const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
       ? { stream_type: 'tcp', path: '', service_name: '' }
       : {}),
     ...(type === 'vless'
-      ? { stream_type: 'tcp', tls_type: 'tls', path: '', service_name: '' }
+      ? { stream_type: 'tcp', tls_type: 'tls' }
       : {}),
     ...(type === 'hysteria'
       ? { obfs: 'plain', obfs_password: '', up_mbps: 1000, down_mbps: 1000 }
@@ -1014,7 +1302,8 @@ const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
   client: {
     server: '',
     port: type === 'anytls' ? 443 : null,
-    tls_host: ''
+    tls_host: '',
+    publickey: ''
   }
 });
 
@@ -1073,6 +1362,7 @@ const applyConfigToState = (config: any) => {
 
   nodeForm.client_server = nodeConfigState.client.server || '';
   nodeForm.client_tls_host = (nodeConfigState.client as any).tls_host || '';
+  nodeForm.client_publickey = (nodeConfigState.client as any).publickey || nodeConfigState.config.public_key || '';
   const clientPort = Number(nodeConfigState.client.port);
   nodeForm.client_port = Number.isFinite(clientPort) && clientPort > 0 ? clientPort : null;
   const servicePort = Number(nodeConfigState.config.port);
@@ -1104,6 +1394,8 @@ const applyConfigToState = (config: any) => {
   nodeForm.config_dest = nodeConfigState.config.dest || '';
   nodeForm.config_obfs_password = nodeConfigState.config.obfs_password || '';
   ensureHysteriaObfsPassword();
+  ensureSSRPassword();
+  ensureVlessRealityDefaults();
   nodeForm.config_padding_scheme = Array.isArray((nodeConfigState.config as any).padding_scheme)
     ? (nodeConfigState.config as any).padding_scheme.join('\n')
     : ((nodeConfigState.config as any).padding_scheme || '');
@@ -1127,11 +1419,23 @@ watch(() => nodeForm.type, (val, oldVal) => {
   if (val === 'ss' && oldVal !== 'ss') {
     ensureSS2022Password();
   }
+  if (val === 'ssr' && oldVal !== 'ssr') {
+    ensureSSRPassword();
+  }
+  if (val === 'vless' && oldVal !== 'vless') {
+    ensureVlessRealityDefaults();
+  }
 });
 
 watch(() => nodeForm.config_obfs, (val, oldVal) => {
   if (val !== oldVal && nodeForm.type === 'hysteria') {
     ensureHysteriaObfsPassword(true);
+  }
+});
+
+watch(() => nodeForm.config_tls_type, (val, oldVal) => {
+  if (val !== oldVal) {
+    ensureVlessRealityDefaults();
   }
 });
 
@@ -1141,7 +1445,7 @@ const buildConfigFromForm = () => {
   merged.basic.push_interval = Number(nodeForm.basic_push_interval ?? merged.basic.push_interval ?? 60);
   merged.basic.speed_limit = Number(nodeForm.basic_speed_limit ?? merged.basic.speed_limit ?? 0);
   merged.client.server = nodeForm.client_server || merged.client.server;
-  if (!merged.client) merged.client = { server: '', port: null, tls_host: '' } as any;
+  if (!merged.client) merged.client = { server: '', port: null, tls_host: '', publickey: '' } as any;
   (merged.client as any).tls_host = nodeForm.client_tls_host || (merged.client as any).tls_host || '';
   const clientPort = nodeForm.client_port ?? merged.client.port ?? nodeForm.service_port ?? null;
   merged.client.port = clientPort ? Number(clientPort) : null;
@@ -1196,13 +1500,21 @@ const buildConfigFromForm = () => {
     case 'vless':
       merged.config.stream_type = nodeForm.config_stream_type || merged.config.stream_type || 'tcp';
       merged.config.tls_type = nodeForm.config_tls_type || merged.config.tls_type || 'tls';
-      merged.config.path = nodeForm.config_path || merged.config.path || '';
+      if (merged.config.stream_type === 'ws') {
+        merged.config.path = nodeForm.config_path || merged.config.path || '';
+      } else if ('path' in merged.config) {
+        delete merged.config.path;
+      }
       if (merged.config.stream_type === 'grpc') {
         merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
-      } else {
-        if ('service_name' in merged.config) delete merged.config.service_name;
+      } else if ('service_name' in merged.config) {
+        delete merged.config.service_name;
       }
-      if (nodeForm.config_flow) merged.config.flow = nodeForm.config_flow;
+      if (nodeForm.config_flow) {
+        merged.config.flow = nodeForm.config_flow;
+      } else if ('flow' in merged.config) {
+        delete merged.config.flow;
+      }
       if (nodeForm.config_dest) merged.config.dest = nodeForm.config_dest;
       if (nodeForm.config_server_names) {
         merged.config.server_names = nodeForm.config_server_names.split(',').map(item => item.trim()).filter(Boolean);
@@ -1211,6 +1523,12 @@ const buildConfigFromForm = () => {
         merged.config.short_ids = nodeForm.config_short_ids.split(',').map(item => item.trim()).filter(Boolean);
       }
       if (nodeForm.config_private_key) merged.config.private_key = nodeForm.config_private_key;
+      if ('public_key' in merged.config) delete merged.config.public_key;
+      if (nodeForm.client_publickey) {
+        (merged.client as any).publickey = nodeForm.client_publickey;
+      } else if ('publickey' in merged.client) {
+        delete (merged.client as any).publickey;
+      }
       break;
     case 'hysteria':
       if (nodeForm.config_obfs) merged.config.obfs = nodeForm.config_obfs;
@@ -1328,6 +1646,8 @@ const handleTypeChange = (value: string) => {
   applyConfigToState(createDefaultNodeConfig(value));
   advancedView.value = false;
   ensureSS2022Password();
+  ensureSSRPassword();
+  ensureVlessRealityDefaults();
 };
 
 const editNode = (node: Node) => {
@@ -1517,6 +1837,7 @@ const resetForm = () => {
   nodeForm.client_server = '';
   nodeForm.client_port = null;
   nodeForm.client_tls_host = '';
+  nodeForm.client_publickey = '';
   nodeForm.service_port = null;
   nodeForm.basic_pull_interval = 60;
   nodeForm.basic_push_interval = 60;
