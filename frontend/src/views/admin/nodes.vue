@@ -728,7 +728,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { type: 'checkbox', width: 60, fixed: 'left', visible: true },
   { field: 'id', title: 'ID', width: 80, visible: true },
   { field: 'name', title: '节点名称', minWidth: 150, visible: true, slots: { default: 'name' } },

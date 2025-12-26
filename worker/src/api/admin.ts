@@ -1541,6 +1541,187 @@ export class AdminAPI {
     }
   }
 
+  // 节点状态列表（基于 node_status 最新记录）
+  async getNodeStatusList(request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const pageParam = parseInt(url.searchParams.get("page") || "1", 10);
+      const limitParam = parseInt(url.searchParams.get("limit") || "20", 10);
+      const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1;
+      const limitCandidate = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 20;
+      const limit = Math.min(limitCandidate, 100);
+      const offset = (page - 1) * limit;
+      const keywordRaw = url.searchParams.get("keyword");
+      const keyword = keywordRaw ? keywordRaw.trim() : "";
+      const statusParam = url.searchParams.get("status");
+      const onlineParam = url.searchParams.get("online");
+
+      const conditions: string[] = [];
+      const params: Array<string | number> = [];
+      const onlineCutoff = "datetime('now', '+8 hours', '-5 minutes')";
+
+      if (keyword) {
+        conditions.push("(n.name LIKE ? OR n.type LIKE ?)");
+        const keywordPattern = `%${keyword}%`;
+        params.push(keywordPattern, keywordPattern);
+      }
+
+      if (statusParam !== null && statusParam !== undefined && statusParam !== "") {
+        const statusValue = parseInt(statusParam, 10);
+        conditions.push("n.status = ?");
+        params.push(statusValue === 1 ? 1 : 0);
+      }
+
+      if (onlineParam !== null && onlineParam !== undefined && onlineParam !== "") {
+        const onlineValue = parseInt(String(onlineParam), 10);
+        if (onlineValue === 1) {
+          conditions.push(`ns.created_at >= ${onlineCutoff}`);
+        } else if (onlineValue === 0) {
+          conditions.push(
+            `(ns.created_at < ${onlineCutoff} OR ns.created_at IS NULL)`
+          );
+        }
+      }
+
+      const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+      const totalRow = await this.db.db
+        .prepare(
+          `
+          SELECT COUNT(*) as total
+          FROM nodes n
+          LEFT JOIN node_status ns
+            ON ns.id = (
+              SELECT id
+              FROM node_status
+              WHERE node_id = n.id
+              ORDER BY created_at DESC
+              LIMIT 1
+            )
+          ${whereClause}
+        `
+        )
+        .bind(...params)
+        .first<CountRow>();
+
+      const total = ensureNumber(totalRow?.total);
+
+      const nodesResult = await this.db.db
+        .prepare(
+          `
+          SELECT
+            n.id,
+            n.name,
+            n.type,
+            n.node_class,
+            n.status,
+            n.node_config,
+            n.created_at,
+            n.updated_at,
+            ns.cpu_usage,
+            ns.memory_total,
+            ns.memory_used,
+            ns.swap_total,
+            ns.swap_used,
+            ns.disk_total,
+            ns.disk_used,
+            ns.uptime,
+            ns.created_at as last_reported,
+            CASE
+              WHEN ns.created_at >= ${onlineCutoff} THEN 1
+              ELSE 0
+            END as is_online
+          FROM nodes n
+          LEFT JOIN node_status ns
+            ON ns.id = (
+              SELECT id
+              FROM node_status
+              WHERE node_id = n.id
+              ORDER BY created_at DESC
+              LIMIT 1
+            )
+          ${whereClause}
+          ORDER BY n.id DESC
+          LIMIT ? OFFSET ?
+        `
+        )
+        .bind(...params, limit, offset)
+        .all<Record<string, unknown>>();
+
+      const nodes = (nodesResult.results ?? []).map((node) => {
+        const parsed = this.parseNodeConfig(node.node_config);
+        const client = parsed.client || {};
+        const cfg = parsed.config || {};
+        return {
+          id: ensureNumber(node.id),
+          name: ensureString(node.name),
+          type: ensureString(node.type),
+          node_class: ensureNumber(node.node_class),
+          status: ensureNumber(node.status),
+          server: ensureString(client.server || ""),
+          server_port: ensureNumber(client.port || cfg.port || 443),
+          tls_host: ensureString(client.tls_host || cfg.host || ""),
+          cpu_usage: ensureNumber(node.cpu_usage, 0),
+          memory_total: ensureNumber(node.memory_total, 0),
+          memory_used: ensureNumber(node.memory_used, 0),
+          swap_total: ensureNumber(node.swap_total, 0),
+          swap_used: ensureNumber(node.swap_used, 0),
+          disk_total: ensureNumber(node.disk_total, 0),
+          disk_used: ensureNumber(node.disk_used, 0),
+          uptime: ensureNumber(node.uptime, 0),
+          last_reported: ensureString(node.last_reported),
+          is_online: ensureNumber(node.is_online) === 1
+        };
+      });
+
+      const totalNodesRow = await this.db.db
+        .prepare("SELECT COUNT(*) as total FROM nodes")
+        .first<CountRow>();
+      const enabledNodesRow = await this.db.db
+        .prepare("SELECT COUNT(*) as total FROM nodes WHERE status = 1")
+        .first<CountRow>();
+      const onlineNodesRow = await this.db.db
+        .prepare(
+          `
+          SELECT COUNT(DISTINCT node_id) as total
+          FROM node_status
+          WHERE created_at >= datetime('now', '+8 hours', '-5 minutes')
+        `
+        )
+        .first<CountRow>();
+
+      const totalNodes = ensureNumber(totalNodesRow?.total);
+      const enabledNodes = ensureNumber(enabledNodesRow?.total);
+      const onlineNodes = ensureNumber(onlineNodesRow?.total);
+      const offlineNodes = Math.max(0, totalNodes - onlineNodes);
+
+      return successResponse({
+        nodes,
+        statistics: {
+          total: totalNodes,
+          online: onlineNodes,
+          offline: offlineNodes,
+          enabled: enabledNodes,
+          disabled: Math.max(0, totalNodes - enabledNodes)
+        },
+        pagination: {
+          total,
+          page,
+          limit
+        }
+      });
+    } catch (error) {
+      console.error("Get node status list error:", error);
+      const message = error instanceof Error ? error.message : String(error);
+      return errorResponse(message, 500);
+    }
+  }
+
   private parseNodeConfig(raw: unknown) {
     try {
       const parsed = typeof raw === "string" ? JSON.parse(raw || "{}") : (raw || {});

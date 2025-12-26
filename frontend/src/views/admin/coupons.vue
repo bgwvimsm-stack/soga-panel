@@ -298,7 +298,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const tableColumns = [
+const tableColumns: VxeTableBarColumns = [
   { field: 'name', title: '名称', minWidth: 160, slots: { default: 'name' } },
   { field: 'coupon_code', title: '优惠码', width: 160, slots: { default: 'code' } },
   { field: 'discount_type', title: '优惠方式', width: 150, slots: { default: 'discount' } },

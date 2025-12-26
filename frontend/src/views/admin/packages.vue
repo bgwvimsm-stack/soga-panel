@@ -201,7 +201,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: 'id', title: 'ID', width: 80, visible: true },
   { field: 'name', title: '套餐名称', minWidth: 150, visible: true, slots: { default: 'name' } },
   { field: 'price', title: '价格', width: 100, visible: true, slots: { default: 'price' } },

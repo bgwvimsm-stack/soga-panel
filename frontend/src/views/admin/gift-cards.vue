@@ -43,7 +43,7 @@ const cardTypeOptions = [
   { label: '兑换订阅套餐', value: 'package' }
 ];
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { type: 'checkbox', width: 60, fixed: 'left', visible: true },
   { field: 'id', title: 'ID', width: 80, visible: true, align: 'center' },
   { field: 'code', title: '卡密', minWidth: 200, visible: true, slots: { default: 'code' } },

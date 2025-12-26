@@ -31,6 +31,10 @@ type Recordable<T = any> = Record<string, T>;
 
 type VxePagerConfig = import("vxe-table").VxeGridPropTypes.PagerConfig;
 type VxeGridColumns<D = any> = import("vxe-table").VxeGridPropTypes.Columns<D>;
+type VxeTableBarColumn<D = any> = import("vxe-table").VxeGridPropTypes.Column<D> & {
+  columnSelectable?: boolean;
+};
+type VxeTableBarColumns<D = any> = VxeTableBarColumn<D>[];
 
 type ReadonlyRecordable<T = any> = {
   readonly [key: string]: T;

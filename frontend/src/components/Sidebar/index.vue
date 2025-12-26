@@ -119,6 +119,7 @@ const adminRoutes: MenuRoute[] = [
   { path: '/admin/tickets', name: 'admin-tickets', icon: 'admin-tickets', title: '工单管理' },
   { path: '/admin/packages', name: 'admin-packages', icon: 'admin-packages', title: '套餐管理' },
   { path: '/admin/nodes', name: 'admin-nodes', icon: 'admin-nodes', title: '节点列表' },
+  { path: '/admin/node-status', name: 'admin-node-status', icon: 'admin-node-status', title: '节点状态' },
   { path: '/admin/users', name: 'admin-users', icon: 'admin-users', title: '用户列表' },
   { path: '/admin/shared-ids', name: 'admin-shared-ids', icon: 'admin-apple', title: '苹果账号' },
   {

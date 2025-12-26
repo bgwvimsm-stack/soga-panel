@@ -109,7 +109,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: 'type', title: '订阅类型', width: 120, visible: true, slots: { default: 'type' } },
   { field: 'request_ip', title: '访问IP', width: 150, visible: true, slots: { default: 'request_ip' } },
   { field: 'request_time', title: '访问时间', width: 180, visible: true, sortable: true, slots: { default: 'request_time' } },

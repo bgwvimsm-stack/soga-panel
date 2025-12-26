@@ -5,13 +5,7 @@ import { ElIcon, ElDivider, ElDropdown, ElDropdownMenu, ElDropdownItem, ElPopove
 import { FullScreen, ScaleToOriginal, Refresh, Setting } from '@element-plus/icons-vue';
 import CollapseIcon from '@/assets/table-bar/collapse.svg?component';
 
-interface ColumnConfig {
-  field?: string;
-  title?: string | number;
-  columnSelectable?: boolean;
-  visible?: boolean;
-  [key: string]: unknown;
-}
+type ColumnConfig = VxeTableBarColumn;
 
 const props = withDefaults(defineProps<{
   title?: string;
@@ -40,7 +34,7 @@ const selectableColumns = computed(() =>
 const checkedColumns = ref(
   selectableColumns.value
     .filter((col) => col.visible !== false)
-    .map((col) => col.title || String(col.field ?? ''))
+    .map((col) => String(col.title ?? col.field ?? ''))
 );
 
 // 监听 columns 变化
@@ -49,7 +43,7 @@ watch(() => props.columns, (newVal) => {
   const nextSelectable = newVal.filter((col: any) => col.columnSelectable !== false);
   checkedColumns.value = nextSelectable
     .filter((col: any) => col.visible !== false)
-    .map((col: any) => col.title);
+    .map((col: any) => String(col.title ?? col.field ?? ''));
 }, { immediate: true });
 
 // 刷新
@@ -73,12 +67,13 @@ const onFullscreen = () => {
 };
 
 // 列显示切换
-const handleCheckedColumnsChange = (values: string[]) => {
+const handleCheckedColumnsChange = (values: Array<string | number>) => {
+  const normalizedValues = values.map((value) => String(value));
   dynamicColumns.value = props.columns.map((col) => {
-    const identifier = String(col.title ?? col.field ?? "");
+    const identifier = String(col.title ?? col.field ?? '');
     return {
       ...col,
-      visible: col.columnSelectable === false ? col.visible !== false : values.includes(identifier)
+      visible: col.columnSelectable === false ? col.visible !== false : normalizedValues.includes(identifier)
     };
   });
 };
