@@ -97,6 +97,44 @@ export class AuthService {
     const configMap = await this.db.listSystemConfigsMap();
     const inviteLimitRaw = configMap["invite_default_limit"];
     const inviteLimit = inviteLimitRaw ? Number(inviteLimitRaw) : 0;
+    const toIntConfig = (
+      value: unknown,
+      fallback: number,
+      options: { min?: number; allowZero?: boolean } = {}
+    ) => {
+      const parsed =
+        typeof value === "number"
+          ? value
+          : typeof value === "string"
+          ? Number.parseInt(value, 10)
+          : Number.NaN;
+      const min = options.min ?? 0;
+      const allowZero = options.allowZero ?? true;
+      if (!Number.isFinite(parsed)) return fallback;
+      if (parsed < min) return fallback;
+      if (!allowZero && parsed === 0) return fallback;
+      return parsed;
+    };
+    const transferEnable = toIntConfig(
+      configMap["default_traffic"],
+      10737418240,
+      { min: 0, allowZero: true }
+    );
+    const accountExpireDays = toIntConfig(
+      configMap["default_account_expire_days"],
+      3650,
+      { min: 0, allowZero: true }
+    );
+    const classExpireDays = toIntConfig(
+      configMap["default_expire_days"],
+      30,
+      { min: 0, allowZero: true }
+    );
+    const defaultClass = toIntConfig(
+      configMap["default_class"],
+      1,
+      { min: 0, allowZero: true }
+    );
 
     const userId = await this.db.createUser({
       email,
@@ -109,6 +147,40 @@ export class AuthService {
       invited_by: invitedBy ?? null,
       invite_limit: Number.isFinite(inviteLimit) && inviteLimit > 0 ? inviteLimit : 0
     });
+
+    if (userId) {
+      const utc8Now = Date.now() + 8 * 60 * 60 * 1000;
+      const accountExpireTime =
+        accountExpireDays > 0
+          ? new Date(
+              utc8Now + accountExpireDays * 24 * 60 * 60 * 1000
+            )
+          : null;
+      const classExpireTime =
+        classExpireDays > 0
+          ? new Date(utc8Now + classExpireDays * 24 * 60 * 60 * 1000)
+          : null;
+      await this.db.db
+        .prepare(
+          `
+          UPDATE users
+          SET transfer_enable = ?,
+              expire_time = ?,
+              class = ?,
+              class_expire_time = ?,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `
+        )
+        .bind(
+          transferEnable,
+          accountExpireTime,
+          defaultClass,
+          classExpireTime,
+          userId
+        )
+        .run();
+    }
 
     return { success: true, userId };
   }
