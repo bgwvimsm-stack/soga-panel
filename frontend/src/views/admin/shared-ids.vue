@@ -115,7 +115,7 @@ const vxeTableRef = ref();
 const loading = ref(false);
 const saving = ref(false);
 const records = ref<SharedIdConfig[]>([]);
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,

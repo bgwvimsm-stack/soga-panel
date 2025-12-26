@@ -708,7 +708,7 @@ const vlessTlsOptions = ['none', 'tls', 'reality'];
 const hysteriaObfsOptions = ['plain', 'salamander'];
 const nodes = ref<Node[]>([]);
 const selectedNodes = ref<Node[]>([]);
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,

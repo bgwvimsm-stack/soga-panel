@@ -270,7 +270,7 @@ const userStore = useUserStore();
 const notificationStore = useNotificationStore();
 const { width } = useWindowSize();
 
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 10,

@@ -181,7 +181,7 @@ const showCreateDialog = ref(false);
 const editingPackage = ref<any>(null);
 const packages = ref([]);
 const packageStats = ref<any>({});
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,

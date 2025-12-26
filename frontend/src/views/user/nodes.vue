@@ -306,7 +306,7 @@ const activeTab = ref('basic');
 const qrCodeRef = ref<HTMLElement>();
 const userClass = computed(() => Number(userStore.user?.class ?? 0));
 
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,

@@ -263,7 +263,7 @@ const giftCardForm = reactive({
   code: ''
 });
 
-const rechargePagerConfig = reactive({
+const rechargePagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,
@@ -271,7 +271,7 @@ const rechargePagerConfig = reactive({
   layouts: ['Total', 'Sizes', 'PrevPage', 'Number', 'NextPage', 'FullJump']
 });
 
-const purchasePagerConfig = reactive({
+const purchasePagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,
@@ -279,7 +279,7 @@ const purchasePagerConfig = reactive({
   layouts: ['Total', 'Sizes', 'PrevPage', 'Number', 'NextPage', 'FullJump']
 });
 
-const rechargeColumns = [
+const rechargeColumns: VxeGridColumns = [
   { field: 'trade_no', title: '交易号', width: 200, visible: true, slots: { default: 'trade_no' }, align: 'center' },
   { field: 'amount', title: '充值金额', width: 120, visible: true, slots: { default: 'amount' }, align: 'center' },
   { field: 'payment_method', title: '支付方式', width: 120, visible: true, slots: { default: 'payment_method' }, align: 'center' },
@@ -288,7 +288,7 @@ const rechargeColumns = [
   { field: 'paid_at', title: '支付时间', width: 180, visible: true, slots: { default: 'paid_at' }, align: 'center' }
 ];
 
-const purchaseColumns = [
+const purchaseColumns: VxeGridColumns = [
   { field: 'package_name', title: '套餐名称', width: 180, visible: true, slots: { default: 'package_name' }, align: 'center' },
   { field: 'price', title: '购买金额', width: 180, visible: true, slots: { default: 'price' }, align: 'center' },
   { field: 'discount_amount', title: '优惠金额', width: 120, visible: true, slots: { default: 'discount_amount' }, align: 'center' },

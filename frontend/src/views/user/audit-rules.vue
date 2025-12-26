@@ -62,7 +62,7 @@ import type { AuditRule } from '@/api/types';
 const vxeTableRef = ref();
 const loading = ref(false);
 const rules = ref<AuditRule[]>([]);
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,

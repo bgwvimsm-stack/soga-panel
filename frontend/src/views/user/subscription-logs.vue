@@ -92,7 +92,7 @@ const totalRecords = ref(0);
 const todayRecords = ref(0);
 const uniqueIPs = ref(0);
 
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,

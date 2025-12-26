@@ -227,7 +227,7 @@ const filters = reactive({
   status: -1 as number
 });
 
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,

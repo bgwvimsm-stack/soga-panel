@@ -137,7 +137,7 @@ const loading = ref(false);
 const purchaseRecords = ref([]);
 
 // 分页配置
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import type { VxeComponentSizeType } from '@vxe-ui/core';
 import { ElIcon, ElDivider, ElDropdown, ElDropdownMenu, ElDropdownItem, ElPopover, ElScrollbar, ElCheckboxGroup, ElCheckbox } from 'element-plus';
 import { FullScreen, ScaleToOriginal, Refresh, Setting } from '@element-plus/icons-vue';
 import CollapseIcon from '@/assets/table-bar/collapse.svg?component';
 
 interface ColumnConfig {
   field?: string;
-  title?: string;
+  title?: string | number;
   columnSelectable?: boolean;
   visible?: boolean;
   [key: string]: unknown;
@@ -27,7 +28,7 @@ const emit = defineEmits<{
   (e: 'fullscreen', value: boolean): void;
 }>();
 
-const size = ref('small');
+const size = ref<VxeComponentSizeType>('small');
 const loading = ref(false);
 const isFullscreen = ref(false);
 const dynamicColumns = ref<ColumnConfig[]>([...props.columns]);
@@ -61,8 +62,8 @@ const onRefresh = () => {
 };
 
 // 密度切换
-const onSizeChange = (newSize: string) => {
-  size.value = newSize;
+const onSizeChange = (newSize: VxeComponentSizeType) => {
+  size.value = newSize || 'small';
 };
 
 // 全屏切换
@@ -74,7 +75,7 @@ const onFullscreen = () => {
 // 列显示切换
 const handleCheckedColumnsChange = (values: string[]) => {
   dynamicColumns.value = props.columns.map((col) => {
-    const identifier = col.title || String(col.field ?? "");
+    const identifier = String(col.title ?? col.field ?? "");
     return {
       ...col,
       visible: col.columnSelectable === false ? col.visible !== false : values.includes(identifier)

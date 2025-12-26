@@ -48,7 +48,7 @@ const vxeTableRef = ref();
 const loading = ref(false);
 const exporting = ref(false);
 const auditLogs = ref([]);
-const pagerConfig = reactive({ total: 0, currentPage: 1, pageSize: 20, pageSizes: [10, 20, 50, 100], layouts: ['Total', 'Sizes', 'PrevPage', 'Number', 'NextPage', 'FullJump'] });
+const pagerConfig = reactive<VxePagerConfig>({ total: 0, currentPage: 1, pageSize: 20, pageSizes: [10, 20, 50, 100], layouts: ['Total', 'Sizes', 'PrevPage', 'Number', 'NextPage', 'FullJump'] });
 const filterUserSearch = ref('');
 const filterDateRange = ref([]);
 

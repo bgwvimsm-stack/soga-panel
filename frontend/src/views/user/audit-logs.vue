@@ -41,7 +41,7 @@ import type { AuditLog } from '@/api/types';
 const vxeTableRef = ref();
 const loading = ref(false);
 const logs = ref<AuditLog[]>([]);
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,

@@ -29,6 +29,9 @@ type NonNullable<T> = T extends null | undefined ? never : T;
 
 type Recordable<T = any> = Record<string, T>;
 
+type VxePagerConfig = import("vxe-table").VxeGridPropTypes.PagerConfig;
+type VxeGridColumns<D = any> = import("vxe-table").VxeGridPropTypes.Columns<D>;
+
 type ReadonlyRecordable<T = any> = {
   readonly [key: string]: T;
 };

@@ -160,7 +160,7 @@ const monthUsed = ref(0);
 const remaining = ref(0);
 const totalEnable = ref(0);
 
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,

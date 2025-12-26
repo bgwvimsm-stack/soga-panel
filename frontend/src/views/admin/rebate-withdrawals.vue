@@ -167,7 +167,7 @@ const filters = reactive<{ status: string | null }>({
   status: null
 });
 
-const columns = [
+const columns: VxeGridColumns = [
   { field: "id", title: "ID", width: 60, align: "center" },
   { field: "user", title: "用户邮箱", width: 200, align: "center", slots: { default: "user" } },
   { field: "amount", title: "金额", width: 120, align: "center", slots: { default: "amount" } },
@@ -181,7 +181,7 @@ const columns = [
   { field: "user_note", title: "备注", minWidth: 180, align: "center", slots: { default: "user_note" } },
   { field: "review_note", title: "审核备注", minWidth: 180, align: "center", slots: { default: "review_note" } },
   { field: "actions", title: "操作", width: 80, align: "center", fixed: "right", slots: { default: "actions" } }
-] as const;
+];
 
 const statusLabel = (status: string) => {
   if (status === "paid") return "已打款";
