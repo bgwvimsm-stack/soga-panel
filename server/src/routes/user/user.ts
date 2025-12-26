@@ -205,8 +205,8 @@ export function createUserRouter(ctx: AppContext) {
     if (!userRow) return errorResponse(res, "用户不存在", 404);
     const userClass = Number(userRow?.class ?? 0);
 
-    const filters: string[] = ["status = 1", "node_class <= ?"];
-    const values: any[] = [userClass];
+    const filters: string[] = ["status = 1"];
+    const values: any[] = [];
     if (typeFilter) {
       filters.push("LOWER(type) = ?");
       values.push(typeFilter);
@@ -215,8 +215,26 @@ export function createUserRouter(ctx: AppContext) {
     const offset = (page - 1) * limit;
 
     const totalRow = await ctx.db
+      .prepare("SELECT COUNT(*) as total FROM nodes WHERE status = 1")
+      .first<{ total?: number }>();
+    const filteredTotalRow = await ctx.db
       .prepare(`SELECT COUNT(*) as total FROM nodes ${where}`)
       .bind(...values)
+      .first<{ total?: number }>();
+    const accessibleRow = await ctx.db
+      .prepare("SELECT COUNT(*) as total FROM nodes WHERE status = 1 AND node_class <= ?")
+      .bind(userClass)
+      .first<{ total?: number }>();
+    const onlineRow = await ctx.db
+      .prepare(
+        `
+        SELECT COUNT(DISTINCT ns.node_id) as total
+        FROM node_status ns
+        INNER JOIN nodes n ON ns.node_id = n.id
+        WHERE ns.created_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+          AND n.status = 1
+      `
+      )
       .first<{ total?: number }>();
 
     const rows = await ctx.db
@@ -224,7 +242,19 @@ export function createUserRouter(ctx: AppContext) {
         `
         SELECT * FROM nodes
         ${where}
-        ORDER BY node_class ASC, id ASC
+        ORDER BY node_class ASC,
+          CASE
+            WHEN LOWER(type) IN ('ss', 'shadowsocks') THEN 1
+            WHEN LOWER(type) IN ('ssr', 'shadowsocksr') THEN 2
+            WHEN LOWER(type) IN ('v2ray', 'vmess') THEN 3
+            WHEN LOWER(type) IN ('vless') THEN 4
+            WHEN LOWER(type) IN ('trojan') THEN 5
+            WHEN LOWER(type) IN ('hysteria', 'hysteria2') THEN 6
+            WHEN LOWER(type) IN ('anytls') THEN 7
+            ELSE 99
+          END ASC,
+          name ASC,
+          id ASC
         LIMIT ? OFFSET ?
       `
       )
@@ -314,17 +344,19 @@ export function createUserRouter(ctx: AppContext) {
       filtered = filtered.filter((n) => (statusFilter ? n.is_online : !n.is_online));
     }
 
-    const baseTotal = Number(totalRow?.total ?? 0);
-    const onlineCount = filtered.filter((n) => n.is_online).length;
-    const offlineCount = filtered.length - onlineCount;
-    const total = statusFilter !== null ? filtered.length : baseTotal;
+    const totalEnabled = Number(totalRow?.total ?? 0);
+    const filteredTotal = Number(filteredTotalRow?.total ?? 0);
+    const totalOnline = Number(onlineRow?.total ?? 0);
+    const accessibleTotal = Number(accessibleRow?.total ?? 0);
+    const offlineCount = Math.max(0, totalEnabled - totalOnline);
+    const total = statusFilter !== null ? filtered.length : filteredTotal;
     return successResponse(res, {
       nodes: filtered,
       statistics: {
-        total,
-        online: onlineCount,
+        total: totalEnabled,
+        online: totalOnline,
         offline: offlineCount,
-        accessible: filtered.length
+        accessible: accessibleTotal
       },
       pagination: {
         total,

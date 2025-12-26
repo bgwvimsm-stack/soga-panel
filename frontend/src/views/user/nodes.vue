@@ -52,6 +52,7 @@
           <el-option label="Shadowsocks" value="ss" />
           <el-option label="ShadowsocksR" value="ssr" />
           <el-option label="V2Ray" value="v2ray" />
+          <el-option label="VLess" value="vless" />
           <el-option label="Trojan" value="trojan" />
           <el-option label="Hysteria" value="hysteria" />
           <el-option label="AnyTLS" value="anytls" />
@@ -107,7 +108,15 @@
             </el-tag>
           </template>
           <template #actions="{ row }">
-            <el-button type="primary" size="small" @click="showNodeDetails(row)">详情</el-button>
+            <el-button
+              v-if="canAccessNode(row)"
+              type="primary"
+              size="small"
+              @click="showNodeDetails(row)"
+            >
+              详情
+            </el-button>
+            <el-tag v-else size="small" type="info">等级不足</el-tag>
           </template>
         </vxe-grid>
       </template>
@@ -295,6 +304,7 @@ const offlineNodes = ref(0);
 const availableNodes = ref(0);
 const activeTab = ref('basic');
 const qrCodeRef = ref<HTMLElement>();
+const userClass = computed(() => Number(userStore.user?.class ?? 0));
 
 const pagerConfig = reactive({
   total: 0,
@@ -369,6 +379,42 @@ const getNodeTypeName = (type: string) => {
     anytls: 'AnyTLS'
   };
   return nameMap[type?.toLowerCase()] || type?.toUpperCase() || 'Unknown';
+};
+
+const getNodeTypeOrder = (type: string) => {
+  const orderMap: Record<string, number> = {
+    ss: 1,
+    shadowsocks: 1,
+    ssr: 2,
+    shadowsocksr: 2,
+    v2ray: 3,
+    vmess: 3,
+    vless: 4,
+    trojan: 5,
+    hysteria: 6,
+    hysteria2: 6,
+    anytls: 7
+  };
+  return orderMap[type?.toLowerCase()] ?? 99;
+};
+
+const sortNodes = (list: any[]) => {
+  return [...list].sort((a, b) => {
+    const classA = Number(a?.node_class ?? 0);
+    const classB = Number(b?.node_class ?? 0);
+    if (classA !== classB) return classA - classB;
+    const typeOrderA = getNodeTypeOrder(a?.type || '');
+    const typeOrderB = getNodeTypeOrder(b?.type || '');
+    if (typeOrderA !== typeOrderB) return typeOrderA - typeOrderB;
+    const nameA = String(a?.name ?? '');
+    const nameB = String(b?.name ?? '');
+    return nameA.localeCompare(nameB, 'zh-CN', { numeric: true, sensitivity: 'base' });
+  });
+};
+
+const canAccessNode = (node: any) => {
+  const requiredClass = Number(node?.node_class ?? 0);
+  return userClass.value >= requiredClass;
 };
 
 const isSS2022Cipher = (cipher?: string) => {
@@ -925,12 +971,16 @@ const loadNodes = async () => {
     const response = await getUserNodes(params);
     const responseData = response.data;
 
-    nodes.value = responseData.nodes || [];
+    const responseNodes = responseData.nodes || [];
+    nodes.value = sortNodes(responseNodes);
     pagerConfig.total = responseData.pagination?.total || nodes.value.length;
-    totalNodes.value = responseData.statistics?.total || 0;
-    onlineNodes.value = responseData.statistics?.online || 0;
-    offlineNodes.value = responseData.statistics?.offline || 0;
-    availableNodes.value = responseData.statistics?.accessible || 0;
+    totalNodes.value = Number(responseData.statistics?.total ?? 0);
+    onlineNodes.value = Number(responseData.statistics?.online ?? 0);
+    const offline = responseData.statistics?.offline;
+    offlineNodes.value = Number.isFinite(Number(offline))
+      ? Number(offline)
+      : Math.max(0, totalNodes.value - onlineNodes.value);
+    availableNodes.value = Number(responseData.statistics?.accessible ?? 0);
   } catch (error) {
     console.error('加载节点列表失败:', error);
     ElMessage.error('加载节点列表失败');
@@ -951,6 +1001,10 @@ const handlePageChange = ({ currentPage, pageSize }) => {
 };
 
 const showNodeDetails = (node: any) => {
+  if (!canAccessNode(node)) {
+    ElMessage.warning('等级不足，无法查看节点详情');
+    return;
+  }
   selectedNode.value = node;
   activeTab.value = 'basic';
   showDetailsDialog.value = true;
