@@ -10,6 +10,18 @@ type SendMailOptions = {
 };
 
 type MailProvider = "resend" | "smtp" | "sendgrid" | "none";
+type SmtpDriver = "nodemailer" | "emailjs";
+
+type EmailjsClientOptions = {
+  user?: string;
+  password?: string;
+  host: string;
+  port: number;
+  ssl?: boolean;
+  tls?: boolean | Record<string, unknown>;
+  timeout?: number;
+  authentication?: string[];
+};
 
 export class EmailService {
   private readonly env: AppEnv;
@@ -17,6 +29,8 @@ export class EmailService {
   private readonly resend?: Resend;
   // 使用 any 避免与 nodemailer 类型命名空间冲突
   private readonly transporter?: any;
+  private readonly emailjsOptions?: EmailjsClientOptions;
+  private emailjsModulePromise?: Promise<any>;
 
   constructor(env: AppEnv) {
     this.env = env;
@@ -28,6 +42,7 @@ export class EmailService {
         this.resend = new Resend(apiKey);
       }
     } else if (this.provider === "smtp" && this.getSmtpHost()) {
+      const host = this.getSmtpHost()!;
       const secureEnv = (this.readEnv("SMTP_SECURE") || "").toLowerCase();
       const secure = secureEnv === "true" || secureEnv === "1";
       const port = this.getSmtpPort() || (secure ? 465 : 587);
@@ -42,20 +57,36 @@ export class EmailService {
           ? authTypeEnv.toUpperCase()
           : undefined;
 
-      this.transporter = nodemailer.createTransport({
-        host: this.getSmtpHost(),
-        port,
-        secure,
-        auth:
-          this.getSmtpUser() && this.getSmtpPass()
-            ? {
-                user: this.getSmtpUser(),
-                pass: this.getSmtpPass()
-              }
-            : undefined,
-        requireTLS: requireTls,
-        ...(authMethod ? { authMethod } : {})
-      });
+      const smtpDriver = this.resolveSmtpDriver(host);
+      const user = this.getSmtpUser();
+      const pass = this.getSmtpPass();
+
+      if (smtpDriver === "emailjs") {
+        this.emailjsOptions = {
+          user,
+          password: pass,
+          host,
+          port,
+          ssl: secure,
+          tls: requireTls,
+          ...(authMethod ? { authentication: [authMethod] } : {})
+        };
+      } else {
+        this.transporter = nodemailer.createTransport({
+          host,
+          port,
+          secure,
+          auth:
+            user && pass
+              ? {
+                  user,
+                  pass
+                }
+              : undefined,
+          requireTLS: requireTls,
+          ...(authMethod ? { authMethod } : {})
+        });
+      }
     }
   }
 
@@ -87,16 +118,42 @@ export class EmailService {
     }
 
     if (this.provider === "smtp") {
-      if (!this.transporter) {
+      if (!this.transporter && !this.emailjsOptions) {
         throw new Error("未配置 SMTP_HOST（或 MAIL_SMTP_HOST），无法发送邮件");
       }
-      await this.transporter.sendMail({
-        from,
-        to: options.to,
-        subject: options.subject,
-        text: options.text ?? "",
-        html: options.html
-      });
+      const smtpHost = this.getSmtpHost() || "";
+      const isGmailHost = /smtp\.gmail\.com|smtp\.googlemail\.com/i.test(smtpHost);
+      if (isGmailHost && (!this.getSmtpUser() || !this.getSmtpPass())) {
+        throw new Error(
+          "Gmail SMTP 需要配置 SMTP_USER/SMTP_PASS（建议使用应用专用密码），否则无法发送邮件"
+        );
+      }
+      const textContent =
+        options.text ??
+        (options.html
+          ? options.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+          : "");
+      try {
+        if (this.emailjsOptions) {
+          await this.sendViaEmailjs({
+            from,
+            to: options.to,
+            subject: options.subject,
+            text: textContent,
+            html: options.html
+          });
+        } else {
+          await this.transporter.sendMail({
+            from,
+            to: options.to,
+            subject: options.subject,
+            text: textContent,
+            html: options.html
+          });
+        }
+      } catch (error) {
+        throw this.wrapSmtpError(error);
+      }
       return;
     }
 
@@ -216,11 +273,136 @@ export class EmailService {
   private getFromAddress() {
     const configured = this.readEnv("MAIL_FROM");
     if (configured) return configured;
+    if (this.provider === "smtp") {
+      const smtpUser = this.getSmtpUser();
+      if (smtpUser) return smtpUser;
+    }
     if (this.provider === "resend") {
       // Resend 支持使用官方测试域名发件（无需验证域名）
       return "onboarding@resend.dev";
     }
     return "no-reply@example.com";
+  }
+
+  private resolveSmtpDriver(host: string): SmtpDriver {
+    const raw = (
+      this.readEnv("MAIL_SMTP_DRIVER") ||
+      this.readEnv("SMTP_DRIVER") ||
+      ""
+    ).toLowerCase();
+    if (raw === "emailjs" || raw === "nodemailer") return raw;
+
+    // Gmail 在部分运行时/网络环境下对 SMTP 握手/鉴权更挑剔，优先走 emailjs 分支
+    const normalized = host.trim().toLowerCase();
+    if (normalized === "smtp.gmail.com" || normalized === "smtp.googlemail.com") {
+      return "emailjs";
+    }
+
+    return "nodemailer";
+  }
+
+  private async sendViaEmailjs(message: {
+    from: string;
+    to: string;
+    subject: string;
+    text: string;
+    html?: string;
+  }) {
+    if (!this.emailjsOptions) {
+      throw new Error("emailjs SMTP options are not initialized");
+    }
+
+    const { SMTPClient, Message } = await this.loadEmailjs();
+
+    const headers: any = {
+      from: message.from,
+      to: message.to,
+      subject: message.subject,
+      text: message.text || ""
+    };
+
+    if (message.html) {
+      headers.attachment = [
+        {
+          data: message.html,
+          alternative: true,
+          contentType: "text/html"
+        }
+      ];
+    }
+
+    const client = new SMTPClient(this.emailjsOptions);
+    try {
+      const msg = new Message(headers);
+      if (typeof client.sendAsync === "function") {
+        await client.sendAsync(msg);
+      } else {
+        await new Promise<void>((resolve, reject) => {
+          client.send(msg, (err: any) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+      }
+    } finally {
+      if (client?.smtp?.close) client.smtp.close();
+      else if (typeof client?.close === "function") client.close();
+    }
+  }
+
+  private async loadEmailjs(): Promise<{ SMTPClient: any; Message: any }> {
+    // emailjs@5 为 ESM-only；在 CommonJS 构建下需要用动态 import 载入
+    this.emailjsModulePromise ||= (new Function(
+      "moduleName",
+      "return import(moduleName)"
+    ) as any)("emailjs");
+    const mod = await this.emailjsModulePromise;
+    const resolved = mod?.default ?? mod;
+    const SMTPClient = resolved?.SMTPClient ?? mod?.SMTPClient;
+    const Message = resolved?.Message ?? mod?.Message;
+    if (!SMTPClient || !Message) {
+      throw new Error(
+        "emailjs 未正确导出 SMTPClient/Message，请确认已安装 emailjs@5 且依赖未被错误打包"
+      );
+    }
+    return { SMTPClient, Message };
+  }
+
+  private wrapSmtpError(error: unknown) {
+    const host = this.getSmtpHost() || "";
+    const message = (() => {
+      if (error instanceof Error) return error.message;
+      if (typeof error === "string") return error;
+      try {
+        return JSON.stringify(error);
+      } catch {
+        return String(error);
+      }
+    })();
+
+    const isGmailHost = /(^|\.)gmail\.com$|(^|\.)googlemail\.com$|smtp\.gmail\.com|smtp\.googlemail\.com/i.test(
+      host
+    );
+    const isBadCredentials =
+      /\b535\b/.test(message) ||
+      /BadCredentials/i.test(message) ||
+      /Username and Password not accepted/i.test(message);
+
+    if (isGmailHost && isBadCredentials) {
+      return new Error(
+        [
+          "Gmail SMTP 鉴权失败（535 5.7.8 BadCredentials）。",
+          "请确认：",
+          "1) SMTP_USER 使用完整 Gmail 地址；",
+          "2) SMTP_PASS 使用“应用专用密码”（需开启两步验证后生成），不要用账号登录密码；",
+          "3) 建议使用 smtp.gmail.com:465（SMTP_SECURE=true）或 587（SMTP_STARTTLS=true）。",
+          `原始错误：${message}`
+        ].join("\n")
+      );
+    }
+
+    if (error instanceof Error) return error;
+    return new Error(message || "SMTP 发送失败");
   }
 
   private assertResendFromDomain(from: string) {

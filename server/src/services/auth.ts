@@ -10,7 +10,12 @@ import {
 import { ensureString } from "../utils/d1";
 import { EmailCodeService } from "./emailCode";
 import { EmailService } from "./email";
-import { buildEmailSubject, buildEmailText } from "../email/templates";
+import {
+  buildEmailSubject,
+  buildEmailText,
+  buildVerificationHtml,
+  getVerificationTitleText
+} from "../email/templates";
 import type { AppEnv } from "../config/env";
 import { TwoFactorService } from "./twoFactor";
 
@@ -40,6 +45,7 @@ export class AuthService {
   private readonly emailService: EmailService;
   private readonly env: AppEnv;
   private readonly twoFactorService: TwoFactorService;
+  private readonly verificationExpireMinutes: number;
 
   constructor(db: DatabaseService, cache: CacheService, env: AppEnv, sessionTTL = 60 * 60 * 24 * 7) {
     this.db = db;
@@ -52,6 +58,7 @@ export class AuthService {
     const expireMinutes = expireMinutesEnv
       ? Math.max(1, Number.parseInt(expireMinutesEnv, 10) || 10)
       : 10;
+    this.verificationExpireMinutes = expireMinutes;
     this.emailCodeService = new EmailCodeService(db, expireMinutes * 60);
     this.emailService = new EmailService(env);
     this.twoFactorService = new TwoFactorService(env);
@@ -336,9 +343,22 @@ export class AuthService {
 
   async sendEmailCode(email: string, purpose: string, meta?: { ip?: string | null; ua?: string | null }) {
     const result = await this.emailCodeService.issueCode(email, purpose, meta);
-    const subject = this.buildSubject(purpose);
-    const text = this.buildEmailText(purpose, result.code, result.expires_at);
-    await this.emailService.sendMail({ to: email, subject, text });
+    const configs = await this.db.listSystemConfigsMap();
+    const siteName = String(configs["site_name"] || this.env.SITE_NAME || "Soga Panel");
+    const siteUrl = String(configs["site_url"] || this.env.SITE_URL || "").trim() || undefined;
+
+    const subject = buildEmailSubject(purpose, siteName);
+    const text = buildEmailText(purpose, result.code, this.verificationExpireMinutes, siteName);
+    const html = buildVerificationHtml({
+      subject,
+      siteName,
+      siteUrl,
+      code: result.code,
+      textContent: text,
+      expireMinutes: this.verificationExpireMinutes,
+      titleText: getVerificationTitleText(purpose)
+    });
+    await this.emailService.sendMail({ to: email, subject, text, html });
     return result;
   }
 
@@ -423,11 +443,5 @@ export class AuthService {
     return { success: true, token: sessionToken, user: payload };
   }
 
-  private buildSubject(purpose: string) {
-    return buildEmailSubject(purpose, this.env.SITE_NAME);
-  }
-
-  private buildEmailText(purpose: string, code: string, expires: string) {
-    return buildEmailText(purpose, code, expires, this.env.SITE_NAME);
-  }
+  // 邮件模板统一在 src/email/templates.ts 中维护
 }
