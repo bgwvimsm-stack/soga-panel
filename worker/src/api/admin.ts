@@ -4294,7 +4294,18 @@ export class AdminAPI {
         .prepare(`SELECT id, key, value, description FROM system_configs ORDER BY key`)
         .all();
 
-      return successResponse(result.results || []);
+      const rows = result.results || [];
+      const hasDocsUrl = rows.some((row: any) => row?.key === "docs_url");
+      if (!hasDocsUrl) {
+        rows.push({
+          id: 0,
+          key: "docs_url",
+          value: "",
+          description: "用户文档地址"
+        });
+      }
+
+      return successResponse(rows);
     } catch (error) {
       console.error("获取系统配置失败:", error);
       return errorResponse(error.message, 500);
@@ -4318,21 +4329,16 @@ export class AdminAPI {
         return errorResponse('配置键不能为空', 400);
       }
 
-      // 更新配置
-      const updateResult = toRunResult(
-        await this.db.db
+      await this.db.db
         .prepare(`
-          UPDATE system_configs 
-          SET value = ?, updated_at = datetime('now', '+8 hours')
-          WHERE key = ?
+          INSERT INTO system_configs (key, value, updated_at)
+          VALUES (?, ?, datetime('now', '+8 hours'))
+          ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            updated_at = datetime('now', '+8 hours')
         `)
-        .bind(value || '', key)
-        .run()
-      );
-
-      if (getChanges(updateResult) === 0) {
-        return errorResponse('配置项不存在', 404);
-      }
+        .bind(key, value || '')
+        .run();
 
       // 清除相关缓存
       await this.cache.deleteByPrefix('system_config');
@@ -4342,7 +4348,7 @@ export class AdminAPI {
       this.configManager.clearCache(key);
 
       // 如果是站点相关配置，清空所有配置缓存以确保一致性
-      if (['site_name', 'site_url'].includes(key)) {
+      if (['site_name', 'site_url', 'docs_url'].includes(key)) {
         this.configManager.clearCache();
       }
 

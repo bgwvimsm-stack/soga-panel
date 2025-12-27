@@ -9,6 +9,7 @@ export const useSiteStore = defineStore("site", () => {
     import.meta.env.VITE_SITE_NAME || "Soga Panel"
   );
   const siteUrl = ref<string>("");
+  const docsUrl = ref<string>("");
   const status = ref<FetchStatus>("idle");
 
   const initialized = computed(() => status.value === "success");
@@ -30,6 +31,9 @@ export const useSiteStore = defineStore("site", () => {
       if (data?.siteUrl) {
         siteUrl.value = data.siteUrl;
       }
+      if (data?.docsUrl !== undefined) {
+        docsUrl.value = data.docsUrl;
+      }
       status.value = "success";
     } catch (error) {
       console.warn("加载站点配置失败", error);
@@ -40,6 +44,7 @@ export const useSiteStore = defineStore("site", () => {
  return {
     siteName,
     siteUrl,
+    docsUrl,
     status,
     initialized,
     init,
