@@ -731,7 +731,17 @@ export function createAdminRouter(ctx: AppContext) {
 
   router.post("/users", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
-    const { email, username, password, class: level, expire_time, class_expire_time, transfer_enable } = req.body || {};
+    const {
+      email,
+      username,
+      password,
+      class: level,
+      expire_time,
+      class_expire_time,
+      transfer_enable,
+      speed_limit,
+      device_limit
+    } = req.body || {};
     if (!email || !username || !password) return errorResponse(res, "缺少必要参数", 400);
     const hash = require("../../utils/crypto").hashPassword(password);
     const uuid = require("../../utils/crypto").generateUUID();
@@ -747,30 +757,36 @@ export function createAdminRouter(ctx: AppContext) {
       invited_by: 0,
       invite_limit: 0
     });
-    if (level || expire_time || class_expire_time || transfer_enable) {
-      const fields: string[] = [];
-      const values: any[] = [];
-      if (level !== undefined) {
-        fields.push("class = ?");
-        values.push(Number(level));
-      }
-      if (expire_time) {
-        fields.push("expire_time = ?");
-        values.push(new Date(expire_time));
-      }
-      if (class_expire_time) {
-        fields.push("class_expire_time = ?");
-        values.push(new Date(class_expire_time));
-      }
-      if (transfer_enable) {
-        fields.push("transfer_enable = ?");
-        values.push(Number(transfer_enable));
-      }
-      if (fields.length) {
-        const sql = `UPDATE users SET ${fields.join(", ")}, updated_at = CURRENT_TIMESTAMP WHERE email = ?`;
-        values.push(email);
-        await ctx.dbService.db.prepare(sql).bind(...values).run();
-      }
+    const fields: string[] = [];
+    const values: any[] = [];
+    if (level !== undefined) {
+      fields.push("class = ?");
+      values.push(Number(level));
+    }
+    if (expire_time) {
+      fields.push("expire_time = ?");
+      values.push(new Date(expire_time));
+    }
+    if (class_expire_time) {
+      fields.push("class_expire_time = ?");
+      values.push(new Date(class_expire_time));
+    }
+    if (transfer_enable !== undefined) {
+      fields.push("transfer_enable = ?");
+      values.push(Number(transfer_enable));
+    }
+    if (speed_limit !== undefined) {
+      fields.push("speed_limit = ?");
+      values.push(Number(speed_limit));
+    }
+    if (device_limit !== undefined) {
+      fields.push("device_limit = ?");
+      values.push(Number(device_limit));
+    }
+    if (fields.length) {
+      const sql = `UPDATE users SET ${fields.join(", ")}, updated_at = CURRENT_TIMESTAMP WHERE email = ?`;
+      values.push(email);
+      await ctx.dbService.db.prepare(sql).bind(...values).run();
     }
     return successResponse(res, null, "用户已创建");
   });
@@ -779,7 +795,17 @@ export function createAdminRouter(ctx: AppContext) {
     if (!requireAdmin(req, res)) return;
     const id = Number(req.params.id);
     if (!id) return errorResponse(res, "id 无效", 400);
-    const { email, username, status, class: level, expire_time, class_expire_time, transfer_enable } = req.body || {};
+    const {
+      email,
+      username,
+      status,
+      class: level,
+      expire_time,
+      class_expire_time,
+      transfer_enable,
+      speed_limit,
+      device_limit
+    } = req.body || {};
     await ctx.dbService.updateUserProfile(id, { username, email });
     const fields: string[] = [];
     const values: any[] = [];
@@ -802,6 +828,14 @@ export function createAdminRouter(ctx: AppContext) {
     if (transfer_enable !== undefined) {
       fields.push("transfer_enable = ?");
       values.push(Number(transfer_enable));
+    }
+    if (speed_limit !== undefined) {
+      fields.push("speed_limit = ?");
+      values.push(Number(speed_limit));
+    }
+    if (device_limit !== undefined) {
+      fields.push("device_limit = ?");
+      values.push(Number(device_limit));
     }
     if (fields.length) {
       values.push(id);
