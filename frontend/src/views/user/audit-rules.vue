@@ -62,7 +62,7 @@ import type { AuditRule } from '@/api/types';
 const vxeTableRef = ref();
 const loading = ref(false);
 const rules = ref<AuditRule[]>([]);
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,
@@ -79,7 +79,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: 'name', title: '规则名称', width: 180, visible: true, slots: { default: 'name' } },
   { field: 'pattern', title: '匹配规则', minWidth: 200, visible: true, slots: { default: 'pattern' } },
   { field: 'description', title: '规则描述', minWidth: 250, visible: true, slots: { default: 'description' } }

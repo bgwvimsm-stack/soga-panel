@@ -181,7 +181,7 @@ const showCreateDialog = ref(false);
 const editingPackage = ref<any>(null);
 const packages = ref([]);
 const packageStats = ref<any>({});
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,
@@ -201,7 +201,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: 'id', title: 'ID', width: 80, visible: true },
   { field: 'name', title: '套餐名称', minWidth: 150, visible: true, slots: { default: 'name' } },
   { field: 'price', title: '价格', width: 100, visible: true, slots: { default: 'price' } },

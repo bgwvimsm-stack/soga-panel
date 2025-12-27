@@ -61,6 +61,7 @@ import IconAdminSubscriptionLogs from '~icons/mdi/rss';
 import IconAdminLoginLogs from '~icons/mdi/login-variant';
 import IconAdminOnlineIps from '~icons/mdi/ip-network-outline';
 import IconAdminNodes from '~icons/mdi/server';
+import IconAdminNodeStatus from '~icons/mdi/server-network';
 import IconAdminUsers from '~icons/mdi/account-group-outline';
 import IconAdminAuditGroup from '~icons/mdi/shield-star-outline';
 import IconAdminAuditRules from '~icons/mdi/shield-edit-outline';
@@ -128,6 +129,7 @@ const iconMap = {
   'admin-login-logs': IconAdminLoginLogs,
   'admin-online-ips': IconAdminOnlineIps,
   'admin-nodes': IconAdminNodes,
+  'admin-node-status': IconAdminNodeStatus,
   'admin-users': IconAdminUsers,
   'admin-audit-group': IconAdminAuditGroup,
   'admin-audit-rules': IconAdminAuditRules,

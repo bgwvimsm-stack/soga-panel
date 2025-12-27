@@ -41,7 +41,7 @@ import type { AuditLog } from '@/api/types';
 const vxeTableRef = ref();
 const loading = ref(false);
 const logs = ref<AuditLog[]>([]);
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,
@@ -58,7 +58,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: 'time', title: '时间', width: 180, visible: true, slots: { default: 'time' } },
   { field: 'node_name', title: '节点名称', width: 150, visible: true, slots: { default: 'node_name' } },
   { field: 'triggered_rule', title: '触发规则', minWidth: 200, visible: true, slots: { default: 'triggered_rule' } }

@@ -35,6 +35,18 @@ export function createAdminRouter(ctx: AppContext) {
     res.status(200).send(csv);
   };
 
+  const parseNodeConfig = (raw: unknown): { client: Record<string, any>; config: Record<string, any> } => {
+    try {
+      const parsed = typeof raw === "string" ? JSON.parse(raw || "{}") : raw || {};
+      return {
+        client: (parsed as any).client || {},
+        config: (parsed as any).config || (parsed as any) || {}
+      };
+    } catch {
+      return { client: {}, config: {} };
+    }
+  };
+
   const parseIdsFromQuery = (value: unknown): number[] => {
     if (Array.isArray(value)) {
       return value.map((v) => Number(v)).filter((n) => Number.isFinite(n));
@@ -1320,6 +1332,174 @@ export function createAdminRouter(ctx: AppContext) {
   router.use("/rebate", createAdminRebateRouter(ctx));
   router.use("/shared-ids", createAdminSharedIdRouter(ctx));
   router.use("/export", createAdminExportRouter(ctx));
+
+  // 节点状态（基于 node_status 最新记录）
+  router.get("/node-status", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const page = Number(req.query.page ?? 1) || 1;
+    const limitRaw = req.query.limit ?? req.query.pageSize ?? 20;
+    const pageSize = Math.min(Number(limitRaw) || 20, 200);
+    const keyword = typeof req.query.keyword === "string" ? req.query.keyword.trim() : "";
+    const statusParam = typeof req.query.status === "string" ? req.query.status.trim() : req.query.status;
+    const onlineParam = typeof req.query.online === "string" ? req.query.online.trim() : req.query.online;
+    const status =
+      statusParam === undefined || statusParam === null || statusParam === ""
+        ? null
+        : Number(statusParam);
+    const online =
+      onlineParam === undefined || onlineParam === null || onlineParam === ""
+        ? null
+        : Number(onlineParam);
+    const offset = (page - 1) * pageSize;
+
+    const conditions: string[] = [];
+    const values: any[] = [];
+    if (keyword) {
+      const pattern = `%${keyword}%`;
+      conditions.push("(n.name LIKE ? OR n.type LIKE ?)");
+      values.push(pattern, pattern);
+    }
+    if (typeof status === "number" && !Number.isNaN(status)) {
+      conditions.push("n.status = ?");
+      values.push(status === 1 ? 1 : 0);
+    }
+    if (typeof online === "number" && !Number.isNaN(online)) {
+      if (online === 1) {
+        conditions.push("ns.created_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)");
+      } else if (online === 0) {
+        conditions.push(
+          "(ns.created_at < DATE_SUB(NOW(), INTERVAL 5 MINUTE) OR ns.created_at IS NULL)"
+        );
+      }
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const totalRow = await ctx.db.db
+      .prepare(
+        `
+        SELECT COUNT(*) as total
+        FROM nodes n
+        LEFT JOIN node_status ns
+          ON ns.id = (
+            SELECT id
+            FROM node_status
+            WHERE node_id = n.id
+            ORDER BY created_at DESC
+            LIMIT 1
+          )
+        ${where}
+      `
+      )
+      .bind(...values)
+      .first<{ total?: number }>();
+
+    const rows = await ctx.db.db
+      .prepare(
+        `
+        SELECT
+          n.id,
+          n.name,
+          n.type,
+          n.node_class,
+          n.status,
+          n.node_config,
+          n.created_at,
+          n.updated_at,
+          ns.cpu_usage,
+          ns.memory_total,
+          ns.memory_used,
+          ns.swap_total,
+          ns.swap_used,
+          ns.disk_total,
+          ns.disk_used,
+          ns.uptime,
+          ns.created_at as last_reported
+        FROM nodes n
+        LEFT JOIN node_status ns
+          ON ns.id = (
+            SELECT id
+            FROM node_status
+            WHERE node_id = n.id
+            ORDER BY created_at DESC
+            LIMIT 1
+          )
+        ${where}
+        ORDER BY n.id DESC
+        LIMIT ? OFFSET ?
+      `
+      )
+      .bind(...values, pageSize, offset)
+      .all();
+
+    const nodes =
+      (rows.results || []).map((node: any) => {
+        const parsed = parseNodeConfig(node.node_config);
+        const client = parsed.client || {};
+        const cfg = parsed.config || {};
+        const lastReported = ensureString(node.last_reported);
+        const isOnline =
+          lastReported &&
+          new Date(lastReported).getTime() >= Date.now() - 5 * 60 * 1000;
+        return {
+          id: ensureNumber(node.id),
+          name: ensureString(node.name),
+          type: ensureString(node.type),
+          node_class: ensureNumber(node.node_class),
+          status: ensureNumber(node.status),
+          server: ensureString(client.server || ""),
+          server_port: ensureNumber(client.port || cfg.port || 443),
+          tls_host: ensureString(client.tls_host || cfg.host || ""),
+          cpu_usage: ensureNumber(node.cpu_usage, 0),
+          memory_total: ensureNumber(node.memory_total, 0),
+          memory_used: ensureNumber(node.memory_used, 0),
+          swap_total: ensureNumber(node.swap_total, 0),
+          swap_used: ensureNumber(node.swap_used, 0),
+          disk_total: ensureNumber(node.disk_total, 0),
+          disk_used: ensureNumber(node.disk_used, 0),
+          uptime: ensureNumber(node.uptime, 0),
+          last_reported: lastReported,
+          is_online: Boolean(isOnline)
+        };
+      }) || [];
+
+    const totalNodesRow = await ctx.db.db
+      .prepare("SELECT COUNT(*) as total FROM nodes")
+      .first<{ total?: number }>();
+    const enabledNodesRow = await ctx.db.db
+      .prepare("SELECT COUNT(*) as total FROM nodes WHERE status = 1")
+      .first<{ total?: number }>();
+    const onlineNodesRow = await ctx.db.db
+      .prepare(
+        `
+        SELECT COUNT(DISTINCT n.id) as total
+        FROM nodes n
+        LEFT JOIN node_status ns ON ns.node_id = n.id
+        WHERE ns.created_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+      `
+      )
+      .first<{ total?: number }>();
+
+    const totalNodes = ensureNumber(totalNodesRow?.total);
+    const enabledNodes = ensureNumber(enabledNodesRow?.total);
+    const onlineNodes = ensureNumber(onlineNodesRow?.total);
+    const offlineNodes = Math.max(0, totalNodes - onlineNodes);
+
+    return successResponse(res, {
+      nodes,
+      statistics: {
+        total: totalNodes,
+        online: onlineNodes,
+        offline: offlineNodes,
+        enabled: enabledNodes,
+        disabled: Math.max(0, totalNodes - enabledNodes)
+      },
+      pagination: {
+        total: ensureNumber(totalRow?.total),
+        page,
+        limit: pageSize
+      }
+    });
+  });
 
   // 在线 IP 管理
   router.get("/online-ips", async (req: Request, res: Response) => {

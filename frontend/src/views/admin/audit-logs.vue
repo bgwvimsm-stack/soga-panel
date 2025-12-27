@@ -48,7 +48,7 @@ const vxeTableRef = ref();
 const loading = ref(false);
 const exporting = ref(false);
 const auditLogs = ref([]);
-const pagerConfig = reactive({ total: 0, currentPage: 1, pageSize: 20, pageSizes: [10, 20, 50, 100], layouts: ['Total', 'Sizes', 'PrevPage', 'Number', 'NextPage', 'FullJump'] });
+const pagerConfig = reactive<VxePagerConfig>({ total: 0, currentPage: 1, pageSize: 20, pageSizes: [10, 20, 50, 100], layouts: ['Total', 'Sizes', 'PrevPage', 'Number', 'NextPage', 'FullJump'] });
 const filterUserSearch = ref('');
 const filterDateRange = ref([]);
 
@@ -61,7 +61,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: 'id', title: 'ID', width: 80, visible: true },
   { field: 'username', title: '用户名', minWidth: 160, visible: true, slots: { default: 'username' } },
   { field: 'user_id', title: '用户ID', width: 110, visible: true },

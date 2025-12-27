@@ -27,7 +27,7 @@ const batchProcessing = ref(false);
 const selectedCount = computed(() => selectedCards.value.length);
 const hasSelection = computed(() => selectedCount.value > 0);
 
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,
@@ -43,7 +43,7 @@ const cardTypeOptions = [
   { label: '兑换订阅套餐', value: 'package' }
 ];
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { type: 'checkbox', width: 60, fixed: 'left', visible: true },
   { field: 'id', title: 'ID', width: 80, visible: true, align: 'center' },
   { field: 'code', title: '卡密', minWidth: 200, visible: true, slots: { default: 'code' } },
@@ -58,7 +58,7 @@ const columns = [
   { field: 'actions', title: '操作', width: 100, fixed: 'right', visible: true, slots: { default: 'actions' }, align: 'center' }
 ];
 
-const redemptionColumns = [
+const redemptionColumns: VxeGridColumns = [
   { field: 'user_email', title: '用户', minWidth: 180, slots: { default: 'user' } },
   { field: 'card_type', title: '类型', width: 120, align: 'center', slots: { default: 'card_type' } },
   { field: 'effect', title: '效果', minWidth: 200, slots: { default: 'effect' } },

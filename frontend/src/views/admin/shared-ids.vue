@@ -115,7 +115,7 @@ const vxeTableRef = ref();
 const loading = ref(false);
 const saving = ref(false);
 const records = ref<SharedIdConfig[]>([]);
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,
@@ -137,7 +137,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: 'id', title: 'ID', width: 80, visible: true },
   { field: 'name', title: '名称', minWidth: 180, visible: true, slots: { default: 'name' } },
   { field: 'fetch_url', title: '拉取地址', minWidth: 260, visible: true, slots: { default: 'fetch_url' } },

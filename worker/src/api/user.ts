@@ -407,14 +407,14 @@ export class UserAPI {
           ? null
           : statusParam === "1";
 
-      // 获取用户可访问的节点（用户等级大于等于节点等级）
+      // 获取所有启用节点（不限制用户等级）
       const nodesStmt = this.db.db.prepare(`
         SELECT * FROM nodes 
-        WHERE node_class <= ? AND status = 1
+        WHERE status = 1
         ORDER BY node_class ASC, id ASC
       `);
       
-      const nodesResult = await nodesStmt.bind(userClass).all<DbRow>();
+      const nodesResult = await nodesStmt.all<DbRow>();
       const nodes = nodesResult.results || [];
 
       // 获取节点统计信息
@@ -483,7 +483,34 @@ export class UserAPI {
         };
       }));
 
-      let filteredNodes = processedNodes;
+      const typeOrderMap: Record<string, number> = {
+        ss: 1,
+        shadowsocks: 1,
+        ssr: 2,
+        shadowsocksr: 2,
+        v2ray: 3,
+        vmess: 3,
+        vless: 4,
+        trojan: 5,
+        hysteria: 6,
+        hysteria2: 6,
+        anytls: 7
+      };
+      const sortedNodes = [...processedNodes].sort((a, b) => {
+        const classA = toNumber(a.node_class);
+        const classB = toNumber(b.node_class);
+        if (classA !== classB) return classA - classB;
+        const typeA = (a.type || "").toLowerCase();
+        const typeB = (b.type || "").toLowerCase();
+        const orderA = typeOrderMap[typeA] ?? 99;
+        const orderB = typeOrderMap[typeB] ?? 99;
+        if (orderA !== orderB) return orderA - orderB;
+        const nameA = String(a.name || "");
+        const nameB = String(b.name || "");
+        return nameA.localeCompare(nameB, "zh-CN", { numeric: true, sensitivity: "base" });
+      });
+
+      let filteredNodes = sortedNodes;
 
       if (normalizedTypeFilter) {
         filteredNodes = filteredNodes.filter(
@@ -520,6 +547,13 @@ export class UserAPI {
    */
   async getNodeStatistics(userClass: number) {
     try {
+      const totalNodesStmt = this.db.db.prepare(`
+        SELECT COUNT(*) as count 
+        FROM nodes 
+        WHERE status = 1
+      `);
+      const totalNodes = await totalNodesStmt.first<DbRow | null>();
+
       // 用户可访问的节点（启用且等级满足）
       const accessibleNodesStmt = this.db.db.prepare(`
         SELECT COUNT(*) as count 
@@ -528,25 +562,25 @@ export class UserAPI {
       `);
       const accessibleNodes = await accessibleNodesStmt.bind(userClass).first<DbRow | null>();
 
-      // 在线节点数（仅统计用户可访问的节点）
+      // 在线节点数（统计所有启用节点）
       const onlineNodesStmt = this.db.db.prepare(`
         SELECT COUNT(DISTINCT ns.node_id) as count
         FROM node_status ns
         INNER JOIN nodes n ON ns.node_id = n.id
         WHERE ns.created_at >= datetime('now', '+8 hours', '-5 minutes')
           AND n.status = 1
-          AND n.node_class <= ?
       `);
-      const onlineNodes = await onlineNodesStmt.bind(userClass).first<DbRow | null>();
+      const onlineNodes = await onlineNodesStmt.first<DbRow | null>();
 
+      const totalEnabled = toNumber(totalNodes?.count);
       const accessibleTotal = toNumber(accessibleNodes?.count);
-      const accessibleOnline = toNumber(onlineNodes?.count);
-      const accessibleOffline = Math.max(0, accessibleTotal - accessibleOnline);
+      const totalOnline = toNumber(onlineNodes?.count);
+      const totalOffline = Math.max(0, totalEnabled - totalOnline);
 
       return {
-        total: accessibleTotal,
-        online: accessibleOnline,
-        offline: accessibleOffline,
+        total: totalEnabled,
+        online: totalOnline,
+        offline: totalOffline,
         accessible: accessibleTotal
       };
     } catch (error: unknown) {

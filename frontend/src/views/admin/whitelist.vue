@@ -86,7 +86,7 @@ const submitting = ref(false);
 const showDialog = ref(false);
 const editingItem = ref<any>(null);
 const whitelist = ref([]);
-const pagerConfig = reactive({ total: 0, currentPage: 1, pageSize: 20, pageSizes: [10, 20, 50, 100], layouts: ['Total', 'Sizes', 'PrevPage', 'Number', 'NextPage', 'FullJump'] });
+const pagerConfig = reactive<VxePagerConfig>({ total: 0, currentPage: 1, pageSize: 20, pageSizes: [10, 20, 50, 100], layouts: ['Total', 'Sizes', 'PrevPage', 'Number', 'NextPage', 'FullJump'] });
 
 const getTableHeight = computed(() => (size: string) => {
   switch (size) {
@@ -97,7 +97,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: 'id', title: 'ID', width: 80, visible: true },
   { field: 'rule', title: '规则内容', minWidth: 220, visible: true, slots: { default: 'rule' } },
   { field: 'description', title: '规则描述', minWidth: 200, visible: true, slots: { default: 'description' } },

@@ -152,6 +152,7 @@ export async function handleRequest(
     // 节点管理
     "GET /api/admin/nodes": () => adminAPI.getNodes(request),
     "GET /api/admin/node-stats": () => adminAPI.getNodeStats(request),
+    "GET /api/admin/node-status": () => adminAPI.getNodeStatusList(request),
     "GET /api/admin/nodes/export": () => adminAPI.exportNodes(request),
     "POST /api/admin/nodes": () => adminAPI.createNode(request),
     "PUT /api/admin/nodes/:id": () => adminAPI.updateNode(request),

@@ -339,6 +339,45 @@ export interface Node {
   updated_at: string;
 }
 
+export interface NodeStatus {
+  id: number;
+  name: string;
+  type: string;
+  server: string;
+  server_port: number;
+  tls_host?: string;
+  node_class: number;
+  status: number;
+  cpu_usage?: number;
+  memory_total?: number;
+  memory_used?: number;
+  swap_total?: number;
+  swap_used?: number;
+  disk_total?: number;
+  disk_used?: number;
+  uptime?: number;
+  last_reported?: string;
+  is_online?: boolean;
+}
+
+export interface NodeStatusStatistics {
+  total: number;
+  online: number;
+  offline: number;
+  enabled?: number;
+  disabled?: number;
+}
+
+export interface NodeStatusResponse {
+  nodes: NodeStatus[];
+  statistics: NodeStatusStatistics;
+  pagination?: {
+    total: number;
+    page: number;
+    limit: number;
+  };
+}
+
 export interface CreateNodeRequest {
   name: string;
   type: string;
@@ -354,6 +393,14 @@ export interface CreateNodeRequest {
 
 export const getNodes = (params?: PaginationParams): Promise<ApiResponse<PaginationResponse<Node>>> => {
   return http.get("/admin/nodes", { params });
+};
+
+export const getNodeStatusList = (params?: PaginationParams & {
+  keyword?: string;
+  status?: string | number;
+  online?: string | number;
+}): Promise<ApiResponse<NodeStatusResponse>> => {
+  return http.get("/admin/node-status", { params });
 };
 
 export const createNode = (data: CreateNodeRequest): Promise<ApiResponse<Node>> => {

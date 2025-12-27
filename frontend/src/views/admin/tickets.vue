@@ -259,7 +259,7 @@ const vxeTableRef = ref();
 const filters = reactive<{ status: TicketStatus | "" }>({
   status: "",
 });
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 10,
@@ -279,7 +279,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: "id", title: "工单ID", width: 90, align: "center", visible: true },
   { field: "user_id", title: "用户ID", width: 100, align: "center", visible: true, slots: { default: "userId" } },
   { field: "user_name", title: "用户名", minWidth: 160, visible: true, slots: { default: "userName" } },

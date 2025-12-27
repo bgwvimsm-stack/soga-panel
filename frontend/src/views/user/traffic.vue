@@ -160,7 +160,7 @@ const monthUsed = ref(0);
 const remaining = ref(0);
 const totalEnable = ref(0);
 
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,
@@ -177,7 +177,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: 'log_time', title: '日期', width: 120, visible: true, slots: { default: 'log_time' } },
   { field: 'created_at', title: '时间', width: 100, visible: true, slots: { default: 'created_at' } },
   { field: 'upload_traffic', title: '上传流量', width: 120, visible: true, slots: { default: 'upload_traffic' } },

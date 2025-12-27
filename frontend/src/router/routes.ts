@@ -231,6 +231,16 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: "node-status",
+        name: "AdminNodeStatus",
+        component: () => import("@/views/admin/node-status.vue"),
+        meta: {
+          title: "节点状态",
+          requiresAuth: true,
+          requiresAdmin: true
+        }
+      },
+      {
         path: "announcements",
         name: "AdminAnnouncements",
         component: () => import("@/views/admin/announcements.vue"),

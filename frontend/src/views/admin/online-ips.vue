@@ -54,7 +54,7 @@ const loading = ref(false);
 const onlineIps = ref([]);
 const ipLocationResults = reactive<Record<string, string>>({});
 const locationLoading = reactive<Record<string, boolean>>({});
-const pagerConfig = reactive({ total: 0, currentPage: 1, pageSize: 20, pageSizes: [10, 20, 50, 100], layouts: ['Total', 'Sizes', 'PrevPage', 'Number', 'NextPage', 'FullJump'] });
+const pagerConfig = reactive<VxePagerConfig>({ total: 0, currentPage: 1, pageSize: 20, pageSizes: [10, 20, 50, 100], layouts: ['Total', 'Sizes', 'PrevPage', 'Number', 'NextPage', 'FullJump'] });
 const filterUserSearch = ref('');
 const filterIpSearch = ref('');
 const filterNodeSearch = ref('');
@@ -68,7 +68,7 @@ const getTableHeight = computed(() => (size: string) => {
   }
 });
 
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: 'username', title: '用户名', minWidth: 160, visible: true, slots: { default: 'username' } },
   { field: 'user_id', title: '用户ID', width: 100, visible: true },
   { field: 'user_email', title: '用户邮箱', minWidth: 200, visible: false },

@@ -266,25 +266,25 @@ const withdrawForm = reactive({
 });
 const withdrawLoading = ref(false);
 
-const referralColumns = [
+const referralColumns: VxeGridColumns = [
   { field: "username", title: "用户名", width: 160, align: "center", slots: { default: "username" } },
   { field: "email", title: "邮箱", width: 220, align: "center", slots: { default: "email" } },
   { field: "status", title: "状态", width: 120, align: "center", slots: { default: "status" } },
   { field: "registered_at", title: "注册时间", width: 180, align: "center", slots: { default: "registered_at" } },
   { field: "paid_at", title: "首次付费时间", width: 180, align: "center", slots: { default: "paid_at" } },
   { field: "rebate", title: "累计返利", width: 140, align: "center", slots: { default: "rebate" } }
-] as const;
+];
 
-const ledgerColumns = [
+const ledgerColumns: VxeGridColumns = [
   { field: "eventType", title: "类型", width: 140, align: "center", slots: { default: "event_type" } },
   { field: "sourceType", title: "来源", width: 140, align: "center", slots: { default: "source_type" } },
   { field: "inviteeEmail", title: "关联用户", width: 200, align: "center", slots: { default: "invitee" } },
   { field: "tradeNo", title: "关联订单", width: 200, align: "center" },
   { field: "amount", title: "金额", width: 120, align: "center", slots: { default: "amount" } },
   { field: "created_at", title: "时间", width: 180, align: "center", slots: { default: "created_at" } }
-] as const;
+];
 
-const withdrawColumns = [
+const withdrawColumns: VxeGridColumns = [
   { field: "amount", title: "金额", width: 120, align: "center", slots: { default: "amount" } },
   { field: "method", title: "方式", width: 120, align: "center", slots: { default: "method" } },
   { field: "fee", title: "手续费", width: 120, align: "center", slots: { default: "fee" } },
@@ -295,7 +295,7 @@ const withdrawColumns = [
   { field: "address", title: "USDT 地址", minWidth: 220, align: "center", slots: { default: "address" } },
   { field: "user_note", title: "备注", minWidth: 180, align: "center", slots: { default: "user_note" } },
   { field: "review_note", title: "审核备注", minWidth: 180, align: "center", slots: { default: "review_note" } }
-] as const;
+];
 
 const inviteLink = computed(() => {
   if (!overview.value?.inviteCode) {

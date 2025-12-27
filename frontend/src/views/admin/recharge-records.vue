@@ -13,7 +13,7 @@ const filterStatus = ref('');
 const filterUserId = ref('');
 
 // 分页配置
-const pagerConfig = reactive({
+const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
   currentPage: 1,
   pageSize: 20,
@@ -38,7 +38,7 @@ const getTableHeight = computed(() => {
 });
 
 // 列配置
-const columns = [
+const columns: VxeTableBarColumns = [
   { field: 'id', title: 'ID', width: 80, visible: true },
   { field: 'user_id', title: '用户ID', width: 100, visible: true },
   { field: 'email', title: '用户邮箱', minWidth: 180, visible: true },
