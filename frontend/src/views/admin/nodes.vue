@@ -782,6 +782,8 @@ const nodeForm = reactive({
   node_config_json: ''
 });
 
+const isConfigSyncing = ref(false);
+
 const generateSS2022Password = (method: string) => {
   const length = ss2022KeyLengths[method] || 32;
   const bytes = new Uint8Array(length);
@@ -1355,60 +1357,66 @@ const normalizeNodeConfig = (config: any, type = nodeForm.type): NodeConfigState
 };
 
 const applyConfigToState = (config: any) => {
-  const normalized = normalizeNodeConfig(config);
-  nodeConfigState.basic = { ...normalized.basic };
-  nodeConfigState.config = { ...normalized.config };
-  nodeConfigState.client = { ...normalized.client };
+  isConfigSyncing.value = true;
+  try {
+    const normalized = normalizeNodeConfig(config);
+    nodeConfigState.basic = { ...normalized.basic };
+    nodeConfigState.config = { ...normalized.config };
+    nodeConfigState.client = { ...normalized.client };
 
-  nodeForm.client_server = nodeConfigState.client.server || '';
-  nodeForm.client_tls_host = (nodeConfigState.client as any).tls_host || '';
-  nodeForm.client_publickey = (nodeConfigState.client as any).publickey || nodeConfigState.config.public_key || '';
-  const clientPort = Number(nodeConfigState.client.port);
-  nodeForm.client_port = Number.isFinite(clientPort) && clientPort > 0 ? clientPort : null;
-  const servicePort = Number(nodeConfigState.config.port);
-  nodeForm.service_port = Number.isFinite(servicePort) && servicePort > 0 ? servicePort : null;
-  nodeForm.basic_pull_interval = Number(nodeConfigState.basic.pull_interval ?? 60);
-  nodeForm.basic_push_interval = Number(nodeConfigState.basic.push_interval ?? 60);
-  nodeForm.basic_speed_limit = Number(nodeConfigState.basic.speed_limit ?? 0);
-  nodeForm.config_method = nodeConfigState.config.method || nodeConfigState.config.cipher || '';
-  nodeForm.config_password = nodeConfigState.config.password || '';
-  nodeForm.config_protocol = nodeConfigState.config.protocol || '';
-  nodeForm.config_obfs = nodeConfigState.config.obfs || '';
-  // 对于已存的 ss config，优先使用 cipher
-  if (nodeForm.type === 'ss' && nodeConfigState.config.cipher) {
-    nodeForm.config_method = nodeConfigState.config.cipher;
+    nodeForm.client_server = nodeConfigState.client.server || '';
+    nodeForm.client_tls_host = (nodeConfigState.client as any).tls_host || '';
+    nodeForm.client_publickey = (nodeConfigState.client as any).publickey || nodeConfigState.config.public_key || '';
+    const clientPort = Number(nodeConfigState.client.port);
+    nodeForm.client_port = Number.isFinite(clientPort) && clientPort > 0 ? clientPort : null;
+    const servicePort = Number(nodeConfigState.config.port);
+    nodeForm.service_port = Number.isFinite(servicePort) && servicePort > 0 ? servicePort : null;
+    nodeForm.basic_pull_interval = Number(nodeConfigState.basic.pull_interval ?? 60);
+    nodeForm.basic_push_interval = Number(nodeConfigState.basic.push_interval ?? 60);
+    nodeForm.basic_speed_limit = Number(nodeConfigState.basic.speed_limit ?? 0);
+    nodeForm.config_method = nodeConfigState.config.method || nodeConfigState.config.cipher || '';
+    nodeForm.config_password = nodeConfigState.config.password || '';
+    nodeForm.config_protocol = nodeConfigState.config.protocol || '';
+    nodeForm.config_obfs = nodeConfigState.config.obfs || '';
+    // 对于已存的 ss config，优先使用 cipher
+    if (nodeForm.type === 'ss' && nodeConfigState.config.cipher) {
+      nodeForm.config_method = nodeConfigState.config.cipher;
+    }
+    nodeForm.config_single_port_type = nodeConfigState.config.single_port_type || '';
+    nodeForm.config_stream_type = nodeConfigState.config.stream_type || 'tcp';
+    nodeForm.config_tls_type = nodeConfigState.config.tls_type || (nodeForm.type === 'vless' ? 'tls' : 'none');
+    nodeForm.config_path = nodeConfigState.config.path || '';
+    nodeForm.config_service_name = nodeConfigState.config.service_name || '';
+    nodeForm.config_flow = nodeConfigState.config.flow || '';
+    nodeForm.config_server_names = Array.isArray(nodeConfigState.config.server_names)
+      ? nodeConfigState.config.server_names.join(',')
+      : nodeConfigState.config.server_names || '';
+    nodeForm.config_private_key = nodeConfigState.config.private_key || '';
+    nodeForm.config_short_ids = Array.isArray(nodeConfigState.config.short_ids)
+      ? nodeConfigState.config.short_ids.join(',')
+      : nodeConfigState.config.short_ids || '';
+    nodeForm.config_dest = nodeConfigState.config.dest || '';
+    nodeForm.config_obfs_password = nodeConfigState.config.obfs_password || '';
+    ensureHysteriaObfsPassword();
+    ensureSSRPassword();
+    ensureVlessRealityDefaults();
+    nodeForm.config_padding_scheme = Array.isArray((nodeConfigState.config as any).padding_scheme)
+      ? (nodeConfigState.config as any).padding_scheme.join('\n')
+      : ((nodeConfigState.config as any).padding_scheme || '');
+    const upMbps = Number(nodeConfigState.config.up_mbps);
+    nodeForm.config_up_mbps = Number.isFinite(upMbps) ? upMbps : 1000;
+    const downMbps = Number(nodeConfigState.config.down_mbps);
+    nodeForm.config_down_mbps = Number.isFinite(downMbps) ? downMbps : 1000;
+    nodeForm.node_config_json = JSON.stringify(normalized, null, 2);
+  } finally {
+    isConfigSyncing.value = false;
   }
-  nodeForm.config_single_port_type = nodeConfigState.config.single_port_type || '';
-  nodeForm.config_stream_type = nodeConfigState.config.stream_type || 'tcp';
-  nodeForm.config_tls_type = nodeConfigState.config.tls_type || (nodeForm.type === 'vless' ? 'tls' : 'none');
-  nodeForm.config_path = nodeConfigState.config.path || '';
-  nodeForm.config_service_name = nodeConfigState.config.service_name || '';
-  nodeForm.config_flow = nodeConfigState.config.flow || '';
-  nodeForm.config_server_names = Array.isArray(nodeConfigState.config.server_names)
-    ? nodeConfigState.config.server_names.join(',')
-    : nodeConfigState.config.server_names || '';
-  nodeForm.config_private_key = nodeConfigState.config.private_key || '';
-  nodeForm.config_short_ids = Array.isArray(nodeConfigState.config.short_ids)
-    ? nodeConfigState.config.short_ids.join(',')
-    : nodeConfigState.config.short_ids || '';
-  nodeForm.config_dest = nodeConfigState.config.dest || '';
-  nodeForm.config_obfs_password = nodeConfigState.config.obfs_password || '';
-  ensureHysteriaObfsPassword();
-  ensureSSRPassword();
-  ensureVlessRealityDefaults();
-  nodeForm.config_padding_scheme = Array.isArray((nodeConfigState.config as any).padding_scheme)
-    ? (nodeConfigState.config as any).padding_scheme.join('\n')
-    : ((nodeConfigState.config as any).padding_scheme || '');
-  const upMbps = Number(nodeConfigState.config.up_mbps);
-  nodeForm.config_up_mbps = Number.isFinite(upMbps) ? upMbps : 1000;
-  const downMbps = Number(nodeConfigState.config.down_mbps);
-  nodeForm.config_down_mbps = Number.isFinite(downMbps) ? downMbps : 1000;
-  nodeForm.node_config_json = JSON.stringify(normalized, null, 2);
 };
 
 const isSS2022 = computed(() => nodeForm.type === 'ss' && ss2022Ciphers.includes(nodeForm.config_method));
 
 watch(() => nodeForm.config_method, (val, oldVal) => {
+  if (isConfigSyncing.value) return;
   if (val !== oldVal && nodeForm.type === 'ss' && ss2022Ciphers.includes(val)) {
     // 切换 SS2022 加密方式时强制重新生成匹配长度的密码
     ensureSS2022Password(true);
@@ -1428,6 +1436,7 @@ watch(() => nodeForm.type, (val, oldVal) => {
 });
 
 watch(() => nodeForm.config_obfs, (val, oldVal) => {
+  if (isConfigSyncing.value) return;
   if (val !== oldVal && nodeForm.type === 'hysteria') {
     ensureHysteriaObfsPassword(true);
   }
