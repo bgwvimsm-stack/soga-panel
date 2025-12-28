@@ -21,9 +21,15 @@
 
 <script setup lang="ts">
 import { Loading } from "@element-plus/icons-vue";
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { useSiteStore } from "@/store/site";
 
-const frameSrc = "https://vitepress.dev/zh";
+const siteStore = useSiteStore();
+const fallbackDocsUrl = "https://vitepress.dev/zh";
+const frameSrc = computed(() => {
+  const url = (siteStore.docsUrl || "").trim();
+  return url || fallbackDocsUrl;
+});
 const loading = ref(true);
 const frameRef = ref<HTMLIFrameElement | null>(null);
 const fallbackTimer = ref<number | null>(null);

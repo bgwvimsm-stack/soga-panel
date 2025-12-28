@@ -34,6 +34,7 @@ INSERT IGNORE INTO users (
 INSERT IGNORE INTO system_configs (`key`, value, description) VALUES
 ('site_name', '代理面板', '网站名称'),
 ('site_url', 'https://panel.example.com', '网站地址'),
+('docs_url', '', '用户文档地址'),
 ('register_enabled', '1', '注册开关：0=禁用，1=开放，2=仅限邀请'),
 ('default_traffic', '10737418240', '默认流量10GB（字节）'),
 ('default_expire_days', '30', '默认等级到期天数'),

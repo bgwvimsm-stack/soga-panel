@@ -1560,10 +1560,12 @@ export class AuthAPI {
       const siteConfigs = await this.configManager.getSiteConfigs();
       const siteName = siteConfigs.site_name || (this.env.SITE_NAME as string) || "Soga Panel";
       const siteUrl = siteConfigs.site_url || (this.env.SITE_URL as string) || "";
+      const docsUrl = siteConfigs.docs_url || "";
 
       return successResponse({
         siteName,
         siteUrl,
+        docsUrl,
       });
     } catch (error) {
       this.logger.error("获取站点配置失败", error);
@@ -1572,6 +1574,7 @@ export class AuthAPI {
       return successResponse({
         siteName: fallbackName,
         siteUrl: fallbackUrl,
+        docsUrl: "",
       });
     }
   }

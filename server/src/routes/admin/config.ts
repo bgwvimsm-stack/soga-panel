@@ -11,6 +11,15 @@ export function createConfigRouter(ctx: AppContext) {
     const user = (req as any).user;
     if (!user?.is_admin) return errorResponse(res, "需要管理员权限", 403);
     const rows = await ctx.dbService.listSystemConfigs();
+    const hasDocsUrl = rows.some((row) => row?.key === "docs_url");
+    if (!hasDocsUrl) {
+      rows.push({
+        id: 0,
+        key: "docs_url",
+        value: "",
+        description: "用户文档地址"
+      } as any);
+    }
     return successResponse(res, rows);
   });
 

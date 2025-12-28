@@ -77,7 +77,8 @@ export function registerRoutes(app: Express, deps: RouteDeps) {
         message: "ok",
         data: {
           siteName: configs["site_name"] || deps.env.SITE_NAME || "Soga Panel",
-          siteUrl: configs["site_url"] || deps.env.SITE_URL || ""
+          siteUrl: configs["site_url"] || deps.env.SITE_URL || "",
+          docsUrl: configs["docs_url"] || ""
         }
       });
     } catch (error) {

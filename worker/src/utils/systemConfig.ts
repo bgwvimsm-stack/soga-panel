@@ -126,7 +126,8 @@ export class SystemConfigManager {
   async getSiteConfigs(): Promise<Record<string, string>> {
     return await this.getSystemConfigs([
       { key: "site_name", fallback: (this.env.SITE_NAME as string) || "代理面板" },
-      { key: "site_url", fallback: (this.env.SITE_URL as string) || "https://panel.example.com" }
+      { key: "site_url", fallback: (this.env.SITE_URL as string) || "https://panel.example.com" },
+      { key: "docs_url", fallback: "" }
     ]);
   }
 

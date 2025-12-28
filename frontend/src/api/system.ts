@@ -4,6 +4,7 @@ import type { ApiResponse } from "./types";
 export interface SiteSettingsResponse {
   siteName: string;
   siteUrl?: string;
+  docsUrl?: string;
 }
 
 export function getSiteSettings() {
