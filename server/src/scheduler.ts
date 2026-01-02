@@ -183,7 +183,7 @@ export function startSchedulers(db: DatabaseService, cache: CacheService, env: A
         console.error("[scheduler] user expiration check failed", error);
       }
     },
-    { timezone: CRON_TIMEZONE }
+    { timezone: CRON_TIMEZONE, recoverMissedExecutions: true }
   );
 
   // 每天 00:00：每日流量重置 + 月度流量重置 + 节点状态/在线 IP 清理 + 流量汇总 + Bark 通知
@@ -278,7 +278,7 @@ export function startSchedulers(db: DatabaseService, cache: CacheService, env: A
         console.error("[scheduler] daily tasks failed", error);
       }
     },
-    { timezone: CRON_TIMEZONE }
+    { timezone: CRON_TIMEZONE, recoverMissedExecutions: true }
   );
 
   // 每天 01:00：清理 7 天前订阅记录，并清理订阅缓存
