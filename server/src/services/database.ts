@@ -807,18 +807,28 @@ export class DatabaseService {
       .bind(tradeNo)
       .first<{ id: number; user_id: number; amount: number; status: number }>();
     if (!record) return null;
-    if (Number(record.status) === 1) return record;
 
-    await this.db.db
-      .prepare(
+    const updateResult = toRunResult(
+      await this.db.db
+        .prepare(
+          `
+          UPDATE recharge_records 
+          SET status = 1, paid_at = CURRENT_TIMESTAMP
+          WHERE trade_no = ? AND status = 0
         `
-        UPDATE recharge_records 
-        SET status = 1, paid_at = CURRENT_TIMESTAMP
-        WHERE trade_no = ?
-      `
-      )
-      .bind(tradeNo)
-      .run();
+        )
+        .bind(tradeNo)
+        .run()
+    );
+
+    if (getChanges(updateResult) === 0) {
+      const latest = await this.db.db
+        .prepare("SELECT status FROM recharge_records WHERE trade_no = ?")
+        .bind(tradeNo)
+        .first<{ status?: number | string | null }>();
+      const isPaid = ensureNumber(latest?.status ?? record.status, 0) === 1;
+      return { record, applied: false, alreadyPaid: isPaid };
+    }
 
     await this.db.db
       .prepare(
@@ -831,7 +841,7 @@ export class DatabaseService {
       .bind(Number(record.amount), Number(record.user_id))
       .run();
 
-    return record;
+    return { record, applied: true, alreadyPaid: false };
   }
 
   async markPurchasePaid(tradeNo: string) {
@@ -851,25 +861,9 @@ export class DatabaseService {
         purchase_type?: string | null;
       }>();
     if (!record) return null;
-    if (Number(record.status) === 1) return record;
 
     const pkg = await this.getPackageByIdAny(Number(record.package_id));
     if (!pkg) throw new Error("套餐不存在或已下架");
-
-    // 补差额场景：支付完成后扣除余额部分（在线支付补差额）
-    const purchaseType = String(record.purchase_type || "").toLowerCase();
-    if (purchaseType.startsWith("balance_")) {
-      const basePrice = Number(record.package_price ?? record.price ?? 0);
-      const discount = Number(record.discount_amount ?? 0);
-      const onlinePaid = Number(record.price ?? 0);
-      const balanceNeed = Math.max(basePrice - discount - onlinePaid, 0);
-      if (balanceNeed > 0) {
-        const ok = await this.deductUserBalance(Number(record.user_id), balanceNeed);
-        if (!ok) {
-          throw new Error("余额扣除失败，请联系管理员");
-        }
-      }
-    }
 
     const updateResult = toRunResult(
       await this.db.db
@@ -884,11 +878,50 @@ export class DatabaseService {
         .run()
     );
 
-    if (getChanges(updateResult) === 0 && Number(record.status) !== 0) {
-      return record;
+    if (getChanges(updateResult) === 0) {
+      const latest = await this.db.db
+        .prepare("SELECT status, paid_at, expires_at FROM package_purchase_records WHERE trade_no = ?")
+        .bind(tradeNo)
+        .first<{ status?: number | string | null; paid_at?: string | null; expires_at?: string | null }>();
+      const isPaid = ensureNumber(latest?.status ?? record.status, 0) === 1;
+      return {
+        record: {
+          ...record,
+          status: ensureNumber(latest?.status ?? record.status, 0),
+          paid_at: latest?.paid_at ?? (record as any).paid_at,
+          expires_at: latest?.expires_at ?? (record as any).expires_at
+        },
+        applied: false,
+        alreadyPaid: isPaid
+      };
     }
 
-    if (getChanges(updateResult) > 0 && record.coupon_id) {
+    // 补差额场景：支付完成后扣除余额部分（在线支付补差额）
+    const purchaseType = String(record.purchase_type || "").toLowerCase();
+    if (purchaseType.startsWith("balance_")) {
+      const basePrice = Number(record.package_price ?? record.price ?? 0);
+      const discount = Number(record.discount_amount ?? 0);
+      const onlinePaid = Number(record.price ?? 0);
+      const balanceNeed = Math.max(basePrice - discount - onlinePaid, 0);
+      if (balanceNeed > 0) {
+        const ok = await this.deductUserBalance(Number(record.user_id), balanceNeed);
+        if (!ok) {
+          await this.db.db
+            .prepare(
+              `
+              UPDATE package_purchase_records
+              SET status = 0, paid_at = NULL
+              WHERE trade_no = ? AND status = 1
+            `
+            )
+            .bind(tradeNo)
+            .run();
+          throw new Error("余额扣除失败，请联系管理员");
+        }
+      }
+    }
+
+    if (record.coupon_id) {
       await this.recordCouponUsage({
         couponId: Number(record.coupon_id),
         userId: Number(record.user_id),
@@ -910,7 +943,11 @@ export class DatabaseService {
         .run();
     }
 
-    return { ...record, status: 1, paid_at: new Date().toISOString(), expires_at: applyResult.newExpireTime ?? null };
+    return {
+      record: { ...record, status: 1, paid_at: new Date().toISOString(), expires_at: applyResult.newExpireTime ?? null },
+      applied: true,
+      alreadyPaid: false
+    };
   }
 
   async deductUserBalance(userId: number, amount: number) {

@@ -300,6 +300,8 @@ export async function handleRequest(
     "GET /api/admin/package-stats": () => adminAPI.getPackageStats(request),
     "GET /api/admin/recharge-records": () => adminAPI.getRechargeRecords(request),
     "GET /api/admin/purchase-records": () => adminAPI.getPurchaseRecords(request),
+    "POST /api/admin/recharge-records/:trade_no/mark-paid": () => adminAPI.markRechargeRecordPaid(request),
+    "POST /api/admin/purchase-records/:trade_no/mark-paid": () => adminAPI.markPurchaseRecordPaid(request),
     "DELETE /api/admin/pending-records": () => adminAPI.deletePendingRecords(request),
 
     // 工单 API（管理员）

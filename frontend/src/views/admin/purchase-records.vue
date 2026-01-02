@@ -120,6 +120,19 @@
           <template #expires_at="{ row }">
             <span>{{ row.expires_at || '-' }}</span>
           </template>
+
+          <template #actions="{ row }">
+            <el-button
+              v-if="row.status === 0"
+              size="small"
+              type="success"
+              :loading="markingTradeNo === row.trade_no"
+              @click="markPurchasePaid(row)"
+            >
+              标记已支付
+            </el-button>
+            <span v-else>-</span>
+          </template>
         </vxe-grid>
       </template>
     </VxeTableBar>
@@ -128,13 +141,14 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { VxeTableBar } from '@/components/ReVxeTableBar';
 import http from '@/api/http';
 
 const vxeTableRef = ref();
 const loading = ref(false);
 const purchaseRecords = ref([]);
+const markingTradeNo = ref('');
 
 // 分页配置
 const pagerConfig = reactive<VxePagerConfig>({
@@ -179,7 +193,8 @@ const columns: VxeTableBarColumns = [
   { field: 'status_text', title: '状态', width: 100, visible: true, slots: { default: 'status_text' } },
   { field: 'created_at', title: '创建时间', width: 170, visible: true, slots: { default: 'created_at' } },
   { field: 'paid_at', title: '支付时间', width: 170, visible: true, slots: { default: 'paid_at' } },
-  { field: 'expires_at', title: '到期时间', width: 160, visible: true, slots: { default: 'expires_at' } }
+  { field: 'expires_at', title: '到期时间', width: 160, visible: true, slots: { default: 'expires_at' } },
+  { field: 'actions', title: '操作', width: 140, visible: true, slots: { default: 'actions' } }
 ];
 
 // 获取状态类型
@@ -328,6 +343,31 @@ const handlePageChange = ({ currentPage, pageSize }) => {
   pagerConfig.currentPage = currentPage;
   pagerConfig.pageSize = pageSize;
   loadPurchaseRecords();
+};
+
+const markPurchasePaid = async (row: any) => {
+  if (!row?.trade_no || row.status !== 0) return;
+  try {
+    await ElMessageBox.confirm(
+      `确认将交易号 ${row.trade_no} 标记为已支付并激活套餐吗？`,
+      '确认操作',
+      { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' }
+    );
+  } catch (error) {
+    return;
+  }
+
+  markingTradeNo.value = row.trade_no;
+  try {
+    const response: any = await http.post(`/admin/purchase-records/${encodeURIComponent(row.trade_no)}/mark-paid`);
+    ElMessage.success(response.message || '已标记为已支付');
+    loadPurchaseRecords();
+  } catch (error) {
+    console.error('标记购买记录失败:', error);
+    ElMessage.error('标记购买记录失败');
+  } finally {
+    markingTradeNo.value = '';
+  }
 };
 
 // 初始化

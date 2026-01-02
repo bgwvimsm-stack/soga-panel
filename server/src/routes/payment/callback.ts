@@ -43,31 +43,41 @@ export function createPaymentCallbackRouter(ctx: AppContext) {
   };
 
   const settleTrade = async (tradeNo: string) => {
-    const rechargeRecord = await ctx.dbService.markRechargePaid(String(tradeNo));
-    if (rechargeRecord) {
-      await referralService.awardRebate({
-        inviteeId: Number(rechargeRecord.user_id),
-        amount: Number(rechargeRecord.amount ?? 0),
-        sourceType: "recharge",
-        sourceId: Number(rechargeRecord.id ?? 0) || null,
-        tradeNo: String(tradeNo),
-        eventType: "recharge_rebate"
-      });
-      return { type: "recharge" as const };
+    const rechargeResult = await ctx.dbService.markRechargePaid(String(tradeNo));
+    if (rechargeResult) {
+      if (rechargeResult.applied) {
+        const record = rechargeResult.record as any;
+        await referralService.awardRebate({
+          inviteeId: Number(record.user_id),
+          amount: Number(record.amount ?? 0),
+          sourceType: "recharge",
+          sourceId: Number(record.id ?? 0) || null,
+          tradeNo: String(tradeNo),
+          eventType: "recharge_rebate"
+        });
+      }
+      if (rechargeResult.applied || rechargeResult.alreadyPaid) {
+        return { type: "recharge" as const, already_paid: rechargeResult.alreadyPaid };
+      }
     }
 
     try {
-      const purchaseRecord: any = await ctx.dbService.markPurchasePaid(String(tradeNo));
-      if (purchaseRecord) {
-        await referralService.awardRebate({
-          inviteeId: Number(purchaseRecord.user_id),
-          amount: Number(purchaseRecord.price ?? purchaseRecord.package_price ?? 0),
-          sourceType: "purchase",
-          sourceId: Number(purchaseRecord.id ?? 0) || null,
-          tradeNo: String(tradeNo),
-          eventType: "purchase_rebate"
-        });
-        return { type: "purchase" as const, expires_at: purchaseRecord.expires_at ?? null };
+      const purchaseResult: any = await ctx.dbService.markPurchasePaid(String(tradeNo));
+      if (purchaseResult) {
+        const record = purchaseResult.record as any;
+        if (purchaseResult.applied) {
+          await referralService.awardRebate({
+            inviteeId: Number(record.user_id),
+            amount: Number(record.price ?? record.package_price ?? 0),
+            sourceType: "purchase",
+            sourceId: Number(record.id ?? 0) || null,
+            tradeNo: String(tradeNo),
+            eventType: "purchase_rebate"
+          });
+        }
+        if (purchaseResult.applied || purchaseResult.alreadyPaid) {
+          return { type: "purchase" as const, expires_at: record.expires_at ?? null, already_paid: purchaseResult.alreadyPaid };
+        }
       }
     } catch (error) {
       console.error("处理套餐订单失败", error);

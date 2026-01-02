@@ -276,34 +276,48 @@ export function createWalletRouter(ctx: AppContext) {
   router.post("/recharge/callback", async (req: Request, res: Response) => {
     const { trade_no } = req.body || {};
     if (!trade_no) return errorResponse(res, "缺少 trade_no", 400);
-    const record = await ctx.dbService.markRechargePaid(trade_no);
-    if (!record) return errorResponse(res, "订单不存在", 404);
-    await referralService.awardRebate({
-      inviteeId: Number(record.user_id),
-      amount: Number(record.amount ?? 0),
-      sourceType: "recharge",
-      sourceId: Number(record.id ?? 0) || null,
-      tradeNo: trade_no,
-      eventType: "recharge_rebate"
-    });
-    return successResponse(res, { trade_no }, "已入账");
+    const result: any = await ctx.dbService.markRechargePaid(trade_no);
+    if (!result) return errorResponse(res, "订单不存在", 404);
+    if (result.applied) {
+      const record = result.record as any;
+      await referralService.awardRebate({
+        inviteeId: Number(record.user_id),
+        amount: Number(record.amount ?? 0),
+        sourceType: "recharge",
+        sourceId: Number(record.id ?? 0) || null,
+        tradeNo: trade_no,
+        eventType: "recharge_rebate"
+      });
+      return successResponse(res, { trade_no }, "已入账");
+    }
+    if (result.alreadyPaid) {
+      return successResponse(res, { trade_no }, "订单已是已支付");
+    }
+    return errorResponse(res, "订单状态不可标记", 400);
   });
 
   // 兼容 Worker：GET /api/wallet/recharge/callback?trade_no=xxx
   router.get("/recharge/callback", async (req: Request, res: Response) => {
     const tradeNo = typeof req.query.trade_no === "string" ? req.query.trade_no.trim() : "";
     if (!tradeNo) return errorResponse(res, "缺少 trade_no", 400);
-    const record = await ctx.dbService.markRechargePaid(tradeNo);
-    if (!record) return errorResponse(res, "订单不存在", 404);
-    await referralService.awardRebate({
-      inviteeId: Number(record.user_id),
-      amount: Number(record.amount ?? 0),
-      sourceType: "recharge",
-      sourceId: Number(record.id ?? 0) || null,
-      tradeNo,
-      eventType: "recharge_rebate"
-    });
-    return successResponse(res, { trade_no: tradeNo }, "已入账");
+    const result: any = await ctx.dbService.markRechargePaid(tradeNo);
+    if (!result) return errorResponse(res, "订单不存在", 404);
+    if (result.applied) {
+      const record = result.record as any;
+      await referralService.awardRebate({
+        inviteeId: Number(record.user_id),
+        amount: Number(record.amount ?? 0),
+        sourceType: "recharge",
+        sourceId: Number(record.id ?? 0) || null,
+        tradeNo,
+        eventType: "recharge_rebate"
+      });
+      return successResponse(res, { trade_no: tradeNo }, "已入账");
+    }
+    if (result.alreadyPaid) {
+      return successResponse(res, { trade_no: tradeNo }, "订单已是已支付");
+    }
+    return errorResponse(res, "订单状态不可标记", 400);
   });
 
   // 礼品卡兑换（支持余额/时长/流量/重置/套餐）
@@ -392,9 +406,10 @@ export function createWalletRouter(ctx: AppContext) {
         const amount = ensurePositive(card.balance_amount);
         if (amount <= 0) return errorResponse(res, "卡面值无效", 400);
         await ctx.dbService.createRechargeRecord(Number(user.id), amount, tradeNo, "gift_card");
-        const paid = await ctx.dbService.markRechargePaid(tradeNo);
-        if (!paid) return errorResponse(res, "充值记录创建失败", 500);
-        rechargeRecordId = Number(paid.id);
+        const paidResult: any = await ctx.dbService.markRechargePaid(tradeNo);
+        if (!paidResult) return errorResponse(res, "充值记录创建失败", 500);
+        const paidRecord = paidResult.record as any;
+        rechargeRecordId = Number(paidRecord?.id ?? 0);
         changeAmount = amount;
         message = `成功充值 ¥${amount.toFixed(2)}`;
       } else if (card.card_type === "duration") {

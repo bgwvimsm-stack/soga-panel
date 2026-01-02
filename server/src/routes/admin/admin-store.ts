@@ -170,17 +170,24 @@ export function createAdminStoreRouter(ctx: AppContext) {
     if (!ensureAdmin(req, res)) return;
     const tradeNo = req.params.tradeNo;
     try {
-      const record = await ctx.dbService.markPurchasePaid(tradeNo);
-      if (!record) return errorResponse(res, "订单不存在", 404);
-      await referralService.awardRebate({
-        inviteeId: Number(record.user_id),
-        amount: Number(record.price ?? record.package_price ?? 0),
-        sourceType: "purchase",
-        sourceId: Number(record.id ?? 0) || null,
-        tradeNo,
-        eventType: "purchase_rebate"
-      });
-      return successResponse(res, { trade_no: tradeNo }, "已标记支付并激活套餐");
+      const result: any = await ctx.dbService.markPurchasePaid(tradeNo);
+      if (!result) return errorResponse(res, "订单不存在", 404);
+      const record = result.record as any;
+      if (result.applied) {
+        await referralService.awardRebate({
+          inviteeId: Number(record.user_id),
+          amount: Number(record.price ?? record.package_price ?? 0),
+          sourceType: "purchase",
+          sourceId: Number(record.id ?? 0) || null,
+          tradeNo,
+          eventType: "purchase_rebate"
+        });
+        return successResponse(res, { trade_no: tradeNo }, "已标记支付并激活套餐");
+      }
+      if (result.alreadyPaid) {
+        return successResponse(res, { trade_no: tradeNo }, "订单已是已支付");
+      }
+      return errorResponse(res, "订单状态不可标记", 400);
     } catch (error: any) {
       return errorResponse(res, error?.message || "处理失败", 500);
     }

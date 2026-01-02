@@ -322,7 +322,8 @@ export function createStoreRouter(ctx: AppContext) {
           couponCode,
           discountAmount: discount
         });
-        await ctx.dbService.markPurchasePaid(tradeNo);
+        const appliedResult: any = await ctx.dbService.markPurchasePaid(tradeNo);
+        const isPaid = Boolean(appliedResult?.applied || appliedResult?.alreadyPaid);
         return successResponse(
           res,
           {
@@ -333,8 +334,8 @@ export function createStoreRouter(ctx: AppContext) {
             discount_amount: discount,
             coupon_code: couponCode,
             purchase_type: "balance",
-            status: 1,
-            status_text: "购买成功"
+            status: isPaid ? 1 : 0,
+            status_text: isPaid ? "购买成功" : "待处理"
           },
           "已自动激活套餐"
         );
@@ -355,13 +356,14 @@ export function createStoreRouter(ctx: AppContext) {
           price: deduction,
           packagePrice: originalPrice,
           tradeNo,
-          status: 1,
+          status: 0,
           purchaseType: "balance",
           couponId,
           couponCode,
           discountAmount: discount
         });
-        const applied = await ctx.dbService.markPurchasePaid(tradeNo);
+        const appliedResult: any = await ctx.dbService.markPurchasePaid(tradeNo);
+        const isPaid = Boolean(appliedResult?.applied || appliedResult?.alreadyPaid);
         return successResponse(
           res,
           {
@@ -372,8 +374,8 @@ export function createStoreRouter(ctx: AppContext) {
             discount_amount: discount,
             coupon_code: couponCode,
             purchase_type: "balance",
-            status: applied ? 1 : 0,
-            status_text: applied ? "购买成功" : "待处理"
+            status: isPaid ? 1 : 0,
+            status_text: isPaid ? "购买成功" : "待处理"
           },
           "已使用余额支付并激活套餐"
         );

@@ -17,6 +17,7 @@ import { createSystemConfigManager } from "../utils/systemConfig";
 import { getChanges, toRunResult, ensureNumber, ensureString, ensureDate, getLastRowId } from "../utils/d1";
 import { fixMoneyPrecision } from "../utils/money";
 import { GiftCardService, GiftCardType, CreateGiftCardPayload } from "../services/giftCardService";
+import { CouponService } from "../services/couponService";
 import { ReferralService } from "../services/referralService";
 import { getLogger, type Logger } from "../utils/logger";
 
@@ -392,6 +393,7 @@ export class AdminAPI {
   private readonly scheduler: SchedulerService;
   private readonly configManager: SystemConfigManager;
   private readonly giftCardService: GiftCardService;
+  private readonly couponService: CouponService;
   private readonly referralService: ReferralService;
   private readonly logger: Logger;
 
@@ -402,6 +404,7 @@ export class AdminAPI {
     this.scheduler = new SchedulerService(env);
     this.configManager = createSystemConfigManager(env);
     this.giftCardService = new GiftCardService(this.db.db);
+    this.couponService = new CouponService(this.db.db);
     this.logger = getLogger(env);
     this.referralService = new ReferralService(this.db, this.configManager, this.logger);
   }
@@ -6523,6 +6526,410 @@ export class AdminAPI {
       const err = error instanceof Error ? error : new Error(String(error));
       console.error("获取购买记录失败:", err);
       return errorResponse(err.message, 500);
+    }
+  }
+
+  /**
+   * 手动标记充值记录为已支付
+   * POST /api/admin/recharge-records/:trade_no/mark-paid
+   */
+  async markRechargeRecordPaid(request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const segments = url.pathname.split("/");
+      const tradeNo = ensureString(segments[segments.length - 2]);
+      if (!tradeNo) {
+        return errorResponse("缺少交易号", 400);
+      }
+
+      const record = await this.db.db
+        .prepare("SELECT * FROM recharge_records WHERE trade_no = ?")
+        .bind(tradeNo)
+        .first<RechargeRecordRow>();
+      if (!record) {
+        return errorResponse("订单不存在", 404);
+      }
+
+      const statusValue = ensureNumber(record.status);
+      if (statusValue === 1) {
+        return successResponse({ trade_no: tradeNo, already_paid: true }, "订单已是已支付");
+      }
+      if (statusValue !== 0) {
+        return errorResponse("订单状态不可标记", 400);
+      }
+
+      const updateResult = toRunResult(
+        await this.db.db
+          .prepare(
+            `
+            UPDATE recharge_records
+            SET status = 1, paid_at = datetime('now', '+8 hours')
+            WHERE trade_no = ? AND status = 0
+          `
+          )
+          .bind(tradeNo)
+          .run()
+      );
+      if (getChanges(updateResult) === 0) {
+        const latest = await this.db.db
+          .prepare("SELECT status FROM recharge_records WHERE trade_no = ?")
+          .bind(tradeNo)
+          .first<{ status?: number | string | null }>();
+        if (ensureNumber(latest?.status) === 1) {
+          return successResponse({ trade_no: tradeNo, already_paid: true }, "订单已是已支付");
+        }
+        return errorResponse("订单状态更新失败", 409);
+      }
+
+      const amount = fixMoneyPrecision(ensureNumber(record.amount));
+      const balanceResult = toRunResult(
+        await this.db.db
+          .prepare(
+            `
+            UPDATE users
+            SET money = money + ?, updated_at = datetime('now', '+8 hours')
+            WHERE id = ?
+          `
+          )
+          .bind(amount, record.user_id)
+          .run()
+      );
+      if (getChanges(balanceResult) === 0) {
+        this.logger.error("更新用户余额失败", {
+          trade_no: tradeNo,
+          user_id: record.user_id,
+          amount
+        });
+        return errorResponse("更新用户余额失败", 500);
+      }
+
+      try {
+        await this.referralService.awardRebate({
+          inviteeId: ensureNumber(record.user_id),
+          amount,
+          sourceType: "recharge",
+          sourceId: ensureNumber(record.id ?? 0) || null,
+          tradeNo,
+          eventType: "recharge_rebate"
+        });
+      } catch (error) {
+        this.logger.error("充值返利发放失败", error, {
+          trade_no: tradeNo,
+          user_id: record.user_id
+        });
+      }
+
+      return successResponse({ trade_no: tradeNo }, "已入账");
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error("标记充值记录失败", err);
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  /**
+   * 手动标记购买记录为已支付
+   * POST /api/admin/purchase-records/:trade_no/mark-paid
+   */
+  async markPurchaseRecordPaid(request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const segments = url.pathname.split("/");
+      const tradeNo = ensureString(segments[segments.length - 2]);
+      if (!tradeNo) {
+        return errorResponse("缺少交易号", 400);
+      }
+
+      const record = await this.db.db
+        .prepare("SELECT * FROM package_purchase_records WHERE trade_no = ?")
+        .bind(tradeNo)
+        .first<PurchaseRecordRow>();
+      if (!record) {
+        return errorResponse("订单不存在", 404);
+      }
+
+      const statusValue = ensureNumber(record.status);
+      if (statusValue === 1) {
+        return successResponse({ trade_no: tradeNo, already_paid: true }, "订单已是已支付");
+      }
+      if (statusValue !== 0) {
+        return errorResponse("订单状态不可标记", 400);
+      }
+
+      const pkg = await this.db.db
+        .prepare("SELECT * FROM packages WHERE id = ?")
+        .bind(record.package_id)
+        .first<PackageRow>();
+      if (!pkg) {
+        return errorResponse("套餐不存在或已下架", 400);
+      }
+
+      const updateResult = toRunResult(
+        await this.db.db
+          .prepare(
+            `
+            UPDATE package_purchase_records
+            SET status = 1, paid_at = datetime('now', '+8 hours')
+            WHERE trade_no = ? AND status = 0
+          `
+          )
+          .bind(tradeNo)
+          .run()
+      );
+      if (getChanges(updateResult) === 0) {
+        const latest = await this.db.db
+          .prepare("SELECT status FROM package_purchase_records WHERE trade_no = ?")
+          .bind(tradeNo)
+          .first<{ status?: number | string | null }>();
+        if (ensureNumber(latest?.status) === 1) {
+          return successResponse({ trade_no: tradeNo, already_paid: true }, "订单已是已支付");
+        }
+        return errorResponse("订单状态更新失败", 409);
+      }
+
+      const purchaseType = ensureString(record.purchase_type).toLowerCase();
+      const isHybrid = purchaseType === "smart_topup" || purchaseType.startsWith("balance_");
+      if (isHybrid) {
+        const basePrice = ensureNumber(record.package_price ?? record.price ?? 0);
+        const discountAmount =
+          record.discount_amount !== undefined && record.discount_amount !== null
+            ? ensureNumber(record.discount_amount)
+            : 0;
+        const finalPrice = fixMoneyPrecision(Math.max(basePrice - discountAmount, 0));
+        const onlinePaidAmount = ensureNumber(record.price ?? 0);
+        const balanceToDeduct = Math.max(Number((finalPrice - onlinePaidAmount).toFixed(2)), 0);
+
+        if (balanceToDeduct > 0) {
+          const balanceResult = toRunResult(
+            await this.db.db
+              .prepare(
+                `
+                UPDATE users
+                SET money = money - ?, updated_at = datetime('now', '+8 hours')
+                WHERE id = ? AND money >= ?
+              `
+              )
+              .bind(balanceToDeduct, record.user_id, balanceToDeduct)
+              .run()
+          );
+          if (getChanges(balanceResult) === 0) {
+            await this.db.db
+              .prepare(
+                `
+                UPDATE package_purchase_records
+                SET status = 0, paid_at = NULL
+                WHERE trade_no = ? AND status = 1
+              `
+              )
+              .bind(tradeNo)
+              .run();
+            return errorResponse("余额扣除失败，请联系管理员", 400);
+          }
+        }
+      }
+
+      const applyResult = await this.updateUserAfterPackagePurchase(ensureNumber(record.user_id), pkg);
+      if (applyResult.success && applyResult.newExpireTime) {
+        await this.db.db
+          .prepare(
+            `
+            UPDATE package_purchase_records
+            SET expires_at = ?
+            WHERE trade_no = ?
+          `
+          )
+          .bind(applyResult.newExpireTime, tradeNo)
+          .run();
+      }
+
+      if (record.coupon_id) {
+        const couponId = ensureNumber(record.coupon_id);
+        if (couponId) {
+          const consumeResult = await this.couponService.consumeCouponUsage(
+            couponId,
+            ensureNumber(record.user_id),
+            ensureNumber(record.id ?? 0),
+            tradeNo
+          );
+          if (!consumeResult.success) {
+            this.logger.error("优惠码使用计数失败", {
+              coupon_id: couponId,
+              trade_no: tradeNo,
+              message: consumeResult.message
+            });
+          }
+        }
+      }
+
+      const recordBasePrice = ensureNumber(record.package_price ?? record.price ?? 0);
+      const discountAmount =
+        record.discount_amount !== undefined && record.discount_amount !== null
+          ? ensureNumber(record.discount_amount)
+          : 0;
+      const finalPrice = fixMoneyPrecision(Math.max(recordBasePrice - discountAmount, 0));
+      const rebatePaidAmount = fixMoneyPrecision(Math.max(ensureNumber(record.price ?? 0), 0));
+      const rebateBase = Math.min(rebatePaidAmount, finalPrice);
+      if (rebateBase > 0) {
+        try {
+          await this.referralService.awardRebate({
+            inviteeId: ensureNumber(record.user_id),
+            amount: rebateBase,
+            sourceType: "purchase",
+            sourceId: ensureNumber(record.id ?? 0) || null,
+            tradeNo,
+            eventType: "purchase_rebate"
+          });
+        } catch (error) {
+          this.logger.error("套餐返利发放失败", error, {
+            trade_no: tradeNo,
+            user_id: record.user_id
+          });
+        }
+      }
+
+      return successResponse({ trade_no: tradeNo }, "已标记支付并激活套餐");
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error("标记购买记录失败", err);
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  private async updateUserAfterPackagePurchase(userId: number, packageInfo: PackageRow) {
+    try {
+      const userInfo = await this.db.db
+        .prepare(
+          `
+          SELECT
+            class,
+            class_expire_time,
+            transfer_enable,
+            transfer_total,
+            speed_limit,
+            device_limit
+          FROM users
+          WHERE id = ?
+        `
+        )
+        .bind(userId)
+        .first<{
+          class?: number | string;
+          class_expire_time?: string | null;
+          transfer_enable?: number | string;
+          transfer_total?: number | string;
+          speed_limit?: number | string | null;
+          device_limit?: number | string | null;
+        }>();
+
+      if (!userInfo) {
+        return { success: false, error: "用户不存在" };
+      }
+
+      const currentTime = new Date();
+      const currentUserLevel = ensureNumber(userInfo.class);
+      const packageLevel = ensureNumber(packageInfo.level);
+      const classExpireRaw = ensureString(userInfo.class_expire_time);
+      const currentTransferEnable = ensureNumber(userInfo.transfer_enable);
+      const packageTrafficBytes = ensureNumber(packageInfo.traffic_quota) * 1024 * 1024 * 1024;
+      const validityDays = ensureNumber(packageInfo.validity_days, 30);
+      const newSpeedLimit = ensureNumber(packageInfo.speed_limit);
+      const newDeviceLimit = ensureNumber(packageInfo.device_limit);
+
+      let newExpireTime: string;
+      let newTrafficQuota: number;
+      let shouldResetUsedTraffic = false;
+
+      if (currentUserLevel === packageLevel) {
+        if (classExpireRaw && new Date(classExpireRaw) > currentTime) {
+          const currentExpire = new Date(classExpireRaw);
+          currentExpire.setDate(currentExpire.getDate() + validityDays);
+          newExpireTime = currentExpire.toISOString().replace("T", " ").substr(0, 19);
+        } else {
+          const expire = new Date(currentTime.getTime() + 8 * 60 * 60 * 1000);
+          expire.setDate(expire.getDate() + validityDays);
+          newExpireTime = expire.toISOString().replace("T", " ").substr(0, 19);
+        }
+        newTrafficQuota = currentTransferEnable + packageTrafficBytes;
+      } else {
+        const expire = new Date(currentTime.getTime() + 8 * 60 * 60 * 1000);
+        expire.setDate(expire.getDate() + validityDays);
+        newExpireTime = expire.toISOString().replace("T", " ").substr(0, 19);
+        newTrafficQuota = packageTrafficBytes;
+        shouldResetUsedTraffic = true;
+      }
+
+      let updateQuery: string;
+      let updateParams: Array<number | string>;
+      if (shouldResetUsedTraffic) {
+        updateQuery = `
+          UPDATE users
+          SET
+            class = ?,
+            class_expire_time = ?,
+            transfer_enable = ?,
+            transfer_total = 0,
+            upload_traffic = 0,
+            download_traffic = 0,
+            upload_today = 0,
+            download_today = 0,
+            speed_limit = ?,
+            device_limit = ?,
+            updated_at = datetime('now', '+8 hours')
+          WHERE id = ?
+        `;
+        updateParams = [
+          packageLevel,
+          newExpireTime,
+          newTrafficQuota,
+          newSpeedLimit,
+          newDeviceLimit,
+          userId
+        ];
+      } else {
+        updateQuery = `
+          UPDATE users
+          SET
+            class = ?,
+            class_expire_time = ?,
+            transfer_enable = ?,
+            speed_limit = ?,
+            device_limit = ?,
+            updated_at = datetime('now', '+8 hours')
+          WHERE id = ?
+        `;
+        updateParams = [
+          packageLevel,
+          newExpireTime,
+          newTrafficQuota,
+          newSpeedLimit,
+          newDeviceLimit,
+          userId
+        ];
+      }
+
+      const updateResult = toRunResult(
+        await this.db.db
+          .prepare(updateQuery)
+          .bind(...updateParams)
+          .run()
+      );
+      const changes = getChanges(updateResult);
+
+      return { success: changes > 0, newExpireTime };
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.logger.error("更新用户套餐数据失败", err);
+      return { success: false, error: err.message };
     }
   }
 
