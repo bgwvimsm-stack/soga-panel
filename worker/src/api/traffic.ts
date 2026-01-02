@@ -351,10 +351,49 @@ export class TrafficAPI {
       const page = Math.max(1, Number.parseInt(url.searchParams.get('page') ?? '', 10) || 1);
       const limit = Math.max(1, Number.parseInt(url.searchParams.get('limit') ?? '', 10) || 20);
       const offset = (page - 1) * limit;
+      const startDate = (url.searchParams.get('start_date') ?? '').trim();
+      const endDate = (url.searchParams.get('end_date') ?? '').trim();
+      const normalizeTime = (value: string) => value.replace(/\+/g, ' ').trim();
+      const startTime = normalizeTime(url.searchParams.get('start_time') ?? '');
+      const endTime = normalizeTime(url.searchParams.get('end_time') ?? '');
+      const nodeName = (url.searchParams.get('node_name') ?? '').trim();
+      const nodeIdRaw = Number(url.searchParams.get('node_id') ?? NaN);
+      const nodeId = Number.isFinite(nodeIdRaw) ? nodeIdRaw : 0;
+      const hasTimeRange = Boolean(startTime || endTime);
+      const hasNodeFilter = Boolean(nodeName || nodeId);
 
       // 获取流量记录详情（优先从traffic_logs表获取，如果没有则用daily_traffic）
       let records: Array<TrafficLogRow | DailyTrafficRecordRow> = [];
       let total = 0;
+
+      const filters: string[] = ["tl.user_id = ?"];
+      const values: Array<number | string> = [userId];
+      if (startDate) {
+        filters.push("tl.date >= ?");
+        values.push(startDate);
+      }
+      if (endDate) {
+        filters.push("tl.date <= ?");
+        values.push(endDate);
+      }
+      if (startTime) {
+        filters.push("tl.created_at >= ?");
+        values.push(startTime);
+      }
+      if (endTime) {
+        filters.push("tl.created_at <= ?");
+        values.push(endTime);
+      }
+      if (nodeId) {
+        filters.push("tl.node_id = ?");
+        values.push(nodeId);
+      }
+      if (nodeName) {
+        filters.push("n.name LIKE ?");
+        values.push(`%${nodeName}%`);
+      }
+      const whereClause = `WHERE ${filters.join(" AND ")}`;
+      const countJoinClause = nodeName ? "LEFT JOIN nodes n ON n.id = tl.node_id" : "";
       
       // 首先尝试从traffic_logs表获取
       const trafficLogsResult = await this.db.db
@@ -375,22 +414,35 @@ export class TrafficAPI {
             tl.created_at
           FROM traffic_logs tl
           LEFT JOIN nodes n ON n.id = tl.node_id
-          WHERE tl.user_id = ?
+          ${whereClause}
           ORDER BY tl.date DESC, tl.created_at DESC
           LIMIT ? OFFSET ?
         `)
-        .bind(userId, limit, offset)
+        .bind(...values, limit, offset)
         .all<TrafficLogRow>();
 
       if (trafficLogsResult.results && trafficLogsResult.results.length > 0) {
         records = trafficLogsResult.results;
         const countResult = await this.db.db
-          .prepare("SELECT COUNT(*) as total FROM traffic_logs WHERE user_id = ?")
-          .bind(userId)
+          .prepare(
+            `SELECT COUNT(*) as total FROM traffic_logs tl ${countJoinClause} ${whereClause}`
+          )
+          .bind(...values)
           .first<{ total: number | null }>();
         total = ensureNumber(countResult?.total);
-      } else {
+      } else if (!hasTimeRange && !hasNodeFilter) {
         // 如果traffic_logs没有数据，从daily_traffic表获取并构造类似的数据结构
+        const dailyFilters: string[] = ["dt.user_id = ?"];
+        const dailyValues: Array<number | string> = [userId];
+        if (startDate) {
+          dailyFilters.push("dt.record_date >= ?");
+          dailyValues.push(startDate);
+        }
+        if (endDate) {
+          dailyFilters.push("dt.record_date <= ?");
+          dailyValues.push(endDate);
+        }
+        const dailyWhere = `WHERE ${dailyFilters.join(" AND ")}`;
         const dailyRecordsResult = await this.db.db
           .prepare(`
             SELECT 
@@ -408,17 +460,17 @@ export class TrafficAPI {
               record_date as log_time,
               datetime(created_at, 'unixepoch') as created_at
             FROM daily_traffic
-            WHERE user_id = ?
+            ${dailyWhere}
             ORDER BY record_date DESC
             LIMIT ? OFFSET ?
           `)
-          .bind(userId, limit, offset)
+          .bind(...dailyValues, limit, offset)
           .all<DailyTrafficRecordRow>();
 
         records = dailyRecordsResult.results ?? [];
         const dailyCountRow = await this.db.db
-          .prepare("SELECT COUNT(*) as total FROM daily_traffic WHERE user_id = ?")
-          .bind(userId)
+          .prepare(`SELECT COUNT(*) as total FROM daily_traffic dt ${dailyWhere}`)
+          .bind(...dailyValues)
           .first<{ total: number | null }>();
         total = ensureNumber(dailyCountRow?.total);
 

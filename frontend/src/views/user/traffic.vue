@@ -97,6 +97,37 @@
     </el-card>
 
     <VxeTableBar :vxeTableRef="vxeTableRef" :columns="columns" title="流量记录" @refresh="loadTrafficLogs">
+      <template #buttons>
+        <el-select
+          v-model="filterNodeId"
+          placeholder="节点名称"
+          clearable
+          filterable
+          :loading="nodesLoading"
+          @change="handleFilterChange"
+          @clear="handleFilterChange"
+          style="width: 180px; margin-right: 12px;"
+        >
+          <el-option
+            v-for="item in nodeOptions"
+            :key="item.value"
+            :label="item.label"
+            :value="item.value"
+          />
+        </el-select>
+        <el-date-picker
+          v-model="filterDateTimeRange"
+          type="datetimerange"
+          range-separator="至"
+          start-placeholder="开始时间"
+          end-placeholder="结束时间"
+          value-format="YYYY-MM-DD HH:mm:ss"
+          clearable
+          @change="handleFilterChange"
+          style="width: 320px; margin-right: 12px;"
+        />
+        <el-button size="small" @click="resetFilters">重置</el-button>
+      </template>
       <template v-slot="{ size, dynamicColumns }">
         <vxe-grid
           ref="vxeTableRef"
@@ -143,7 +174,7 @@ import { ref, reactive, onMounted, computed } from 'vue';
 import { ElMessage } from 'element-plus';
 import { TrendCharts, Calendar, DataAnalysis, Refresh } from '@element-plus/icons-vue';
 import { VxeTableBar } from '@/components/ReVxeTableBar';
-import { getUserTrafficRecords, getTrafficTrends } from '@/api/user';
+import { getUserTrafficRecords, getTrafficTrends, getUserNodes } from '@/api/user';
 import { useUserStore } from '@/store/user';
 import TrafficChart from '@/components/TrafficChart.vue';
 
@@ -159,6 +190,10 @@ const todayUsed = ref(0);
 const monthUsed = ref(0);
 const remaining = ref(0);
 const totalEnable = ref(0);
+const filterDateTimeRange = ref<[string, string] | []>([]);
+const filterNodeId = ref('');
+const nodeOptions = ref<Array<{ label: string; value: string }>>([]);
+const nodesLoading = ref(false);
 
 const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
@@ -262,10 +297,18 @@ const getChartTitle = () => {
 const loadTrafficLogs = async () => {
   loading.value = true;
   try {
-    const response = await getUserTrafficRecords({
+    const params: Record<string, any> = {
       page: pagerConfig.currentPage,
       limit: pagerConfig.pageSize
-    });
+    };
+    if (filterDateTimeRange.value?.length === 2) {
+      params.start_time = filterDateTimeRange.value[0];
+      params.end_time = filterDateTimeRange.value[1];
+    }
+    if (filterNodeId.value) {
+      params.node_id = filterNodeId.value;
+    }
+    const response = await getUserTrafficRecords(params);
 
     if (response.code === 0 && response.data) {
       trafficLogs.value = response.data.data || [];
@@ -346,10 +389,48 @@ const handlePageChange = ({ currentPage, pageSize }) => {
   loadTrafficLogs();
 };
 
+const handleFilterChange = () => {
+  pagerConfig.currentPage = 1;
+  loadTrafficLogs();
+};
+
+const resetFilters = () => {
+  filterDateTimeRange.value = [];
+  filterNodeId.value = '';
+  pagerConfig.currentPage = 1;
+  loadTrafficLogs();
+};
+
+const loadNodeOptions = async () => {
+  nodesLoading.value = true;
+  try {
+    const response: any = await getUserNodes({ page: 1, limit: 200 });
+    const nodes = response?.data?.nodes || [];
+    const mapped = nodes
+      .map((node: any) => {
+        const id = Number(node?.id);
+        const name = String(node?.name || '').trim();
+        if (!Number.isFinite(id) || !name) return null;
+        return { id, name };
+      })
+      .filter(Boolean) as Array<{ id: number; name: string }>;
+    mapped.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+    nodeOptions.value = mapped.map((node) => ({
+      label: node.name,
+      value: String(node.id)
+    }));
+  } catch (error) {
+    console.error('加载节点列表失败:', error);
+  } finally {
+    nodesLoading.value = false;
+  }
+};
+
 onMounted(() => {
   updateTrafficStats();
   loadTrafficTrends();
   loadTrafficLogs();
+  loadNodeOptions();
 });
 </script>
 
