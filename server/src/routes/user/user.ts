@@ -572,7 +572,49 @@ export function createUserRouter(ctx: AppContext) {
       .prepare("SELECT COUNT(*) as total FROM traffic_logs WHERE user_id = ?")
       .bind(Number(user.id))
       .first<{ total?: number | string | null }>();
-    const total = Number(totalRow?.total ?? 0);
+    const trafficTotal = Number(totalRow?.total ?? 0);
+
+    if (trafficTotal === 0) {
+      const dailyRows = await ctx.dbService.db
+        .prepare(
+          `
+          SELECT 
+            id,
+            user_id,
+            0 as node_id,
+            'Multiple Nodes' as node_name,
+            upload_traffic,
+            download_traffic,
+            upload_traffic as actual_upload_traffic,
+            download_traffic as actual_download_traffic,
+            total_traffic,
+            total_traffic as actual_traffic,
+            1 as deduction_multiplier,
+            DATE_FORMAT(record_date, '%Y-%m-%d') as log_time,
+            created_at
+          FROM daily_traffic
+          WHERE user_id = ?
+          ORDER BY record_date DESC
+          LIMIT ? OFFSET ?
+        `
+        )
+        .bind(Number(user.id), limit, offset)
+        .all();
+
+      const dailyTotalRow = await ctx.dbService.db
+        .prepare("SELECT COUNT(*) as total FROM daily_traffic WHERE user_id = ?")
+        .bind(Number(user.id))
+        .first<{ total?: number | string | null }>();
+      const dailyTotal = Number(dailyTotalRow?.total ?? 0);
+
+      return successResponse(res, {
+        data: dailyRows.results || [],
+        total: dailyTotal,
+        page,
+        limit,
+        pages: limit > 0 ? Math.max(1, Math.ceil(dailyTotal / limit)) : 1
+      });
+    }
 
     const rows = await ctx.dbService.db
       .prepare(
@@ -603,10 +645,10 @@ export function createUserRouter(ctx: AppContext) {
 
     return successResponse(res, {
       data: rows.results || [],
-      total,
+      total: trafficTotal,
       page,
       limit,
-      pages: limit > 0 ? Math.max(1, Math.ceil(total / limit)) : 1
+      pages: limit > 0 ? Math.max(1, Math.ceil(trafficTotal / limit)) : 1
     });
   });
 

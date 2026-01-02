@@ -352,14 +352,9 @@ export class TrafficAPI {
       const limit = Math.max(1, Number.parseInt(url.searchParams.get('limit') ?? '', 10) || 20);
       const offset = (page - 1) * limit;
 
-      // 获取流量记录总数
-      const countResult = await this.db.db
-        .prepare("SELECT COUNT(*) as total FROM traffic_logs WHERE user_id = ?")
-        .bind(userId)
-        .first<{ total: number | null }>();
-
       // 获取流量记录详情（优先从traffic_logs表获取，如果没有则用daily_traffic）
       let records: Array<TrafficLogRow | DailyTrafficRecordRow> = [];
+      let total = 0;
       
       // 首先尝试从traffic_logs表获取
       const trafficLogsResult = await this.db.db
@@ -389,6 +384,11 @@ export class TrafficAPI {
 
       if (trafficLogsResult.results && trafficLogsResult.results.length > 0) {
         records = trafficLogsResult.results;
+        const countResult = await this.db.db
+          .prepare("SELECT COUNT(*) as total FROM traffic_logs WHERE user_id = ?")
+          .bind(userId)
+          .first<{ total: number | null }>();
+        total = ensureNumber(countResult?.total);
       } else {
         // 如果traffic_logs没有数据，从daily_traffic表获取并构造类似的数据结构
         const dailyRecordsResult = await this.db.db
@@ -416,11 +416,14 @@ export class TrafficAPI {
           .all<DailyTrafficRecordRow>();
 
         records = dailyRecordsResult.results ?? [];
+        const dailyCountRow = await this.db.db
+          .prepare("SELECT COUNT(*) as total FROM daily_traffic WHERE user_id = ?")
+          .bind(userId)
+          .first<{ total: number | null }>();
+        total = ensureNumber(dailyCountRow?.total);
 
         // 如果没有数据，直接返回空数组
       }
-
-      const total = ensureNumber(countResult?.total);
 
       return success({
         data: records,
