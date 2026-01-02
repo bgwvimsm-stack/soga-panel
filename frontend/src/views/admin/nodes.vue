@@ -645,19 +645,16 @@ const ssCipherOptions = [
   'aes-256-gcm',
   'chacha20-ietf-poly1305',
   '2022-blake3-aes-128-gcm',
-  '2022-blake3-aes-256-gcm',
-  '2022-blake3-chacha20-poly1305'
+  '2022-blake3-aes-256-gcm'
 ];
 const ssObfsOptions = ['plain', 'simple_obfs_http'];
 const ss2022Ciphers = [
   '2022-blake3-aes-128-gcm',
-  '2022-blake3-aes-256-gcm',
-  '2022-blake3-chacha20-poly1305'
+  '2022-blake3-aes-256-gcm'
 ];
 const ss2022KeyLengths: Record<string, number> = {
   '2022-blake3-aes-128-gcm': 16,
-  '2022-blake3-aes-256-gcm': 32,
-  '2022-blake3-chacha20-poly1305': 32
+  '2022-blake3-aes-256-gcm': 32
 };
 
 const ssrMethodOptions = [
