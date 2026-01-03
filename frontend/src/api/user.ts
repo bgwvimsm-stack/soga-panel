@@ -108,7 +108,15 @@ export const changeUserPassword = (data: {
 /**
  * 获取用户流量详情记录
  */
-export const getUserTrafficRecords = (params: PaginationParams = {}): Promise<ApiResponse<PaginationResponse<TrafficRecord>>> => {
+export const getUserTrafficRecords = (
+  params: PaginationParams & {
+    start_date?: string;
+    end_date?: string;
+    start_time?: string;
+    end_time?: string;
+    node_id?: string;
+  } = {}
+): Promise<ApiResponse<PaginationResponse<TrafficRecord>>> => {
   return http.get("/user/traffic-records", { params });
 };
 

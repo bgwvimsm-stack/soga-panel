@@ -24,6 +24,7 @@ export type SubscriptionUser = {
   transfer_total?: number | string;
   upload_traffic?: number | string;
   download_traffic?: number | string;
+  class_expire_time?: string | Date | null;
   expire_time?: string | Date | null;
 };
 
@@ -147,6 +148,14 @@ function normalizePath(path: unknown): string {
 }
 
 function generateVmessLink(node: any, config: any, user: SubscriptionUser) {
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  const hostCandidate = ensureString(
+    config.server || node.tls_host || config.host || config.sni || node.server,
+    ""
+  );
+  const sni = ensureString(config.sni || node.tls_host || config.host || config.server || node.server, "");
+  const needsHost = ["ws", "http", "h2"].includes(streamType);
+  const host = needsHost ? hostCandidate : ensureString(config.server, "");
   const vmessConfig = {
     v: "2",
     ps: node.name,
@@ -156,10 +165,10 @@ function generateVmessLink(node: any, config: any, user: SubscriptionUser) {
     aid: config.aid || 0,
     net: config.stream_type || "tcp",
     type: "none",
-    host: config.server || "",
+    host,
     path: config.path || "",
     tls: config.tls_type === "tls" ? "tls" : "",
-    sni: config.sni || "",
+    sni,
     alpn: config.alpn || ""
   };
 
@@ -168,25 +177,36 @@ function generateVmessLink(node: any, config: any, user: SubscriptionUser) {
 
 function generateVlessLink(node: any, config: any, user: SubscriptionUser, client: any) {
   const params = new URLSearchParams();
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  const hostCandidate = ensureString(
+    config.server || node.tls_host || config.host || config.sni || node.server,
+    ""
+  );
+  const sni = ensureString(config.sni || node.tls_host || config.host || config.server || node.server, "");
+
   params.set("encryption", "none");
   params.set("type", config.stream_type || "tcp");
 
   if (config.tls_type === "tls") {
     params.set("security", "tls");
-    if (config.sni) params.set("sni", config.sni);
+    if (sni) params.set("sni", sni);
     if (config.alpn) params.set("alpn", config.alpn);
   } else if (config.tls_type === "reality") {
     params.set("security", "reality");
     params.set("pbk", resolveRealityPublicKey(config, client));
     params.set("fp", config.fingerprint || "chrome");
-    if (node.tls_host) params.set("sni", node.tls_host);
+    if (sni) params.set("sni", sni);
     const shortId = pickRandomShortId(config.short_ids);
     if (shortId) params.set("sid", shortId);
   }
 
   if (config.flow) params.set("flow", config.flow);
   if (config.path) params.set("path", config.path);
-  if (config.server) params.set("host", config.server);
+  if (config.server) {
+    params.set("host", config.server);
+  } else if (["ws", "http", "h2"].includes(streamType) && hostCandidate) {
+    params.set("host", hostCandidate);
+  }
   if (config.service_name) params.set("serviceName", config.service_name);
 
   const host = formatHostForUrl(node.server);
@@ -197,11 +217,21 @@ function generateVlessLink(node: any, config: any, user: SubscriptionUser, clien
 
 function generateTrojanLink(node: any, config: any, user: SubscriptionUser) {
   const params = new URLSearchParams();
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  const hostCandidate = ensureString(
+    config.server || node.tls_host || config.host || config.sni || node.server,
+    ""
+  );
+  const sni = ensureString(config.sni || node.tls_host || config.host || config.server || node.server, "");
 
-  if (config.sni) params.set("sni", config.sni);
+  if (sni) params.set("sni", sni);
   if (config.alpn) params.set("alpn", config.alpn);
   if (config.path) params.set("path", config.path);
-  if (config.server) params.set("host", config.server);
+  if (config.server) {
+    params.set("host", config.server);
+  } else if (["ws", "http", "h2"].includes(streamType) && hostCandidate) {
+    params.set("host", hostCandidate);
+  }
 
   const queryString = params.toString();
   const host = formatHostForUrl(node.server);
@@ -289,7 +319,7 @@ function generateHysteriaLink(node: any, config: any, user: SubscriptionUser) {
   }
 
   const host = formatHostForUrl(node.server);
-  return `hysteria://${host}:${node.server_port}?${params.toString()}#${encodeURIComponent(node.name)}`;
+  return `hysteria2://${host}:${node.server_port}?${params.toString()}#${encodeURIComponent(node.name)}`;
 }
 
 // ---------------- Clash 配置（使用模板） ----------------

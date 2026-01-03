@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { VxeTableBar } from '@/components/ReVxeTableBar';
 import http from '@/api/http';
 
 const vxeTableRef = ref();
 const loading = ref(false);
 const rechargeRecords = ref([]);
+const markingTradeNo = ref('');
 
 // 筛选条件
 const filterStatus = ref('');
@@ -71,7 +72,8 @@ const columns: VxeTableBarColumns = [
     width: 160,
     visible: true,
     slots: { default: 'paid_at' }
-  }
+  },
+  { field: 'actions', title: '操作', width: 140, visible: true, slots: { default: 'actions' } }
 ];
 
 // 获取状态类型
@@ -119,6 +121,31 @@ const handlePageChange = ({ currentPage, pageSize }) => {
   pagerConfig.currentPage = currentPage;
   pagerConfig.pageSize = pageSize;
   loadRechargeRecords();
+};
+
+const markRechargePaid = async (row: any) => {
+  if (!row?.trade_no || row.status !== 0) return;
+  try {
+    await ElMessageBox.confirm(
+      `确认将交易号 ${row.trade_no} 标记为已支付并入账吗？`,
+      '确认操作',
+      { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' }
+    );
+  } catch (error) {
+    return;
+  }
+
+  markingTradeNo.value = row.trade_no;
+  try {
+    const response: any = await http.post(`/admin/recharge-records/${encodeURIComponent(row.trade_no)}/mark-paid`);
+    ElMessage.success(response.message || '已标记为已支付');
+    loadRechargeRecords();
+  } catch (error) {
+    console.error('标记充值记录失败:', error);
+    ElMessage.error('标记充值记录失败');
+  } finally {
+    markingTradeNo.value = '';
+  }
 };
 
 // 初始化加载
@@ -188,6 +215,19 @@ loadRechargeRecords();
 
         <template #paid_at="{ row }">
           <span>{{ row.paid_at || '-' }}</span>
+        </template>
+
+        <template #actions="{ row }">
+          <el-button
+            v-if="row.status === 0"
+            size="small"
+            type="success"
+            :loading="markingTradeNo === row.trade_no"
+            @click="markRechargePaid(row)"
+          >
+            标记已支付
+          </el-button>
+          <span v-else>-</span>
         </template>
       </vxe-grid>
     </template>

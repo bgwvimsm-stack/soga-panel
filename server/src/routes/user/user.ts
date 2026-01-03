@@ -567,12 +567,106 @@ export function createUserRouter(ctx: AppContext) {
     const page = Math.max(1, Number(req.query.page ?? 1) || 1);
     const limit = Math.min(Math.max(1, Number(req.query.limit ?? 20) || 20), 200);
     const offset = (page - 1) * limit;
+    const startDate = typeof req.query.start_date === "string" ? req.query.start_date.trim() : "";
+    const endDate = typeof req.query.end_date === "string" ? req.query.end_date.trim() : "";
+    const normalizeTime = (value: string) => value.replace(/\+/g, " ").trim();
+    const startTime =
+      typeof req.query.start_time === "string" ? normalizeTime(req.query.start_time) : "";
+    const endTime =
+      typeof req.query.end_time === "string" ? normalizeTime(req.query.end_time) : "";
+    const nodeName = typeof req.query.node_name === "string" ? req.query.node_name.trim() : "";
+    const nodeIdRaw = typeof req.query.node_id === "string" ? Number(req.query.node_id) : NaN;
+    const nodeId = Number.isFinite(nodeIdRaw) ? nodeIdRaw : 0;
+    const hasTimeRange = Boolean(startTime || endTime);
+    const hasNodeFilter = Boolean(nodeName || nodeId);
+
+    const filters: string[] = ["tl.user_id = ?"];
+    const values: any[] = [Number(user.id)];
+    if (startDate) {
+      filters.push("tl.date >= ?");
+      values.push(startDate);
+    }
+    if (endDate) {
+      filters.push("tl.date <= ?");
+      values.push(endDate);
+    }
+    if (startTime) {
+      filters.push("tl.created_at >= ?");
+      values.push(startTime);
+    }
+    if (endTime) {
+      filters.push("tl.created_at <= ?");
+      values.push(endTime);
+    }
+    if (nodeId) {
+      filters.push("tl.node_id = ?");
+      values.push(nodeId);
+    }
+    if (nodeName) {
+      filters.push("n.name LIKE ?");
+      values.push(`%${nodeName}%`);
+    }
+    const whereClause = `WHERE ${filters.join(" AND ")}`;
+    const countJoinClause = nodeName ? "LEFT JOIN nodes n ON n.id = tl.node_id" : "";
 
     const totalRow = await ctx.dbService.db
-      .prepare("SELECT COUNT(*) as total FROM traffic_logs WHERE user_id = ?")
-      .bind(Number(user.id))
+      .prepare(`SELECT COUNT(*) as total FROM traffic_logs tl ${countJoinClause} ${whereClause}`)
+      .bind(...values)
       .first<{ total?: number | string | null }>();
-    const total = Number(totalRow?.total ?? 0);
+    const trafficTotal = Number(totalRow?.total ?? 0);
+
+    if (trafficTotal === 0 && !hasTimeRange && !hasNodeFilter) {
+      const dailyFilters: string[] = ["dt.user_id = ?"];
+      const dailyValues: any[] = [Number(user.id)];
+      if (startDate) {
+        dailyFilters.push("dt.record_date >= ?");
+        dailyValues.push(startDate);
+      }
+      if (endDate) {
+        dailyFilters.push("dt.record_date <= ?");
+        dailyValues.push(endDate);
+      }
+      const dailyWhere = `WHERE ${dailyFilters.join(" AND ")}`;
+      const dailyRows = await ctx.dbService.db
+        .prepare(
+          `
+          SELECT 
+            id,
+            user_id,
+            0 as node_id,
+            'Multiple Nodes' as node_name,
+            upload_traffic,
+            download_traffic,
+            upload_traffic as actual_upload_traffic,
+            download_traffic as actual_download_traffic,
+            total_traffic,
+            total_traffic as actual_traffic,
+            1 as deduction_multiplier,
+            DATE_FORMAT(record_date, '%Y-%m-%d') as log_time,
+            created_at
+          FROM daily_traffic
+          ${dailyWhere}
+          ORDER BY record_date DESC
+          LIMIT ? OFFSET ?
+        `
+        )
+        .bind(...dailyValues, limit, offset)
+        .all();
+
+      const dailyTotalRow = await ctx.dbService.db
+        .prepare(`SELECT COUNT(*) as total FROM daily_traffic dt ${dailyWhere}`)
+        .bind(...dailyValues)
+        .first<{ total?: number | string | null }>();
+      const dailyTotal = Number(dailyTotalRow?.total ?? 0);
+
+      return successResponse(res, {
+        data: dailyRows.results || [],
+        total: dailyTotal,
+        page,
+        limit,
+        pages: limit > 0 ? Math.max(1, Math.ceil(dailyTotal / limit)) : 1
+      });
+    }
 
     const rows = await ctx.dbService.db
       .prepare(
@@ -593,20 +687,20 @@ export function createUserRouter(ctx: AppContext) {
           tl.created_at
         FROM traffic_logs tl
         LEFT JOIN nodes n ON n.id = tl.node_id
-        WHERE tl.user_id = ?
+        ${whereClause}
         ORDER BY tl.date DESC, tl.created_at DESC
         LIMIT ? OFFSET ?
       `
       )
-      .bind(Number(user.id), limit, offset)
+      .bind(...values, limit, offset)
       .all();
 
     return successResponse(res, {
       data: rows.results || [],
-      total,
+      total: trafficTotal,
       page,
       limit,
-      pages: limit > 0 ? Math.max(1, Math.ceil(total / limit)) : 1
+      pages: limit > 0 ? Math.max(1, Math.ceil(trafficTotal / limit)) : 1
     });
   });
 

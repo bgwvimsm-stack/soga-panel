@@ -37,8 +37,9 @@ export function createAdminRechargeRouter(ctx: AppContext) {
       .toUpperCase()}`;
     await ctx.dbService.createRechargeRecord(uid, amt, tradeNo, method || "manual");
     if (mark_paid) {
-      const record = await ctx.dbService.markRechargePaid(tradeNo);
-      if (record) {
+      const result: any = await ctx.dbService.markRechargePaid(tradeNo);
+      if (result?.applied) {
+        const record = result.record as any;
         await referralService.awardRebate({
           inviteeId: Number(record.user_id),
           amount: Number(record.amount ?? 0),
@@ -55,17 +56,24 @@ export function createAdminRechargeRouter(ctx: AppContext) {
   router.post("/:tradeNo/mark-paid", async (req: Request, res: Response) => {
     if (!ensureAdmin(req, res)) return;
     const tradeNo = req.params.tradeNo;
-    const record = await ctx.dbService.markRechargePaid(tradeNo);
-    if (!record) return errorResponse(res, "订单不存在", 404);
-    await referralService.awardRebate({
-      inviteeId: Number(record.user_id),
-      amount: Number(record.amount ?? 0),
-      sourceType: "recharge",
-      sourceId: Number(record.id ?? 0) || null,
-      tradeNo,
-      eventType: "recharge_rebate"
-    });
-    return successResponse(res, { trade_no: tradeNo }, "已入账");
+    const result: any = await ctx.dbService.markRechargePaid(tradeNo);
+    if (!result) return errorResponse(res, "订单不存在", 404);
+    if (result.applied) {
+      const record = result.record as any;
+      await referralService.awardRebate({
+        inviteeId: Number(record.user_id),
+        amount: Number(record.amount ?? 0),
+        sourceType: "recharge",
+        sourceId: Number(record.id ?? 0) || null,
+        tradeNo,
+        eventType: "recharge_rebate"
+      });
+      return successResponse(res, { trade_no: tradeNo }, "已入账");
+    }
+    if (result.alreadyPaid) {
+      return successResponse(res, { trade_no: tradeNo }, "订单已是已支付");
+    }
+    return errorResponse(res, "订单状态不可标记", 400);
   });
 
   return router;

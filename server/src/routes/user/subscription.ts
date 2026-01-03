@@ -203,7 +203,7 @@ async function handleSubscription(ctx: AppContext, type: SubscriptionType, req: 
       "content-disposition": buildContentDisposition(filename),
       "profile-update-interval": "24",
       "subscription-userinfo": `upload=${uploadTraffic}; download=${downloadTraffic}; total=${trafficQuota}; expire=${getExpireTimestamp(
-        userRow.expire_time
+        resolveSubscriptionExpireTime(userRow)
       )}`
     };
 
@@ -216,6 +216,10 @@ async function handleSubscription(ctx: AppContext, type: SubscriptionType, req: 
     const message = error instanceof Error ? error.message : String(error);
     return errorResponse(res, message, 500);
   }
+}
+
+function resolveSubscriptionExpireTime(userRow: SubscriptionUser): SubscriptionUser["expire_time"] {
+  return userRow.class_expire_time ?? userRow.expire_time;
 }
 
 function getExpireTimestamp(expireTime: SubscriptionUser["expire_time"]): number {

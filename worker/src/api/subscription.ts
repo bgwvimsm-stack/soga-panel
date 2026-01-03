@@ -19,6 +19,7 @@ type SubscriptionType = "v2ray" | "clash" | "quantumultx" | "singbox" | "shadowr
 type SubscriptionUserRow = {
   id: number;
   expire_time: string | number | Date | null;
+  class_expire_time?: string | number | Date | null;
   transfer_total: number | string;
   transfer_enable: number | string;
   upload_traffic: number | string;
@@ -59,6 +60,10 @@ const FILE_EXTENSIONS: Record<SubscriptionType, string> = {
 
 function isSupportedType(value: string | null): value is SubscriptionType {
   return value !== null && (value as SubscriptionType) in GENERATORS;
+}
+
+function resolveSubscriptionExpireTime(user: SubscriptionUserRow): SubscriptionUserRow["expire_time"] {
+  return user.class_expire_time ?? user.expire_time;
 }
 
 function getExpireTimestamp(expireTime: SubscriptionUserRow["expire_time"]): number {
@@ -205,7 +210,7 @@ export class SubscriptionAPI {
         "Content-Disposition": this.buildContentDisposition(filename),
         "Profile-Update-Interval": "24",
         "Subscription-Userinfo": `upload=${uploadTraffic}; download=${downloadTraffic}; total=${trafficQuota}; expire=${getExpireTimestamp(
-          user.expire_time
+          resolveSubscriptionExpireTime(user)
         )}`,
       };
 

@@ -97,6 +97,14 @@ export function generateV2rayConfig(nodes, user) {
  * 生成 VMess 链接
  */
 function generateVmessLink(node, config, user) {
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  const hostCandidate = ensureString(
+    config.server || node.tls_host || config.host || config.sni || node.server,
+    ""
+  );
+  const sni = ensureString(config.sni || node.tls_host || config.host || config.server || node.server, "");
+  const needsHost = ["ws", "http", "h2"].includes(streamType);
+  const host = needsHost ? hostCandidate : ensureString(config.server, "");
   const vmessConfig = {
     v: "2",
     ps: node.name,
@@ -106,10 +114,10 @@ function generateVmessLink(node, config, user) {
     aid: config.aid || 0,
     net: config.stream_type || "tcp",
     type: "none",
-    host: config.server || "",
+    host,
     path: config.path || "",
     tls: config.tls_type === "tls" ? "tls" : "",
-    sni: config.sni || "",
+    sni,
     alpn: config.alpn || "",
   };
 
@@ -121,26 +129,36 @@ function generateVmessLink(node, config, user) {
  */
 function generateVlessLink(node, config, user, client) {
   const params = new URLSearchParams();
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  const hostCandidate = ensureString(
+    config.server || node.tls_host || config.host || config.sni || node.server,
+    ""
+  );
+  const sni = ensureString(config.sni || node.tls_host || config.host || config.server || node.server, "");
 
   params.set("encryption", "none");
   params.set("type", config.stream_type || "tcp");
 
   if (config.tls_type === "tls") {
     params.set("security", "tls");
-    if (config.sni) params.set("sni", config.sni);
+    if (sni) params.set("sni", sni);
     if (config.alpn) params.set("alpn", config.alpn);
   } else if (config.tls_type === "reality") {
     params.set("security", "reality");
     params.set("pbk", resolveRealityPublicKey(config, client));
     params.set("fp", config.fingerprint || "chrome");
-    if (node.tls_host) params.set("sni", node.tls_host);
+    if (sni) params.set("sni", sni);
     const shortId = pickRandomShortId(config.short_ids);
     if (shortId) params.set("sid", shortId);
   }
 
   if (config.flow) params.set("flow", config.flow);
   if (config.path) params.set("path", config.path);
-  if (config.server) params.set("host", config.server);
+  if (config.server) {
+    params.set("host", config.server);
+  } else if (["ws", "http", "h2"].includes(streamType) && hostCandidate) {
+    params.set("host", hostCandidate);
+  }
   if (config.service_name) params.set("serviceName", config.service_name);
 
   const host = formatHostForUrl(node.server);
@@ -152,11 +170,21 @@ function generateVlessLink(node, config, user, client) {
  */
 function generateTrojanLink(node, config, user) {
   const params = new URLSearchParams();
+  const streamType = String(config.stream_type || "tcp").toLowerCase();
+  const hostCandidate = ensureString(
+    config.server || node.tls_host || config.host || config.sni || node.server,
+    ""
+  );
+  const sni = ensureString(config.sni || node.tls_host || config.host || config.server || node.server, "");
 
-  if (config.sni) params.set("sni", config.sni);
+  if (sni) params.set("sni", sni);
   if (config.alpn) params.set("alpn", config.alpn);
   if (config.path) params.set("path", config.path);
-  if (config.server) params.set("host", config.server);
+  if (config.server) {
+    params.set("host", config.server);
+  } else if (["ws", "http", "h2"].includes(streamType) && hostCandidate) {
+    params.set("host", hostCandidate);
+  }
 
   const queryString = params.toString();
   const host = formatHostForUrl(node.server);
@@ -261,7 +289,7 @@ function generateHysteriaLink(node, config, user) {
   }
 
   const host = formatHostForUrl(node.server);
-  return `hysteria://${host}:${node.server_port}?${params.toString()}#${encodeURIComponent(node.name)}`;
+  return `hysteria2://${host}:${node.server_port}?${params.toString()}#${encodeURIComponent(node.name)}`;
 }
 
 /**
