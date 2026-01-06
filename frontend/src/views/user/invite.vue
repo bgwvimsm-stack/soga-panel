@@ -1,5 +1,12 @@
 <template>
   <div class="invite-page">
+    <el-alert
+      v-if="showRebateBlocked"
+      type="warning"
+      show-icon
+      class="rebate-alert"
+      title="当前账号非会员或已过期，邀请好友充值/购买不会产生返利。"
+    />
     <el-row :gutter="16" class="stats-row">
       <el-col :xs="24" :md="12">
         <el-card shadow="never">
@@ -25,6 +32,9 @@
             </p>
             <p class="invite-hint">
               分享上方链接邀请好友注册。{{ inviteModeText }}
+            </p>
+            <p v-if="showRebateBlocked" class="invite-hint invite-warning">
+              返利资格已暂停，续费后将恢复。
             </p>
           </div>
         </el-card>
@@ -326,6 +336,8 @@ const inviteModeText = computed(() => {
   return "好友每次充值或购买都会返利。";
 });
 
+const showRebateBlocked = computed(() => overview.value?.rebateEligible === false);
+
 const withdrawMinAmount = computed(() => {
   const value = Number(overview.value?.withdrawSettings?.minAmount ?? 200);
   if (!Number.isFinite(value) || value <= 0) return 200;
@@ -593,6 +605,10 @@ onMounted(() => {
   gap: 16px;
 }
 
+.rebate-alert {
+  margin-bottom: 4px;
+}
+
 .stats-row,
 .action-row {
   margin-bottom: 0;
@@ -638,6 +654,10 @@ onMounted(() => {
     font-size: 12px;
     color: #9ca3af;
     margin-top: 6px;
+  }
+
+  .invite-warning {
+    color: #b45309;
   }
 }
 

@@ -908,8 +908,22 @@ export function createUserRouter(ctx: AppContext) {
     const userRow = await ctx.dbService.db
       .prepare(
         `
-        SELECT invite_code, invited_by, rebate_available, rebate_total, invite_limit, invite_used
-        FROM users WHERE id = ?
+        SELECT
+          invite_code,
+          invited_by,
+          rebate_available,
+          rebate_total,
+          invite_limit,
+          invite_used,
+          CASE
+            WHEN status = 1
+              AND class > 0
+              AND (class_expire_time IS NULL OR class_expire_time > CURRENT_TIMESTAMP)
+            THEN 1
+            ELSE 0
+          END AS rebate_eligible
+        FROM users
+        WHERE id = ?
       `
       )
       .bind(user.id)
@@ -920,6 +934,7 @@ export function createUserRouter(ctx: AppContext) {
         rebate_total?: number;
         invite_limit?: number;
         invite_used?: number;
+        rebate_eligible?: number;
       }>();
     const configs = await ctx.dbService.listSystemConfigsMap();
     const inviteBaseUrl = configs["site_url"] || ctx.env.SITE_URL || "";
@@ -938,6 +953,7 @@ export function createUserRouter(ctx: AppContext) {
       rebateTotal: Number(userRow?.rebate_total ?? 0),
       inviteLimit: Number(userRow?.invite_limit ?? 0),
       inviteUsed: Number(userRow?.invite_used ?? 0),
+      rebateEligible: Boolean(userRow?.rebate_eligible ?? 0),
       stats: {
         totalInvited: Number(statsRow?.total ?? 0),
         activeInvited: Number(statsRow?.active_total ?? 0)

@@ -1572,7 +1572,26 @@ export class UserAPI {
       const offset = (page - 1) * limit;
 
       const userRow = await this.db.db
-        .prepare("SELECT invite_code, invited_by, rebate_available, rebate_total, invite_limit, invite_used FROM users WHERE id = ?")
+        .prepare(
+          `
+          SELECT
+            invite_code,
+            invited_by,
+            rebate_available,
+            rebate_total,
+            invite_limit,
+            invite_used,
+            CASE
+              WHEN status = 1
+                AND class > 0
+                AND (class_expire_time IS NULL OR class_expire_time > datetime('now', '+8 hours'))
+              THEN 1
+              ELSE 0
+            END AS rebate_eligible
+          FROM users
+          WHERE id = ?
+        `
+        )
         .bind(userId)
         .first<DbRow | null>();
       if (!userRow) {
@@ -1631,6 +1650,7 @@ export class UserAPI {
         rebateTotal: toNumber(userRow.rebate_total),
         inviteLimit: toNumber(userRow.invite_limit),
         inviteUsed: toNumber(userRow.invite_used),
+        rebateEligible: Boolean(toNumber(userRow.rebate_eligible)),
         stats: {
           totalInvited: total,
           activeInvited: ensureNumber(statsRow?.active_total),
