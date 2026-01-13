@@ -1,0 +1,669 @@
+# Worker API 接口清单
+
+## 通用约定
+- 认证
+  - 用户/管理员接口：`Authorization: Bearer <token>`。
+  - 管理员接口要求 `is_admin = true`。
+  - Soga 节点接口：请求头 `API-KEY`、`NODE-ID`、`NODE-TYPE`。
+- 默认返回（JSON）：`{ code, message, data }`。
+  - `code = 0` 表示成功；失败时 `code` 为 HTTP 状态码。
+- 非 JSON 返回：订阅文件、CSV 下载、支付回调、Soga 部分接口（见具体接口说明）。
+
+## 健康检查
+- GET `/api/health`
+  - 请求参数：无
+  - 返回参数（data）：`status`, `message`, `timestamp`, `version`, `build_time`
+- GET `/api/database/test`
+  - 请求参数：无
+  - 返回参数（data）：`status`, `message`, `latency_ms`, `timestamp`
+
+## Soga 节点 API
+- GET `/api/v1/node`
+  - 请求头：`API-KEY`, `NODE-ID`, `NODE-TYPE`
+  - 请求参数：无
+  - 返回参数：原始 JSON（非 `{code,message}` 包装）
+    - `basic`: `pull_interval`, `push_interval`, `speed_limit`
+    - `config`: 节点配置对象
+- GET `/api/v1/users`
+  - 请求头：`API-KEY`, `NODE-ID`, `NODE-TYPE`
+  - 请求参数：无
+  - 返回参数：原始 JSON 数组（非 `{code,message}` 包装）
+    - 基础字段：`id`, `speed_limit`, `device_limit`, `tcp_limit`
+    - `node_type` 为 `v2ray/vmess/vless`：附 `uuid`
+    - `node_type` 为 `ss/shadowsocks`：附 `password`（派生密码）
+    - 其他类型：附 `password`
+- GET `/api/v1/audit_rules`
+  - 请求参数：无（支持 `If-None-Match`）
+  - 返回参数：原始 JSON 数组（支持 ETag）
+    - 元素：`id`, `rule`
+- GET `/api/v1/white_list`
+  - 请求参数：无（支持 `If-None-Match`）
+  - 返回参数：原始 JSON 数组（支持 ETag），元素为字符串
+- POST `/api/v1/traffic`
+  - 请求头：`API-KEY`, `NODE-ID`, `NODE-TYPE`
+  - 请求体：`[{ id, u, d }]`（u=upload, d=download）
+  - 返回参数：`code`, `message`
+- POST `/api/v1/alive_ip`
+  - 请求头：`API-KEY`, `NODE-ID`, `NODE-TYPE`
+  - 请求体：`[{ id, ips: string[] }]`
+  - 返回参数：`code`, `message`
+- POST `/api/v1/audit_log`
+  - 请求头：`API-KEY`, `NODE-ID`, `NODE-TYPE`
+  - 请求体：`[{ user_id, audit_id, ip_address? }]`
+  - 返回参数：`code`, `message`
+- POST `/api/v1/status`
+  - 请求头：`API-KEY`, `NODE-ID`, `NODE-TYPE`
+  - 请求体：`{ cpu, mem:{total,used}, swap:{total,used}, disk:{total,used}, uptime }`
+  - 返回参数：`code`, `message`
+
+## 认证与账号
+- POST `/api/auth/login`
+  - 请求体：`email`, `password`, `remember?`, `twoFactorTrustToken?`, `turnstileToken?` 或 `cf-turnstile-response?`
+  - 返回参数（data）
+    - 需要二步验证：`need_2fa`, `challenge_id`, `two_factor_enabled`
+    - 登录成功：`token`, `user`, `remember`
+- POST `/api/auth/verify-2fa`
+  - 请求体：`challenge_id`/`challengeId`, `code`, `rememberDevice?`, `deviceName?`
+  - 返回参数（data）：`token`, `user`, `remember`, `trust_token?`, `trust_token_expires_at?`
+- POST `/api/auth/register`
+  - 请求体：`email`, `username`, `password`, `verificationCode?`, `verification_code?`, `inviteCode?`, `invite_code?`
+  - 返回参数（data）：`message`, `token`, `user`
+    - `user` 字段：`id`, `email`, `username`, `uuid`, `passwd`, `is_admin`, `class`, `class_expire_time`, `expire_time`, `invite_code`, `invited_by`, `invite_limit`, `invite_used`, `rebate_available`, `rebate_total`, `upload_traffic`, `download_traffic`, `upload_today`, `download_today`, `transfer_total`, `transfer_enable`, `transfer_remain`, `speed_limit`, `device_limit`, `status`
+- POST `/api/auth/logout`
+  - 请求头：`Authorization: Bearer <token>`
+  - 返回参数（data）：`message`
+- POST `/api/auth/oauth/complete`
+  - 请求体：`pendingToken`/`pending_token`, `inviteCode?`/`invite_code?`
+  - 返回参数（data）
+    - 需要二步验证：`need_2fa`, `challenge_id`, `two_factor_enabled`, `isNewUser`, `tempPassword`, `passwordEmailSent`, `provider`
+    - 登录成功：`token`, `user`, `remember`, 以及 `isNewUser`, `tempPassword`, `passwordEmailSent`, `provider`
+- POST `/api/auth/send-email-code`
+  - 请求体：`email`
+  - 返回参数（data）：`message`, `cooldown`, `expire_minutes`
+- POST `/api/auth/password-reset/request`
+  - 请求体：`email`
+  - 返回参数（data）：`message`, `cooldown`, `expire_minutes`
+- POST `/api/auth/password-reset/confirm`
+  - 请求体：`email`, `verificationCode`/`verification_code`, `newPassword`/`password`, `confirmPassword`/`password_confirm`
+  - 返回参数（data）：`message`
+- GET `/api/auth/register-config`
+  - 请求参数：无
+  - 返回参数（data）：`registerEnabled`, `registerMode`, `inviteRequired`, `verificationEnabled`, `passwordResetEnabled`, `emailProviderEnabled`
+- POST `/api/auth/google`
+  - 请求体：`idToken`/`id_token`/`credential`/`token`, `remember?`, `twoFactorTrustToken?`
+  - 返回参数（data）
+    - 需要同意条款：`need_terms_agreement`, `pending_terms_token`, `provider`, `profile{email,username,avatar}`
+    - 登录/二步验证同 `/api/auth/login`
+- POST `/api/auth/github`
+  - 请求体：`code`, `redirectUri?`, `state?`, `remember?`, `twoFactorTrustToken?`
+  - 返回参数（data）同 Google OAuth
+- POST `/api/auth/passkey/register/options`
+  - 请求头：`Authorization: Bearer <token>`
+  - 请求体：无
+  - 返回参数（data）：WebAuthn 注册参数（`challenge`, `rp`, `user`, `pubKeyCredParams`, `timeout`, `attestation`, `authenticatorSelection`, `excludeCredentials`）
+- POST `/api/auth/passkey/register/verify`
+  - 请求头：`Authorization: Bearer <token>`
+  - 请求体：`credential`, `deviceName?`
+  - 返回参数（data）：`credential_id`, `message`
+- POST `/api/auth/passkey/login/options`
+  - 请求体：`email`, `remember?`
+  - 返回参数（data）：`challenge`, `rpId`, `timeout`, `allowCredentials`, `userVerification`
+- POST `/api/auth/passkey/login/verify`
+  - 请求体：`credential`
+  - 返回参数（data）：`token`, `user`, `remember`
+- GET `/api/site/settings`
+  - 请求参数：无
+  - 返回参数（data）：`siteName`, `siteUrl`, `docsUrl`
+
+## 用户接口
+- GET `/api/user/profile`
+  - 请求头：`Authorization`
+  - 请求参数：无
+  - 返回参数（data）：`id`, `email`, `username`, `uuid`, `passwd`, `token`, `class`, `class_expire_time`, `is_admin`, `speed_limit`, `device_limit`, `tcp_limit`, `upload_traffic`, `download_traffic`, `upload_today`, `download_today`, `transfer_total`, `transfer_enable`, `transfer_remain`, `traffic_percentage`, `expire_time`, `is_expired`, `days_remaining`, `reg_date`, `last_login_time`, `last_login_ip`, `status`, `traffic_reset_day`, `subscription_url`, `two_factor_enabled`, `has_two_factor_backup_codes`
+- PUT `/api/user/profile`
+  - 请求头：`Authorization`
+  - 请求体：`username?` 或 `email?`（不能同时提交）
+  - 返回参数（data）：`message`
+- POST `/api/user/change-password`
+  - 请求头：`Authorization`
+  - 请求体：`current_password`, `new_password`
+  - 返回参数（data）：`message`
+- GET `/api/user/nodes`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `limit?`, `type?`, `status?`（1=在线, 0=离线）
+  - 返回参数（data）：`nodes`, `statistics`, `pagination`
+    - `nodes[]`: `id`, `name`, `type`, `server`, `server_port`, `tls_host`, `node_class`, `node_bandwidth`, `node_bandwidth_limit`, `traffic_multiplier`, `status`, `node_config`, `config`, `created_at`, `updated_at`, `user_upload_traffic`, `user_download_traffic`, `user_total_traffic`, `user_raw_total_traffic`, `user_actual_upload_traffic`, `user_actual_download_traffic`, `user_actual_total_traffic`, `tags`, `is_online`
+- GET `/api/user/traffic-stats`
+  - 请求头：`Authorization`
+  - 请求参数：`days?`
+  - 返回参数（data）：`transfer_enable`, `transfer_total`, `transfer_today`, `remain_traffic`, `traffic_percentage`, `upload_traffic`, `download_traffic`, `today_upload`, `today_download`, `traffic_stats`, `total_days`, `last_checkin_time`
+- POST `/api/user/reset-subscription-token`
+  - 请求头：`Authorization`
+  - 请求参数：无
+  - 返回参数（data）：`message`, `token`, `uuid`, `passwd`, `user{ id,email,username,token,uuid,passwd,class,is_admin }`
+- GET `/api/user/subscription-logs`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `limit?`, `type?`
+  - 返回参数（data）：`data[]`（`id`,`user_id`,`type`,`request_ip`,`request_time`,`request_user_agent`）, `total`, `page`, `limit`, `pages`
+- GET `/api/user/bark-settings`
+  - 请求头：`Authorization`
+  - 请求参数：无
+  - 返回参数（data）：`bark_key`, `bark_enabled`
+- PUT `/api/user/bark-settings`
+  - 请求头：`Authorization`
+  - 请求体：`bark_key?`, `bark_enabled?`
+  - 返回参数（data）：`message`
+- POST `/api/user/bark-test`
+  - 请求头：`Authorization`
+  - 请求体：`bark_key?`
+  - 返回参数（data）：`message`, `success`, `bark_response?`
+- GET `/api/user/login-logs`
+  - 请求头：`Authorization`
+  - 请求参数：`limit?`
+  - 返回参数（data）：`data[]`（`id`,`login_ip`,`login_time`,`user_agent`,`login_status`,`failure_reason`）
+- GET `/api/user/online-devices`
+  - 请求头：`Authorization`
+  - 请求参数：无
+  - 返回参数（data）：`count`, `user_id`, `check_time`
+- GET `/api/user/online-ips-detail`
+  - 请求头：`Authorization`
+  - 请求参数：无
+  - 返回参数（data）：`data[]`（`ip`,`node_id`,`last_seen`,`node_name`）, `count`, `user_id`, `check_time`
+- GET `/api/user/referrals`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `limit?`
+  - 返回参数（data）：`inviteCode`, `invitedBy`, `rebateAvailable`, `rebateTotal`, `inviteLimit`, `inviteUsed`, `rebateEligible`, `stats`, `referrals`, `pagination`, `rebateSettings`, `withdrawSettings`, `inviteBaseUrl`
+- GET `/api/user/rebate/ledger`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `limit?`, `event_type?`
+  - 返回参数（data）：`records[]`（`id`,`eventType`,`amount`,`sourceType`,`sourceId`,`tradeNo`,`status`,`createdAt`,`inviteeEmail`）, `pagination`
+- POST `/api/user/rebate/transfer`
+  - 请求头：`Authorization`
+  - 请求体：`amount`
+  - 返回参数（data）：`money`, `rebateAvailable`
+- POST `/api/user/rebate/withdraw`
+  - 请求头：`Authorization`
+  - 请求体：`amount`, `method?`, `accountPayload?`
+  - 返回参数（data）：`id`
+- GET `/api/user/rebate/withdrawals`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `limit?`
+  - 返回参数（data）：`records[]`（`id`,`amount`,`method`,`status`,`accountPayload`,`reviewNote`,`feeRate`,`feeAmount`,`createdAt`,`updatedAt`,`processedAt`）, `pagination`
+- POST `/api/user/two-factor/setup`
+  - 请求头：`Authorization`
+  - 请求参数：无
+  - 返回参数（data）：`secret`, `otp_auth_url`, `provisioning_uri`
+- POST `/api/user/two-factor/enable`
+  - 请求头：`Authorization`
+  - 请求体：`code`
+  - 返回参数（data）：`message`, `backup_codes[]`
+- POST `/api/user/two-factor/backup-codes`
+  - 请求头：`Authorization`
+  - 请求体：`code`
+  - 返回参数（data）：`message`, `backup_codes[]`
+- POST `/api/user/two-factor/disable`
+  - 请求头：`Authorization`
+  - 请求体：`password`, `code`
+  - 返回参数（data）：`message`
+- GET `/api/user/passkeys`
+  - 请求头：`Authorization`
+  - 请求参数：无
+  - 返回参数（data）：`items[]`（`credential_id`,`device_name`,`sign_count`,`created_at`,`last_used_at`）
+- DELETE `/api/user/passkeys/:id`
+  - 请求头：`Authorization`
+  - 路径参数：`id`（credential_id）
+  - 返回参数（data）：`removed`
+- GET `/api/user/shared-ids`
+  - 请求头：`Authorization`
+  - 请求参数：无
+  - 返回参数（data）：`items[]`（`id`,`name`,`remote_account_id`,`status`,`account`,`fetched_at?`,`message?`,`error?`）, `count`
+- GET `/api/user/audit-rules`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `limit?`, `action?`, `search?`
+  - 返回参数（data）：`rules[]`（`name`,`pattern`,`description`）, `pagination`
+- GET `/api/user/audit-logs`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `limit?`, `action?`, `date_start?`, `date_end?`, `search?`
+  - 返回参数（data）：`logs[]`（`time`,`node_name`,`triggered_rule`,`client_ip`）, `pagination`
+- GET `/api/user/audit-overview`
+  - 请求头：`Authorization`
+  - 请求参数：无
+  - 返回参数（data）：`rules`, `logs`, `recentLogs`
+
+## 工单
+- GET `/api/user/tickets`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `pageSize?`, `status?`（open/answered/closed）
+  - 返回参数（data）：`items[]`（`id`,`title`,`status`,`last_reply_at`,`created_at`,`updated_at`）, `pagination`
+- POST `/api/user/tickets`
+  - 请求头：`Authorization`
+  - 请求体：`title`, `content`
+  - 返回参数（data）：`id`,`title`,`content`,`status`,`last_reply_at`,`created_at`,`updated_at`
+- GET `/api/user/tickets/:id`
+  - 请求头：`Authorization`
+  - 路径参数：`id`
+  - 返回参数（data）：`ticket`, `replies[]`
+- POST `/api/user/tickets/:id/replies`
+  - 请求头：`Authorization`
+  - 路径参数：`id`
+  - 请求体：`content`
+  - 返回参数（data）：`replies[]`, `status`
+- GET `/api/user/tickets/unread-count`
+  - 请求头：`Authorization`
+  - 返回参数（data）：`count`
+- POST `/api/user/tickets/:id/close`
+  - 请求头：`Authorization`
+  - 路径参数：`id`
+  - 返回参数（data）：`status`
+- GET `/api/admin/tickets`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `pageSize?`, `status?`
+  - 返回参数（data）：`items[]`（含 `user{id,username,email}`）, `pagination`
+- GET `/api/admin/tickets/:id`
+  - 请求头：`Authorization`
+  - 路径参数：`id`
+  - 返回参数（data）：`ticket`（含 `user`）, `replies[]`
+- POST `/api/admin/tickets/:id/replies`
+  - 请求头：`Authorization`
+  - 路径参数：`id`
+  - 请求体：`content`, `status?`
+  - 返回参数（data）：`replies[]`, `status`
+- POST `/api/admin/tickets/:id/status`
+  - 请求头：`Authorization`
+  - 路径参数：`id`
+  - 请求体：`status`
+  - 返回参数（data）：`status`
+- GET `/api/admin/tickets/pending-count`
+  - 请求头：`Authorization`
+  - 返回参数（data）：`count`
+
+## 订阅
+- GET `/api/subscription/v2ray`
+- GET `/api/subscription/clash`
+- GET `/api/subscription/quantumultx`
+- GET `/api/subscription/singbox`
+- GET `/api/subscription/shadowrocket`
+- GET `/api/subscription/surge`
+  - 请求参数：`token`（query）
+  - 返回参数：订阅文件内容（非 JSON）
+  - 响应头：`Content-Type`、`Content-Disposition`、`Profile-Update-Interval`、`Subscription-Userinfo`、`profile-web-page-url?`
+
+## 公告
+- GET `/api/announcements`
+  - 请求参数：`limit?`, `offset?`
+  - 返回参数（data）：数组（`id`,`title`,`content`,`content_html`,`type`,`is_pinned`,`priority`,`created_at`,`expires_at`,`is_expired`）
+- GET `/api/admin/announcements`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `limit?`
+  - 返回参数（data）：`data[]`, `total`, `page`, `limit`, `pagination`
+- POST `/api/admin/announcements`
+  - 请求头：`Authorization`
+  - 请求体：`title`, `content`, `type?`, `status?`, `is_pinned?`, `priority?`
+  - 返回参数（data）：公告记录 + `message`
+- PUT `/api/admin/announcements/:id`
+  - 请求头：`Authorization`
+  - 路径参数：`id`
+  - 请求体：`title`, `content`, `type?`, `status?`, `is_pinned?`, `priority?`
+  - 返回参数（data）：公告记录 + `message`
+- DELETE `/api/admin/announcements/:id`
+  - 请求头：`Authorization`
+  - 路径参数：`id`
+  - 返回参数（data）：`message`
+
+## 流量
+- GET `/api/user/traffic/trends`
+  - 请求头：`Authorization`
+  - 请求参数：`period?`（today/3days/7days）
+  - 返回参数（data）：数组（`date`,`label`,`upload_traffic`,`download_traffic`,`total_traffic`）
+- GET `/api/user/traffic/summary`
+  - 请求头：`Authorization`
+  - 请求参数：无
+  - 返回参数（data）：`weekly`, `monthly`, `peak`
+- GET `/api/user/traffic-records`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `limit?`, `start_date?`, `end_date?`, `start_time?`, `end_time?`, `node_name?`, `node_id?`
+  - 返回参数（data）：`data[]`, `total`, `page`, `limit`, `pages`
+- POST `/api/user/traffic/manual-update`
+  - 请求头：`Authorization`
+  - 请求参数：无
+  - 返回参数（data）：`message`
+- GET `/api/admin/traffic/overview`
+  - 请求头：`Authorization`
+  - 返回参数（data）：`todayActive`, `totalUsers`, `todayTraffic`, `weeklyTrends`
+- GET `/api/admin/traffic/trends`
+  - 请求头：`Authorization`
+  - 请求参数：`period?`（today/3days/7days/30days）
+  - 返回参数（data）：数组（`date`,`upload_traffic`,`download_traffic`,`total_traffic`,`active_users`）
+- POST `/api/admin/traffic/daily-reset`
+  - 请求头：`Authorization`
+  - 返回参数（data）：调度执行结果对象（`success`, `message` 等）
+
+## 钱包
+- GET `/api/wallet/money`
+  - 请求头：`Authorization`
+  - 返回参数（data）：`money`
+- GET `/api/wallet/recharge-records`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `limit?`
+  - 返回参数（data）：`records[]`（`id`,`amount`,`payment_method`,`trade_no`,`status`,`created_at`,`paid_at`,`status_text`）, `pagination`
+- POST `/api/wallet/recharge`
+  - 请求头：`Authorization`
+  - 请求体：`amount`, `payment_method?`
+  - 返回参数（data）：`trade_no`, `amount`, `payment_method`, `status`, `status_text`, `payment_url`, `pay_url`, `created_at`
+- GET/POST `/api/wallet/recharge/callback`
+  - 请求参数：支付回调参数（`out_trade_no`, `trade_status`, `type`, `sign` 等）
+  - 返回参数：纯文本 `success` 或 `fail`
+- GET `/api/wallet/stats`
+  - 请求头：`Authorization`
+  - 返回参数（data）：`current_balance`, `total_recharged`, `total_spent`, `pending_recharge`, `total_recharge_count`, `total_purchase_count`
+- POST `/api/wallet/gift-card/redeem`
+  - 请求头：`Authorization`
+  - 请求体：`code`
+  - 返回参数（data）：`code`, `card_type`, `change_amount`, `duration_days`, `traffic_value_gb`, `reset_traffic_gb`, `usage`, `message`
+
+## 商店
+- GET `/api/packages`
+  - 请求参数：`page?`, `limit?`, `level?`, `sort?`（price/traffic_quota/validity_days/level）, `order?`（asc/desc）
+  - 返回参数（data）：`packages[]`, `pagination`
+- GET `/api/packages/:id`
+  - 路径参数：`id`
+  - 返回参数（data）：套餐详情对象
+- POST `/api/packages/coupon/preview`
+  - 请求头：`Authorization`
+  - 请求体：`package_id`, `coupon_code`
+  - 返回参数（data）：`original_price`, `final_price`, `discount_amount`, `coupon{...}`
+- POST `/api/packages/purchase`
+  - 请求头：`Authorization`
+  - 请求体：`package_id`, `purchase_type?`, `payment_method?`, `coupon_code?`
+  - 返回参数（data）：
+    - 余额支付：`trade_no`, `package_name`, `price`, `original_price`, `discount_amount`, `coupon_code`, `purchase_type`, `status`, `status_text`, `validity_days`, `new_expire_time`
+    - 补差额/在线支付：`trade_no`, `package_name`, `price`, `final_price`, `discount_amount`, `coupon_code`, `payment_amount?`, `user_balance?`, `purchase_type`, `status`, `status_text`, `payment_url`
+- GET `/api/packages/purchase-records`
+  - 请求头：`Authorization`
+  - 请求参数：`page?`, `limit?`
+  - 返回参数（data）：`records[]`（含 `final_price`, `status_text`, `purchase_type_text`, `traffic_quota_gb`）, `pagination`
+
+## 支付
+- GET `/api/payment/config`
+  - 返回参数（data）：`payment_methods`, `available_providers`, `current_provider`, `method_providers`, `enabled`
+- GET `/api/payment/create`
+  - 请求参数：`trade_no`, `payment_method?`
+  - 返回参数（data）：支付创建结果对象（`pay_url` 等由提供商决定）
+- POST `/api/payment/callback`
+  - 请求体：JSON 或表单（需包含 `out_trade_no`/`trade_no`/`tradeNo`/`order_id`）
+  - 返回参数：纯文本 `success`/`fail`（部分通道返回 `ok`）
+- GET/POST `/api/payment/notify`
+  - 请求参数：`out_trade_no`, `trade_status`, `sign`, `type?` 等
+  - 返回参数：纯文本 `success`/`fail`（部分通道返回 `ok`）
+- GET `/api/payment/status/:trade_no`
+  - 路径参数：`trade_no`
+  - 返回参数（data）：`trade_no`, `order_type`, `status`, `status_text`, `amount`, `created_at`
+
+## 管理员
+### 等级管理
+- POST `/api/admin/check-expired-levels`
+  - 返回参数（data）：`message`, `expired_count`, `success_count`, `failed_count`, `processed_users[]`
+- GET `/api/admin/level-stats`
+  - 返回参数（data）：`overview`, `level_distribution[]`, `upcoming_expiry[]`
+- POST `/api/admin/set-level-expiry`
+  - 请求体：`user_ids[]`, `expire_time?`, `level?`
+  - 返回参数（data）：`message`, `updated_count`, `user_ids`
+- GET `/api/admin/expired-users`
+  - 请求参数：`page?`, `limit?`
+  - 返回参数（data）：`expired_users[]`, `pagination`
+
+### 用户管理
+- GET `/api/admin/users`
+  - 请求参数：`page?`, `limit?`, `search?`, `class?`, `status?`
+  - 返回参数（data）：`users[]`, `total`, `pagination`
+- GET `/api/admin/user-stats`
+  - 返回参数（data）：`total`, `active`, `inactive`, `admin`, `totalTraffic`, `todayTraffic`
+- GET `/api/admin/users/export`
+  - 返回参数：CSV 文件
+- POST `/api/admin/users`
+  - 请求体：`email`, `username`, `password`, `transfer_enable?`, `expire_time?`, `class?`, `class_expire_time?`, `speed_limit?`, `device_limit?`, `tcp_limit?`, `is_admin?`, `status?`, `bark_key?`, `bark_enabled?`, `proxy_password?`, `invite_code?`, `invite_limit?`
+  - 返回参数（data）：`user_id`, `message`
+- PUT `/api/admin/users/:id`
+  - 路径参数：`id`
+  - 请求体：`email?`, `username?`, `money?`, `class?`, `class_expire_time?`, `transfer_enable?`, `expire_time?`, `speed_limit?`, `device_limit?`, `tcp_limit?`, `is_admin?`, `status?`, `bark_key?`, `bark_enabled?`, `password?`, `invite_code?`, `invite_limit?`
+  - 返回参数（data）：更新后的用户记录
+- POST `/api/admin/users/:id/status`
+  - 返回参数（data）：`message`, `status`
+- POST `/api/admin/users/:id/traffic`
+  - 返回参数（data）：`message`
+- DELETE `/api/admin/users/:id`
+  - 返回参数（data）：`message`
+
+### 节点管理
+- GET `/api/admin/nodes`
+  - 请求参数：`page?`, `limit?`, `keyword?`, `status?`
+  - 返回参数（data）：`data[]`, `total`, `page`, `limit`
+- GET `/api/admin/node-stats`
+  - 返回参数（data）：`total`, `online`, `offline`, `available`, `totalBandwidth`, `usedBandwidth`
+- GET `/api/admin/node-status`
+  - 请求参数：`page?`, `limit?`, `keyword?`, `status?`, `online?`
+  - 返回参数（data）：`nodes[]`, `statistics`, `pagination`
+- GET `/api/admin/nodes/export`
+  - 返回参数：CSV 文件
+- POST `/api/admin/nodes`
+  - 请求体：`name`, `type`, `node_class?`, `node_bandwidth_limit?`, `traffic_multiplier?`, `bandwidthlimit_resetday?`, `node_config?`, `status?`
+  - 返回参数（data）：`node_id`, `message`
+- PUT `/api/admin/nodes/:id`
+  - 路径参数：`id`
+  - 请求体：`name?`, `type?`, `node_class?`, `node_bandwidth_limit?`, `traffic_multiplier?`, `bandwidthlimit_resetday?`, `node_config?`, `status?`
+  - 返回参数（data）：更新后的节点记录（含 `server`, `server_port`, `tls_host`）
+- POST `/api/admin/nodes/:id/traffic`
+  - 返回参数（data）：`message`
+- DELETE `/api/admin/nodes/:id`
+  - 返回参数（data）：`message`
+- POST `/api/admin/nodes/batch`
+  - 请求体：`action`（enable/disable/delete）, `node_ids[]`
+  - 返回参数（data）：`message`, `affected_count`, `processed_ids`
+
+### 系统统计与任务
+- GET `/api/admin/statistics`
+  - 返回参数（data）：`total_users`, `active_users`, `admin_users`, `total_nodes`, `active_nodes`, `total_traffic`, `expired_users`, `exhausted_users`, `expired_level_users`
+- GET `/api/admin/statistics/export`
+  - 返回参数：JSON 文件（系统统计导出）
+- GET `/api/admin/system-health`
+  - 返回参数（data）：`status`, `timestamp`, `database{connected}`, `memory_usage`, `cpu_usage`, `uptime`, `last_restart`
+- GET `/api/admin/system-stats`
+  - 返回参数（data）：`users`, `nodes`, `traffic`
+- POST `/api/admin/trigger-traffic-reset`
+  - 返回参数（data）：调度执行结果对象
+- GET `/api/admin/scheduler-status`
+  - 返回参数（data）：调度执行结果对象
+- POST `/api/admin/trigger-node-status-cleanup`
+  - 返回参数（data）：调度执行结果对象
+- POST `/api/admin/trigger-node-traffic-reset`
+  - 返回参数（data）：调度执行结果对象
+- POST `/api/admin/generate-traffic-test-data`
+  - 请求体：`user_id?`, `days?`
+  - 返回参数（data）：生成结果统计
+- POST `/api/admin/reset-daily-traffic`
+  - 返回参数（data）：`message`, `count`, `stats`
+- POST `/api/admin/reset-all-passwords`
+  - 返回参数（data）：`message`, `count`
+- POST `/api/admin/reset-all-subscriptions`
+  - 返回参数（data）：`message`, `count`
+
+### 日志与在线IP
+- GET `/api/admin/login-logs`
+  - 请求参数：`page?`, `limit?`, `status?`, `user_id?`/`user_search?`, `ip?`/`ip_search?`, `start_date?`, `end_date?`
+  - 返回参数（data）：`data[]`, `total`, `pagination`
+- DELETE `/api/admin/login-logs/:id`
+  - 返回参数（data）：`message`
+- POST `/api/admin/login-logs/batch-delete`
+  - 请求体：`ids[]`
+  - 返回参数（data）：`message`, `deleted_count`
+- POST `/api/admin/login-logs/export-csv`
+  - 请求体：`ids?[]`
+  - 返回参数：CSV 文件
+- GET `/api/admin/subscription-logs`
+  - 请求参数：`page?`, `limit?`, `type?`, `user_id?`/`user_search?`, `ip?`/`ip_search?`, `start_date?`, `end_date?`
+  - 返回参数（data）：`data[]`, `total`, `pagination`
+- DELETE `/api/admin/subscription-logs/:id`
+  - 返回参数（data）：`message`
+- POST `/api/admin/subscription-logs/batch-delete`
+  - 请求体：`ids[]`
+  - 返回参数（data）：`message`, `deleted_count`
+- POST `/api/admin/subscription-logs/export-csv`
+  - 请求体：`ids?[]`
+  - 返回参数：CSV 文件
+- GET `/api/admin/audit-logs`
+  - 请求参数：`page?`, `limit?`, `user_id?`/`user_search?`, `start_date?`, `end_date?`
+  - 返回参数（data）：`data[]`, `total`, `pagination`
+- DELETE `/api/admin/audit-logs/:id`
+  - 返回参数（data）：`message`
+- POST `/api/admin/audit-logs/batch-delete`
+  - 请求体：`ids[]`
+  - 返回参数（data）：`message`, `deleted_count`
+- GET `/api/admin/online-ips`
+  - 请求参数：`page?`, `limit?`, `node_id?`, `user_email?`/`user_search?`, `node_search?`/`node_name?`, `ip?`/`ip_search?`, `sort_by?`
+  - 返回参数（data）：`data[]`, `total`, `pagination`
+- DELETE `/api/admin/online-ips/:id`
+  - 返回参数（data）：`message`
+- POST `/api/admin/online-ips/batch-delete`
+  - 请求体：`ids[]`
+  - 返回参数（data）：`message`, `deleted_count`
+- POST `/api/admin/online-ips/export-csv`
+  - 请求体：`ids?[]`
+  - 返回参数：CSV 文件
+- POST `/api/admin/kick-ip`
+  - 请求体：`ip_id`
+  - 返回参数（data）：`message`
+- POST `/api/admin/block-ip`
+  - 请求体：`ip_address`
+  - 返回参数（data）：`message`
+
+### 审计规则与白名单
+- GET `/api/admin/audit-rules`
+  - 请求参数：`page?`, `limit?`, `search?`
+  - 返回参数（data）：`data[]`, `total`, `pagination`
+- POST `/api/admin/audit-rules`
+  - 请求体：`name`, `description?`, `rule`, `enabled?`
+  - 返回参数（data）：规则记录
+- PUT `/api/admin/audit-rules/:id`
+  - 请求体：`name`, `description?`, `rule`, `enabled?`
+  - 返回参数（data）：规则记录
+- DELETE `/api/admin/audit-rules/:id`
+  - 返回参数（data）：`message`
+- GET `/api/admin/whitelist`
+  - 请求参数：`page?`, `limit?`, `search?`, `status?`
+  - 返回参数（data）：`data[]`, `total`, `pagination`
+- POST `/api/admin/whitelist`
+  - 请求体：`rule`, `description?`, `status?`
+  - 返回参数（data）：规则记录
+- PUT `/api/admin/whitelist/:id`
+  - 请求体：`rule`, `description?`, `status?`
+  - 返回参数（data）：规则记录
+- DELETE `/api/admin/whitelist/:id`
+  - 返回参数（data）：`message`
+- POST `/api/admin/whitelist/batch`
+  - 请求体：`action`（enable/disable/delete）, `ids[]`
+  - 返回参数（data）：`message`, `affected_count`
+
+### 缓存与配置
+- GET `/api/admin/cache-status`
+  - 返回参数（data）：`cache_status`, `timestamp`
+- POST `/api/admin/clear-cache/all`
+  - 返回参数（data）：`message`, `cleared_count`, `cleared_at`, `note`
+- POST `/api/admin/clear-cache/nodes`
+  - 返回参数（data）：`message`, `cleared_types`, `cleared_count`, `cleared_at`, `note`
+- POST `/api/admin/clear-cache/audit-rules`
+  - 返回参数（data）：`message`, `cleared_at`
+- POST `/api/admin/clear-cache/whitelist`
+  - 返回参数（data）：`message`, `cleared_at`
+- GET `/api/admin/system-configs`
+  - 返回参数（data）：`[{ id,key,value,description }]`
+- PUT `/api/admin/system-configs`
+  - 请求体：`key`, `value`
+  - 返回参数（data）：`message`, `key`, `value`
+- PUT `/api/admin/system-configs/batch`
+  - 请求体：`configs[]`
+  - 返回参数（data）：`message`, `summary`, `details`
+- POST `/api/admin/system-configs`
+  - 请求体：`key`, `value`, `description?`
+  - 返回参数（data）：`message`, `key`, `value`, `description`
+
+### 返利与邀请码
+- GET `/api/admin/rebate/withdrawals`
+  - 请求参数：`page?`, `limit?`, `status?`
+  - 返回参数（data）：`records[]`, `pagination`
+- POST `/api/admin/rebate/withdrawals/review`
+  - 请求体：`id`, `status`（approved/rejected/paid）, `note?`
+  - 返回参数（data）：`message`, `record`
+- POST `/api/admin/invite-codes/reset`
+  - 返回参数（data）：`message`, `count`
+
+### 共享ID（苹果账号）
+- GET `/api/admin/shared-ids`
+  - 请求参数：`page?`, `limit?`, `keyword?`, `status?`
+  - 返回参数（data）：`records[]`（`id`,`name`,`fetch_url`,`remote_account_id`,`status`,`created_at`,`updated_at`）, `pagination`
+- POST `/api/admin/shared-ids`
+  - 请求体：`name`, `fetch_url`, `remote_account_id`, `status?`
+  - 返回参数（data）：`message`, `record`
+- PUT `/api/admin/shared-ids/:id`
+  - 请求体：`name?`, `fetch_url?`, `remote_account_id?`, `status?`
+  - 返回参数（data）：`message`, `record`
+- DELETE `/api/admin/shared-ids/:id`
+  - 返回参数（data）：`message`, `id`
+
+### 套餐/优惠券/礼品卡
+- GET `/api/admin/packages`
+  - 请求参数：`page?`, `limit?`, `status?`, `level?`
+  - 返回参数（data）：`packages[]`, `pagination`
+- POST `/api/admin/packages`
+  - 请求体：`name`, `price`, `traffic_quota`, `validity_days`, `speed_limit?`, `device_limit?`, `level?`, `status?`, `is_recommended?`, `sort_weight?`
+  - 返回参数（data）：套餐记录
+- PUT `/api/admin/packages/:id`
+  - 请求体：同创建字段（可选）
+  - 返回参数（data）：`message`, `id`
+- DELETE `/api/admin/packages/:id`
+  - 返回参数（data）：`message`, `id`
+- GET `/api/admin/coupons`
+  - 请求参数：`page?`, `limit?`, `status?`, `keyword?`/`search?`
+  - 返回参数（data）：`coupons[]`, `pagination`
+- POST `/api/admin/coupons`
+  - 请求体：`name`, `code?`, `discount_type`, `discount_value`, `start_at`, `end_at`, `max_usage?`, `per_user_limit?`, `status?`, `description?`, `package_ids?[]`
+  - 返回参数（data）：优惠券记录
+- GET `/api/admin/coupons/:id`
+  - 返回参数（data）：优惠券详情（含 `package_ids`）
+- PUT `/api/admin/coupons/:id`
+  - 请求体：同创建字段（可选）
+  - 返回参数（data）：`id`, `message`
+- DELETE `/api/admin/coupons/:id`
+  - 返回参数（data）：`id`, `message`
+- GET `/api/admin/gift-cards`
+  - 请求参数：`page?`, `limit?`, `status?`, `card_type?`, `keyword?`
+  - 返回参数（data）：`records[]`, `pagination`
+- POST `/api/admin/gift-cards`
+  - 请求体：礼品卡批量创建参数（`name`, `card_type`, `balance_amount?`, `duration_days?`, `traffic_value_gb?`, `package_id?`, `start_at?`, `end_at?`, `max_usage?`, `per_user_limit?`, `quantity?`, `code?`, `code_prefix?`, `description?`）
+  - 返回参数（data）：`batch_id`, `cards[]`
+- PUT `/api/admin/gift-cards/:id`
+  - 请求体：可更新字段（`max_usage?`, `per_user_limit?`, `start_at?`, `end_at?`, `description?` 等）
+  - 返回参数（data）：`id`, `message`
+- POST `/api/admin/gift-cards/:id/status`
+  - 请求体：`status`（0/1/2）
+  - 返回参数（data）：`id`, `status`
+- DELETE `/api/admin/gift-cards/:id`
+  - 返回参数（data）：`id`, `message`
+- GET `/api/admin/gift-cards/:id/redemptions`
+  - 请求参数：`page?`, `limit?`
+  - 返回参数（data）：`records[]`, `pagination`
+
+### 订单与统计
+- GET `/api/admin/package-stats`
+  - 返回参数（data）：`package_stats`, `sales_stats`, `recharge_stats`, `popular_packages`
+- GET `/api/admin/recharge-records`
+  - 请求参数：`page?`, `limit?`, `status?`, `user_id?`
+  - 返回参数（data）：`records[]`, `pagination`
+- GET `/api/admin/purchase-records`
+  - 请求参数：`page?`, `limit?`, `status?`, `user_id?`, `package_id?`
+  - 返回参数（data）：`records[]`, `pagination`
+- POST `/api/admin/recharge-records/:trade_no/mark-paid`
+  - 返回参数（data）：`trade_no`, `already_paid?`
+- POST `/api/admin/purchase-records/:trade_no/mark-paid`
+  - 返回参数（data）：`trade_no`, `already_paid?`
+- DELETE `/api/admin/pending-records`
+  - 返回参数（data）：`message`, `recharge_deleted`, `purchase_deleted`, `total_deleted`

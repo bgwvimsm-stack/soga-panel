@@ -1,0 +1,636 @@
+# 前端 API 清单
+
+## 通用约定
+- Base URL: `VITE_BACKEND_URL` 或 `VITE_API_BASE_URL`，默认 `/api`。
+- 请求头:
+  - `Authorization: Bearer <token>` (来自本地登录态)
+  - `X-API-Secret` (可选, 外部后端访问时启用)
+- 标准响应: `ApiResponse<T>`
+  - `code`: number
+  - `data`: T
+  - `message`: string
+- 说明:
+  - `path` 表示路径参数
+  - `query` 表示 URL 查询参数
+  - `body` 表示 JSON 请求体
+  - CSV 导出接口返回纯文本, 不经过 `ApiResponse` 包装
+
+## 健康与站点
+- `GET /health`
+  - 请求: 无
+  - 返回: `ApiResponse<{ version?: string; build_time?: string }>`
+- `GET /site/settings`
+  - 请求: 无
+  - 返回: `ApiResponse<SiteSettingsResponse>`
+
+## 认证 /auth
+- `POST /auth/login`
+  - body: `LoginRequest`
+  - 返回: `ApiResponse<LoginResponse>`
+- `POST /auth/google`
+  - body: `GoogleLoginRequest`
+  - 返回: `ApiResponse<LoginResponse>`
+- `POST /auth/github`
+  - body: `GithubLoginRequest`
+  - 返回: `ApiResponse<LoginResponse>`
+- `POST /auth/oauth/complete`
+  - body: `{ pendingToken: string; inviteCode?: string }`
+  - 返回: `ApiResponse<LoginResponse>`
+- `POST /auth/register`
+  - body: `RegisterRequest`
+  - 返回: `ApiResponse<LoginResponse>`
+- `POST /auth/send-email-code`
+  - body: `{ email: string }`
+  - 返回: `ApiResponse<SendEmailCodeResponse>`
+- `POST /auth/password-reset/request`
+  - body: `PasswordResetRequestPayload`
+  - 返回: `ApiResponse<SendEmailCodeResponse>`
+- `POST /auth/password-reset/confirm`
+  - body: `PasswordResetConfirmPayload`
+  - 返回: `ApiResponse<null>`
+- `GET /auth/register-config`
+  - 请求: 无
+  - 返回: `ApiResponse<{ registerEnabled: boolean; registerMode: string; inviteRequired: boolean; verificationEnabled: boolean; passwordResetEnabled: boolean; emailProviderEnabled: boolean }>`
+- `POST /auth/logout`
+  - 请求: 无
+  - 返回: `ApiResponse<null>`
+- `POST /auth/verify-2fa`
+  - body: `{ challenge_id: string; code: string; rememberDevice?: boolean; deviceName?: string }`
+  - 返回: `ApiResponse<LoginResponse>`
+- `POST /auth/passkey/login/options`
+  - body: `{ email: string; remember?: boolean }`
+  - 返回: `ApiResponse<any>`
+- `POST /auth/passkey/login/verify`
+  - body: `{ credential: any }`
+  - 返回: `ApiResponse<LoginResponse>`
+- `POST /auth/passkey/register/options`
+  - 请求: 无
+  - 返回: `ApiResponse<any>`
+- `POST /auth/passkey/register/verify`
+  - body: `{ credential: any; deviceName?: string }`
+  - 返回: `ApiResponse<any>`
+
+## 公告
+- `GET /announcements`
+  - query: `{ limit?: number; offset?: number }`
+  - 返回: `ApiResponse<Announcement[]>`
+- `GET /admin/announcements`
+  - query: `PaginationParams`
+  - 返回: `ApiResponse<PaginationResponse<AdminAnnouncement>>`
+  - 备注: `frontend/src/api/announcement.ts` 中同一路径返回 `ApiResponse<PaginationResponse<Announcement>>`
+- `POST /admin/announcements`
+  - body: `CreateAnnouncementRequest`
+  - 返回: `ApiResponse<AdminAnnouncement>`
+  - 备注: `frontend/src/api/announcement.ts` 中同一路径返回 `ApiResponse<{ id: number; message: string }>`
+- `PUT /admin/announcements/{id}`
+  - path: `{ id: number }`
+  - body: `CreateAnnouncementRequest`
+  - 返回: `ApiResponse<AdminAnnouncement>`
+  - 备注: `frontend/src/api/announcement.ts` 中同一路径返回 `ApiResponse<{ message: string }>`
+- `DELETE /admin/announcements/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+  - 备注: `frontend/src/api/announcement.ts` 中同一路径返回 `ApiResponse<{ message: string }>`
+
+## 用户 /user
+- `GET /user/profile`
+  - 请求: 无
+  - 返回: `ApiResponse<User>`
+- `PUT /user/profile`
+  - body: `{ username?: string; email?: string; telegram_id?: number }`
+  - 返回: `ApiResponse<any>`
+- `POST /user/change-password`
+  - body: `{ current_password: string; new_password: string }`
+  - 返回: `ApiResponse<null>`
+- `GET /user/nodes`
+  - query: `PaginationParams & { type?: string; status?: string | number }`
+  - 返回: `ApiResponse<NodesResponse>`
+- `GET /user/traffic-stats`
+  - query: `{ days?: number }`
+  - 返回: `ApiResponse<TrafficStats>`
+- `GET /user/traffic/trends`
+  - query: `{ period?: 'today' | '3days' | '7days' }`
+  - 返回: `ApiResponse<TrafficTrendItem[]>`
+- `GET /user/traffic/summary`
+  - 请求: 无
+  - 返回: `ApiResponse<TrafficSummary>`
+- `POST /user/reset-subscription-token`
+  - 请求: 无
+  - 返回: `ApiResponse<{ token: string }>`
+- `POST /user/traffic/manual-update`
+  - 请求: 无
+  - 返回: `ApiResponse<null>`
+- `GET /user/traffic-records`
+  - query: `PaginationParams & { start_date?: string; end_date?: string; start_time?: string; end_time?: string; node_id?: string }`
+  - 返回: `ApiResponse<PaginationResponse<TrafficRecord>>`
+- `GET /user/subscription-logs`
+  - query: `{ page?: number; limit?: number; type?: string }`
+  - 返回: `ApiResponse<PaginationResponse<any>>`
+- `GET /user/login-logs`
+  - query: `{ limit?: number }`
+  - 返回: `ApiResponse<{ data: Array<{ id: number; login_ip: string; login_time: string; user_agent?: string; login_status: number; failure_reason?: string }> }>`
+- `GET /user/referrals`
+  - query: `{ page?: number; limit?: number }`
+  - 返回: `ApiResponse<any>`
+- `GET /user/rebate/ledger`
+  - query: `{ page?: number; limit?: number; event_type?: string }`
+  - 返回: `ApiResponse<any>`
+- `POST /user/rebate/transfer`
+  - body: `{ amount: number }`
+  - 返回: `ApiResponse<{ money: number; rebateAvailable: number }>`
+- `POST /user/rebate/withdraw`
+  - body: `{ amount: number; method?: string; accountPayload?: Record<string, unknown> }`
+  - 返回: `ApiResponse<{ id: number }>`
+- `GET /user/rebate/withdrawals`
+  - query: `{ page?: number; limit?: number }`
+  - 返回: `ApiResponse<any>`
+- `GET /user/wallet`
+  - 请求: 无
+  - 返回: `ApiResponse<{ balance: number; total_recharge: number; total_consume: number }>`
+- `GET /user/recharge-records`
+  - query: `{ page?: number; limit?: number; status?: number | string }`
+  - 返回: `ApiResponse<{ records: Array<{ id: number; trade_no: string; amount: number; status: number; pay_url?: string; created_at: string }>; pagination: { total: number; page: number; limit: number } }>`
+- `GET /user/shared-ids`
+  - 请求: 无
+  - 返回: `ApiResponse<{ items: SharedIdItem[] }>`
+- `POST /user/recharge`
+  - body: `{ amount: number; paymentMethod: string }`
+  - 返回: `ApiResponse<{ trade_no: string; pay_url: string }>`
+- `GET /user/bark-settings`
+  - 请求: 无
+  - 返回: `ApiResponse<{ bark_key: string; bark_enabled: boolean }>`
+- `PUT /user/bark-settings`
+  - body: `{ bark_key: string; bark_enabled: boolean }`
+  - 返回: `ApiResponse<{ message: string }>`
+- `POST /user/bark-test`
+  - body: `{ bark_key?: string }`
+  - 返回: `ApiResponse<{ message: string; success: boolean }>`
+- `POST /user/two-factor/setup`
+  - 请求: 无
+  - 返回: `ApiResponse<{ secret: string; otp_auth_url: string; provisioning_uri: string }>`
+- `POST /user/two-factor/enable`
+  - body: `{ code: string }`
+  - 返回: `ApiResponse<{ message: string; backup_codes: string[] }>`
+- `POST /user/two-factor/backup-codes`
+  - body: `{ code: string }`
+  - 返回: `ApiResponse<{ message: string; backup_codes: string[] }>`
+- `POST /user/two-factor/disable`
+  - body: `{ password: string; code: string }`
+  - 返回: `ApiResponse<{ message: string }>`
+- `GET /user/passkeys`
+  - 请求: 无
+  - 返回: `ApiResponse<{ items: any[] }>`
+- `DELETE /user/passkeys/{credentialId}`
+  - path: `{ credentialId: string }`
+  - 返回: `ApiResponse<{ removed: string }>`
+- `GET /user/online-devices`
+  - 请求: 无
+  - 返回: `ApiResponse<{ count: number }>`
+- `GET /user/online-ips-detail`
+  - 请求: 无
+  - 返回: `ApiResponse<{ data: Array<{ ip: string; node_id: number; node_name?: string; last_seen: string }> }>`
+
+## 工单 /tickets
+- `GET /user/tickets`
+  - query: `TicketQueryParams`
+  - 返回: `ApiResponse<TicketListResult>`
+- `POST /user/tickets`
+  - body: `TicketCreatePayload`
+  - 返回: `ApiResponse<any>`
+- `GET /user/tickets/{ticketId}`
+  - path: `{ ticketId: number }`
+  - 返回: `ApiResponse<TicketDetailResult>`
+- `POST /user/tickets/{ticketId}/replies`
+  - path: `{ ticketId: number }`
+  - body: `{ content: string }`
+  - 返回: `ApiResponse<any>`
+- `POST /user/tickets/{ticketId}/close`
+  - path: `{ ticketId: number }`
+  - 返回: `ApiResponse<any>`
+- `GET /user/tickets/unread-count`
+  - 请求: 无
+  - 返回: `ApiResponse<{ count: number }>`
+- `GET /admin/tickets`
+  - query: `TicketQueryParams`
+  - 返回: `ApiResponse<TicketListResult>`
+- `GET /admin/tickets/{ticketId}`
+  - path: `{ ticketId: number }`
+  - 返回: `ApiResponse<TicketDetailResult>`
+- `POST /admin/tickets/{ticketId}/replies`
+  - path: `{ ticketId: number }`
+  - body: `TicketReplyPayload`
+  - 返回: `ApiResponse<any>`
+- `POST /admin/tickets/{ticketId}/status`
+  - path: `{ ticketId: number }`
+  - body: `TicketStatusPayload`
+  - 返回: `ApiResponse<any>`
+- `GET /admin/tickets/pending-count`
+  - 请求: 无
+  - 返回: `ApiResponse<{ count: number }>`
+
+## 审计
+- `GET /user/audit-rules`
+  - query: `PaginationParams & { action?: string; search?: string }`
+  - 返回: `ApiResponse<{ rules: AuditRule[]; pagination: { page: number; limit: number; total: number }; statistics: { enabledRules: number; blockRules: number; warnRules: number } }>`
+- `GET /user/audit-logs`
+  - query: `PaginationParams & { action?: string; date_start?: string; date_end?: string; search?: string }`
+  - 返回: `ApiResponse<{ logs: AuditLog[]; pagination: { page: number; limit: number; total: number }; statistics: { totalLogs: number; blockedLogs: number; warnedLogs: number; todayLogs: number } }>`
+- `GET /user/audit-overview`
+  - 请求: 无
+  - 返回: `ApiResponse<{ rules: { totalRules: number; enabledRules: number; blockRules: number; warnRules: number }; logs: { totalLogs: number; blockedLogs: number; warnedLogs: number; todayLogs: number; weekLogs: number; monthLogs: number }; recentLogs: Array<{ timestamp: string; action: string; target_url: string; rule_name: string; node_name?: string }> }>`
+- `GET /admin/audit-rules`
+  - query: `PaginationParams & { enabled?: number; search?: string }`
+  - 返回: `ApiResponse<PaginationResponse<AdminAuditRule>>`
+- `POST /admin/audit-rules`
+  - body: `CreateAuditRuleRequest`
+  - 返回: `ApiResponse<AdminAuditRule>`
+- `PUT /admin/audit-rules/{id}`
+  - path: `{ id: number }`
+  - body: `Partial<CreateAuditRuleRequest>`
+  - 返回: `ApiResponse<AdminAuditRule>`
+- `DELETE /admin/audit-rules/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/audit-rules/{id}/test`
+  - path: `{ id: number }`
+  - body: `{ content: string }`
+  - 返回: `ApiResponse<{ matched: boolean; rule_name: string; matched_content?: string }>`
+- `GET /admin/audit-logs`
+  - query: `PaginationParams & { action?: string; rule_id?: string; user_email?: string; target_ip?: string }`
+  - 返回: `ApiResponse<PaginationResponse<AdminAuditLog>>`
+- `DELETE /admin/audit-logs/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/audit-logs/batch-delete`
+  - body: `{ ids: number[] }`
+  - 返回: `ApiResponse<null>`
+
+## 钱包 /wallet
+- `GET /wallet/stats`
+  - 请求: 无
+  - 返回: `ApiResponse<{ current_balance: number; total_recharged: number; total_spent: number; pending_recharge: number }>`
+- `GET /wallet/money`
+  - 请求: 无
+  - 返回: `ApiResponse<{ money: number | string }>`
+- `GET /wallet/recharge-records`
+  - query: `{ page?: number; limit?: number }`
+  - 返回: `ApiResponse<{ records: Array<{ id: number; trade_no: string; amount: number; payment_method: string; status: number; created_at: string; paid_at?: string }>; pagination: { total: number; page: number; limit: number } }>`
+- `POST /wallet/recharge`
+  - body: `{ amount: number; payment_method: string; return_url?: string }`
+  - 返回: `ApiResponse<{ payment_form?: string; payment_url?: string; pay_url?: string }>`
+- `POST /wallet/gift-card/redeem`
+  - body: `{ code: string }`
+  - 返回: `ApiResponse<{ code: string; card_type: string; message?: string }>`
+
+## 支付 /payment
+- `GET /payment/config`
+  - 请求: 无
+  - 返回: `ApiResponse<{ payment_methods: Array<{ value: string; label: string }> }>`
+
+## 套餐 /packages
+- `GET /packages`
+  - query: `{ page?: number; limit?: number; sort?: string; order?: string }`
+  - 返回: `ApiResponse<{ packages: Array<{ id: number; name: string; price: number; level: number; traffic_quota_gb: number; validity_days: number; speed_limit_text: string; device_limit_text: string; is_recommended: boolean }>; pagination: { total: number; totalPages: number } }>`
+- `POST /packages/coupon/preview`
+  - body: `{ package_id: number; coupon_code: string }`
+  - 返回: `ApiResponse<{ final_price?: number; discount_amount?: number; [key: string]: any }>`
+- `POST /packages/purchase`
+  - body: `{ package_id: number; coupon_code?: string; purchase_type: 'balance' | 'direct'; payment_method?: string; return_url?: string }`
+  - 返回: `ApiResponse<{ status: number; purchase_type?: string; payment_amount?: number; payment_url?: string }>`
+- `GET /packages/purchase-records`
+  - query: `{ page?: number; limit?: number }`
+  - 返回: `ApiResponse<{ records: Array<{ package_name?: string; price?: number; discount_amount?: number; coupon_code?: string; trade_no?: string; purchase_type?: string; status?: number; created_at?: string; paid_at?: string; package_price?: number; final_price?: number }>; pagination: { total: number; page: number; limit: number } }>`
+
+## 管理后台 /admin
+### 用户
+- `GET /admin/users`
+  - query: `PaginationParams & { status?: number; class?: number; search?: string }`
+  - 返回: `ApiResponse<UserListResponse>`
+- `POST /admin/users`
+  - body: `CreateUserRequest`
+  - 返回: `ApiResponse<AdminUser>`
+- `PUT /admin/users/{id}`
+  - path: `{ id: number }`
+  - body: `UpdateUserRequest`
+  - 返回: `ApiResponse<AdminUser>`
+- `DELETE /admin/users/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/users/{id}/status`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/users/{id}/traffic`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+- `GET /admin/users/export`
+  - query: `{ ids?: number[] }`
+  - 返回: `text/csv`
+
+### 优惠券
+- `GET /admin/coupons`
+  - query: `{ page?: number; limit?: number; status?: number | string; keyword?: string }`
+  - 返回: `ApiResponse<{ coupons: Coupon[]; pagination: PaginationParams & { total: number; totalPages: number } }>`
+- `GET /admin/coupons/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<Coupon & { package_ids: number[] }>`
+- `POST /admin/coupons`
+  - body: `CouponPayload`
+  - 返回: `ApiResponse<Coupon>`
+- `PUT /admin/coupons/{id}`
+  - path: `{ id: number }`
+  - body: `Partial<CouponPayload>`
+  - 返回: `ApiResponse<{ id: number }>`
+- `DELETE /admin/coupons/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<{ id: number }>`
+
+### 礼品卡
+- `GET /admin/gift-cards`
+  - query: `{ page?: number; limit?: number; status?: number | string; card_type?: string; keyword?: string }`
+  - 返回: `ApiResponse<{ records: GiftCard[]; pagination: { total: number; page: number; limit: number; totalPages: number } }>`
+- `POST /admin/gift-cards`
+  - body: `GiftCardPayload`
+  - 返回: `ApiResponse<{ batch_id: number; cards: GiftCard[] }>`
+- `PUT /admin/gift-cards/{id}`
+  - path: `{ id: number }`
+  - body: `Partial<GiftCardPayload>`
+  - 返回: `ApiResponse<{ id: number }>`
+- `POST /admin/gift-cards/{id}/status`
+  - path: `{ id: number }`
+  - body: `{ status: number }`
+  - 返回: `ApiResponse<{ id: number; status: number }>`
+- `DELETE /admin/gift-cards/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<{ id: number }>`
+- `GET /admin/gift-cards/{id}/redemptions`
+  - path: `{ id: number }`
+  - query: `{ page?: number; limit?: number }`
+  - 返回: `ApiResponse<{ records: GiftCardRedemption[]; pagination: { total: number; page: number; limit: number; totalPages: number } }>`
+
+### 节点
+- `GET /admin/nodes`
+  - query: `PaginationParams`
+  - 返回: `ApiResponse<PaginationResponse<AdminNode>>`
+- `GET /admin/node-status`
+  - query: `PaginationParams & { keyword?: string; status?: string | number; online?: string | number }`
+  - 返回: `ApiResponse<NodeStatusResponse>`
+- `POST /admin/nodes`
+  - body: `CreateNodeRequest`
+  - 返回: `ApiResponse<AdminNode>`
+- `PUT /admin/nodes/{id}`
+  - path: `{ id: number }`
+  - body: `Partial<CreateNodeRequest>`
+  - 返回: `ApiResponse<AdminNode>`
+- `DELETE /admin/nodes/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/nodes/batch`
+  - body: `{ action: 'enable' | 'disable' | 'delete'; node_ids: number[] }`
+  - 返回: `ApiResponse<{ message: string; affected_count: number; processed_ids: number[] }>`
+
+### 共享账号
+- `GET /admin/shared-ids`
+  - query: `{ page?: number; limit?: number; keyword?: string; status?: string | number }`
+  - 返回: `ApiResponse<{ records: SharedIdConfig[]; pagination: { total: number; page: number; limit: number; totalPages: number } }>`
+- `POST /admin/shared-ids`
+  - body: `{ name: string; fetch_url: string; remote_account_id: number; status?: number }`
+  - 返回: `ApiResponse<{ record: SharedIdConfig }>`
+- `PUT /admin/shared-ids/{id}`
+  - path: `{ id: number }`
+  - body: `{ name?: string; fetch_url?: string; remote_account_id?: number; status?: number }`
+  - 返回: `ApiResponse<{ record: SharedIdConfig }>`
+- `DELETE /admin/shared-ids/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<{ id: number }>`
+
+### 系统统计与配置
+- `GET /admin/system-stats`
+  - 请求: 无
+  - 返回: `ApiResponse<SystemStats>`
+- `GET /admin/system-configs`
+  - 请求: 无
+  - 返回: `ApiResponse<SystemConfig[]>`
+- `PUT /admin/system-configs`
+  - body: `SystemConfigUpdate`
+  - 返回: `ApiResponse<null>`
+- `PUT /admin/system-configs/batch`
+  - body: `SystemConfigBatchUpdate`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/system-configs`
+  - body: `SystemConfig`
+  - 返回: `ApiResponse<null>`
+- `DELETE /admin/system-configs/{key}`
+  - path: `{ key: string }`
+  - 返回: `ApiResponse<null>`
+
+### 登录与订阅日志
+- `GET /admin/login-logs`
+  - query: `PaginationParams & { user_id?: number; status?: number; ip?: string }`
+  - 返回: `ApiResponse<PaginationResponse<LoginLog>>`
+- `DELETE /admin/login-logs/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/login-logs/batch-delete`
+  - body: `{ ids: number[] }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/login-logs/export-csv`
+  - body: `{ ids?: number[] }`
+  - 返回: `text/csv`
+- `GET /admin/subscription-logs`
+  - query: `PaginationParams & { user_id?: number; type?: string }`
+  - 返回: `ApiResponse<PaginationResponse<SubscriptionLog>>`
+- `DELETE /admin/subscription-logs/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/subscription-logs/batch-delete`
+  - body: `{ ids: number[] }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/subscription-logs/export-csv`
+  - body: `{ ids?: number[] }`
+  - 返回: `text/csv`
+
+### 在线 IP
+- `GET /admin/online-ips`
+  - query: `PaginationParams & { node_id?: number; user_email?: string; ip?: string; sort_by?: string }`
+  - 返回: `ApiResponse<PaginationResponse<OnlineIP>>`
+- `POST /admin/online-ips/{id}/kick`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+- `DELETE /admin/online-ips/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/online-ips/batch-delete`
+  - body: `{ ids: number[] }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/online-ips/export-csv`
+  - body: `{ ids?: number[] }`
+  - 返回: `text/csv`
+- `POST /admin/block-ip`
+  - body: `{ ip: string }`
+  - 返回: `ApiResponse<null>`
+
+### 白名单
+- `GET /admin/whitelist`
+  - query: `PaginationParams & { status?: number; search?: string }`
+  - 返回: `ApiResponse<PaginationResponse<WhitelistRule>>`
+- `POST /admin/whitelist`
+  - body: `CreateWhitelistRuleRequest`
+  - 返回: `ApiResponse<WhitelistRule>`
+- `PUT /admin/whitelist/{id}`
+  - path: `{ id: number }`
+  - body: `Partial<CreateWhitelistRuleRequest>`
+  - 返回: `ApiResponse<WhitelistRule>`
+- `DELETE /admin/whitelist/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<null>`
+- `POST /admin/whitelist/batch`
+  - body: `{ action: 'enable' | 'disable' | 'delete'; ids: number[] }`
+  - 返回: `ApiResponse<{ message: string; affected_count: number }>`
+
+### 缓存与运维操作
+- `GET /admin/cache-status`
+  - 请求: 无
+  - 返回: `ApiResponse<{ cache_status: CacheStatus; timestamp: string }>`
+- `POST /admin/clear-cache/all`
+  - 请求: 无
+  - 返回: `ApiResponse<ClearCacheResponse>`
+- `POST /admin/clear-cache/nodes`
+  - 请求: 无
+  - 返回: `ApiResponse<ClearCacheResponse>`
+- `POST /admin/clear-cache/audit-rules`
+  - 请求: 无
+  - 返回: `ApiResponse<ClearCacheResponse>`
+- `POST /admin/clear-cache/whitelist`
+  - 请求: 无
+  - 返回: `ApiResponse<ClearCacheResponse>`
+- `POST /admin/reset-daily-traffic`
+  - 请求: 无
+  - 返回: `ApiResponse<{ message: string; count: number }>`
+- `POST /admin/reset-all-passwords`
+  - 请求: 无
+  - 返回: `ApiResponse<{ message: string; count: number }>`
+- `POST /admin/reset-all-subscriptions`
+  - 请求: 无
+  - 返回: `ApiResponse<{ message: string; count: number }>`
+- `POST /admin/trigger-traffic-reset`
+  - 请求: 无
+  - 返回: `ApiResponse<{ message: string; success: boolean; processed_users?: number; reset_count?: number }>`
+- `POST /admin/invite-codes/reset`
+  - 请求: 无
+  - 返回: `ApiResponse<{ count: number; message?: string }>`
+
+### 提现
+- `GET /admin/rebate/withdrawals`
+  - query: `{ page?: number; limit?: number; status?: string }`
+  - 返回: `ApiResponse<any>`
+- `POST /admin/rebate/withdrawals/review`
+  - body: `{ id: number; status: 'approved' | 'rejected' | 'paid'; note?: string }`
+  - 返回: `ApiResponse<any>`
+
+### 套餐与订单管理 (视图直连)
+- `GET /admin/package-stats`
+  - 请求: 无
+  - 返回: `ApiResponse<{ package_stats?: { total?: number; active?: number }; sales_stats?: { completed_purchases?: number; total_revenue?: number } }>`
+- `GET /admin/packages`
+  - query: `{ page?: number; limit?: number; status?: number | string; level?: number }`
+  - 返回: `ApiResponse<{ packages?: any[]; records?: any[]; pagination: { total: number; page?: number; limit?: number } }>`
+- `POST /admin/packages`
+  - body: `{ name: string; price: number; traffic_quota: number; validity_days: number; speed_limit: number; device_limit: number; level: number; sort_weight: number; is_recommended: number; status: number }`
+  - 返回: `ApiResponse<any>`
+- `PUT /admin/packages/{id}`
+  - path: `{ id: number }`
+  - body: 同上, 或仅 `{ status: number }`
+  - 返回: `ApiResponse<any>`
+- `DELETE /admin/packages/{id}`
+  - path: `{ id: number }`
+  - 返回: `ApiResponse<any>`
+- `GET /admin/purchase-records`
+  - query: `{ page?: number; limit?: number; status?: number | string; user_id?: string; package_id?: string }`
+  - 返回: `ApiResponse<{ records: Array<{ id: number; user_id: number; email?: string; package_id: number; package_name: string; price: number; discount_amount?: number; coupon_code?: string; traffic_quota?: number; validity_days?: number; purchase_type?: string; trade_no?: string; status?: number; status_text?: string; created_at?: string; paid_at?: string; expires_at?: string }>; pagination: { total: number; page: number; limit: number } }>`
+- `POST /admin/purchase-records/{trade_no}/mark-paid`
+  - path: `{ trade_no: string }`
+  - 返回: `ApiResponse<{ message?: string }>`
+- `GET /admin/recharge-records`
+  - query: `{ page?: number; limit?: number; status?: number | string; user_id?: string }`
+  - 返回: `ApiResponse<{ records: Array<{ id: number; user_id: number; email?: string; amount: number; payment_method: string; trade_no: string; status: number; created_at: string; paid_at?: string }>; pagination: { total: number; page: number; limit: number } }>`
+- `POST /admin/recharge-records/{trade_no}/mark-paid`
+  - path: `{ trade_no: string }`
+  - 返回: `ApiResponse<{ message?: string }>`
+- `DELETE /admin/pending-records`
+  - 请求: 无
+  - 返回: `ApiResponse<{ message?: string }>`
+
+## 第三方接口
+- `GET https://api.ip.sb/geoip/{ip}`
+  - path: `{ ip: string }`
+  - 返回: `{ ip?: string; country?: string; region?: string; city?: string }`
+
+## 类型速查 (摘自前端类型定义)
+- 说明: 为区分用户端/管理端同名类型, 文档中以 `Admin*` 作为别名, 对应 `frontend/src/api/admin.ts` 的同名类型定义。
+- `SiteSettingsResponse`: `{ siteName: string; siteUrl?: string; docsUrl?: string }`
+- `ApiResponse<T>`: `{ code: number; data: T; message: string }`
+- `LoginRequest`: `{ email: string; password: string; remember?: boolean; twoFactorTrustToken?: string; turnstileToken?: string }`
+- `LoginResponse`: `{ token?: string; user?: User; isNewUser?: boolean; tempPassword?: string | null; passwordEmailSent?: boolean; remember?: boolean; need2FA?: boolean; need_2fa?: boolean; challengeId?: string; challenge_id?: string; two_factor_enabled?: boolean; trust_token?: string; trust_token_expires_at?: string; provider?: string; needTermsAgreement?: boolean; need_terms_agreement?: boolean; pendingTermsToken?: string; pending_terms_token?: string }`
+- `RegisterRequest`: `{ email: string; username: string; password: string; verificationCode: string; inviteCode?: string }`
+- `PasswordResetRequestPayload`: `{ email: string }`
+- `PasswordResetConfirmPayload`: `{ email: string; verificationCode: string; newPassword: string; confirmPassword?: string }`
+- `GoogleLoginRequest`: `{ idToken: string; remember?: boolean; twoFactorTrustToken?: string }`
+- `GithubLoginRequest`: `{ code: string; redirectUri?: string; state?: string; remember?: boolean; twoFactorTrustToken?: string }`
+- `SendEmailCodeResponse`: `{ message: string; cooldown: number; expire_minutes: number }`
+- `User`: `{ id: number; email: string; username: string; uuid: string; passwd: string; token: string; is_admin: boolean | number | string; speed_limit: number; device_limit: number; upload_traffic: number; download_traffic: number; upload_today: number; download_today: number; transfer_total: number; transfer_enable: number; invite_code?: string; invited_by?: number; invite_limit?: number; invite_used?: number; rebate_available?: number; rebate_total?: number; status: number; reg_date: string; expire_time: string; last_login_time: string; last_login_ip: string; class: number; class_expire_time: string; traffic_reset_day: number; subscription_url: string; two_factor_enabled?: boolean | number; has_two_factor_backup_codes?: boolean; avatar?: string; u?: number; d?: number; register_ip?: string | null }`
+- `Node`: `{ id: number; name: string; type: string; server: string; server_port: number; node_class: number; node_bandwidth: number; node_bandwidth_limit: number; traffic_multiplier?: number; bandwidthlimit_resetday?: number; node_config: string; status: number; is_online?: boolean; tls_host?: string; created_at: string; user_upload_traffic?: number; user_download_traffic?: number; user_total_traffic?: number; user_raw_total_traffic?: number; user_actual_upload_traffic?: number; user_actual_download_traffic?: number; user_actual_total_traffic?: number }`
+- `NodeStatistics`: `{ total: number; online: number; offline: number; accessible: number }`
+- `NodesResponse`: `{ nodes: Node[]; statistics: NodeStatistics; pagination?: { total: number; page: number; limit: number } }`
+- `TrafficStats`: `{ used: number; total: number; percentage: number; today_used: number }`
+- `TrafficRecord`: `{ id: number; user_id: number; node_id: number; node_name: string; upload_traffic: number; download_traffic: number; actual_upload_traffic?: number; actual_download_traffic?: number; total_traffic: number; actual_traffic: number; deduction_multiplier: number; log_time: string; created_at: string }`
+- `PaginationParams`: `{ page?: number; limit?: number; search?: string }`
+- `PaginationResponse<T>`: `{ data: T[]; total: number; page: number; limit: number }`
+- `AuditRule` (user): `{ id: number; name: string; pattern: string; action: 'block' | 'warn'; description: string; is_enabled: boolean; created_at: string; updated_at: string }`
+- `AuditLog` (user): `{ id: number; user_id: number; timestamp: string; action: 'block' | 'warn'; target_url: string; rule_id: number; rule_name: string; rule_pattern: string; node_id?: number; node_name?: string; user_ip?: string; user_agent?: string; created_at: string }`
+- `TicketQueryParams`: `{ page?: number; pageSize?: number; status?: TicketStatus }`
+- `TicketCreatePayload`: `{ title: string; content: string }`
+- `TicketReplyPayload`: `{ content: string; status?: TicketStatus }`
+- `TicketStatusPayload`: `{ status: TicketStatus }`
+- `TicketStatus`: `"open" | "answered" | "closed"`
+- `TicketSummary`: `{ id: number; title: string; status: TicketStatus; last_reply_at?: string | null; created_at: string; updated_at: string; user?: { id: number; username?: string | null; email?: string | null } }`
+- `TicketDetail`: `TicketSummary & { content: string }`
+- `TicketReply`: `{ id: number; content: string; created_at: string; author: { id: number; role: "user" | "admin"; username?: string | null; email?: string | null } }`
+- `TicketListResult`: `{ items: TicketSummary[]; pagination: { page: number; pageSize: number; total: number } }`
+- `TicketDetailResult`: `{ ticket: TicketDetail; replies: TicketReply[] }`
+- `Announcement` (用户): `{ id: number; title: string; content: string; content_html?: string; type: 'info' | 'warning' | 'success' | 'danger'; is_active: boolean; is_pinned: boolean; priority: number; created_at: number; updated_at?: number; expires_at?: number; is_expired?: boolean; created_by?: number; created_by_name?: string }`
+- `AnnouncementCreateRequest`: `{ title: string; content: string; type?: 'info' | 'warning' | 'success' | 'danger'; is_pinned?: boolean; priority?: number; expires_at?: number }`
+- `AnnouncementUpdateRequest`: `AnnouncementCreateRequest & { is_active?: boolean }`
+- `AdminAnnouncement`: `{ id: number; title: string; content: string; type: 'notice' | 'warning' | 'important' | 'maintenance'; status: number; is_pinned: boolean; priority: number; created_at: string; updated_at: string }`
+- `CreateAnnouncementRequest`: `{ title: string; content: string; type: string; status: number; is_pinned?: boolean; priority?: number }`
+- `AdminUser`: `{ id: number; email: string; username: string; uuid: string; class: number; status: number; transfer_enable: number; transfer_total: number; expire_time: string | null; created_at: string; updated_at: string; class_expire_time?: string | null; speed_limit?: number; device_limit?: number; bark_key?: string; bark_enabled?: boolean; is_admin?: number; money?: number | string; register_ip?: string | null; invite_code?: string | null; invite_limit?: number | null; invite_used?: number | null }`
+- `CreateUserRequest`: `{ email: string; username: string; password: string; class?: number; transfer_enable?: number; expire_days?: number; expire_time?: string; class_expire_time?: string; speed_limit?: number; device_limit?: number; bark_key?: string; bark_enabled?: boolean; invite_code?: string; invite_limit?: number }`
+- `UpdateUserRequest`: `{ email?: string; username?: string; class?: number; status?: number; transfer_enable?: number; expire_time?: string; class_expire_time?: string; speed_limit?: number; device_limit?: number; bark_key?: string; bark_enabled?: boolean; money?: number; invite_code?: string; invite_limit?: number }`
+- `UserListResponse`: `{ users: AdminUser[]; total: number; pagination?: { total: number; page: number; limit: number; pages?: number } }`
+- `Coupon`: `{ id: number; name: string; code: string; discount_type: 'amount' | 'percentage'; discount_value: number; start_at: number; end_at: number; max_usage?: number | null; per_user_limit?: number | null; total_used?: number; remaining_usage?: number | null; status: number; description?: string | null; package_count?: number }`
+- `CouponPayload`: `{ name: string; code?: string; discount_type: 'amount' | 'percentage'; discount_value: number; start_at: number; end_at: number; max_usage?: number | null; per_user_limit?: number | null; package_ids?: number[]; status?: number; description?: string }`
+- `GiftCard`: `{ id: number; name: string; code: string; card_type: string; status: number; balance_amount?: number | null; duration_days?: number | null; traffic_value_gb?: number | null; reset_traffic_gb?: number | null; package_id?: number | null; package_name?: string | null; max_usage?: number | null; per_user_limit?: number | null; used_count?: number | null; remaining_usage?: number | null; start_at?: string | null; end_at?: string | null; created_at?: string | null; batch_name?: string | null; is_expired?: boolean }`
+- `GiftCardPayload`: `{ name: string; card_type: string; code?: string; balance_amount?: number | null; duration_days?: number | null; traffic_value_gb?: number | null; reset_traffic_gb?: number | null; package_id?: number | null; start_at?: string | Date | null; end_at?: string | Date | null; max_usage?: number | null; per_user_limit?: number | null; quantity?: number | null }`
+- `GiftCardRedemption`: `{ id: number; user_id: number; user_email?: string | null; user_name?: string | null; code: string; card_type: string; change_amount?: number | null; duration_days?: number | null; traffic_value_gb?: number | null; reset_traffic_gb?: number | null; package_id?: number | null; trade_no?: string | null; message?: string | null; created_at?: string | null }`
+- `AdminNode`: `{ id: number; name: string; type: string; server: string; server_port: number; tls_host?: string; node_class: number; node_bandwidth: number; node_bandwidth_limit: number; traffic_multiplier?: number; bandwidthlimit_resetday?: number; node_config: string; status: number; user_count?: number; is_online?: boolean; created_at: string; updated_at: string }`
+- `NodeStatus`: `{ id: number; name: string; type: string; server: string; server_port: number; tls_host?: string; node_class: number; status: number; cpu_usage?: number; memory_total?: number; memory_used?: number; swap_total?: number; swap_used?: number; disk_total?: number; disk_used?: number; uptime?: number; last_reported?: string; is_online?: boolean }`
+- `NodeStatusStatistics`: `{ total: number; online: number; offline: number; enabled?: number; disabled?: number }`
+- `NodeStatusResponse`: `{ nodes: NodeStatus[]; statistics: NodeStatusStatistics; pagination?: { total: number; page: number; limit: number } }`
+- `CreateNodeRequest`: `{ name: string; type: string; server: string; server_port: number; tls_host?: string; node_class: number; node_bandwidth_limit?: number; traffic_multiplier?: number; node_config?: string; bandwidthlimit_resetday?: number }`
+- `SharedIdConfig`: `{ id: number; name: string; fetch_url: string; remote_account_id: number; status: number; created_at?: string; updated_at?: string }`
+- `SystemStats`: `{ users: { total: number; active: number; disabled: number; admins: number }; nodes: { total: number; active: number; online: number; offline: number }; traffic: { total: number; today: number; average_quota: number } }`
+- `LoginLog`: `{ id: number; user_id: number; user_email?: string; login_ip: string; login_time: string; user_agent?: string; login_status: number; failure_reason?: string; login_method?: string; created_at: string }`
+- `SubscriptionLog`: `{ id: number; user_id: number; user_email: string; type: string; request_ip: string; request_time: string; request_user_agent: string }`
+- `OnlineIP`: `{ id: number; user_id: number; user_email: string; user_class: number; ip_address: string; node_id: number; node_name: string; node_type: string; protocol?: string; connect_time: string; last_active?: string; upload_traffic?: number; download_traffic?: number; upload_speed?: number; download_speed?: number }`
+- `AdminAuditRule`: `{ id: number; name: string; rule: string; description?: string; enabled: number; created_at: string; updated_at: string }`
+- `CreateAuditRuleRequest`: `{ name: string; rule: string; description?: string; enabled: number }`
+- `AdminAuditLog`: `{ id: number; user_id?: number; user_email?: string; rule_id: number; rule_name: string; rule_type: string; action: string; target_ip?: string; target_domain?: string; target_port?: number; protocol?: string; matched_content?: string; severity: string; additional_info?: string; created_at: string }`
+- `WhitelistRule`: `{ id: number; rule: string; description?: string; status: number; created_at: string }`
+- `CreateWhitelistRuleRequest`: `{ rule: string; description?: string; status: number }`
+- `CacheStatus`: `{ total_keys: number; categories: { node_config: number; node_users: number; audit_rules: number; white_list: number; others: number }; cache_keys: string[] }`
+- `ClearCacheResponse`: `{ message: string; cleared_at: string; cleared_types?: string[] }`
+- `SystemConfig`: `{ id: number; key: string; value: string; description: string }`
+- `SystemConfigUpdate`: `{ key: string; value: string }`
+- `SystemConfigBatchUpdate`: `{ configs: SystemConfigUpdate[] }`
+- `SharedIdItem`: `{ id: number; name: string; remote_account_id: number; status: 'ok' | 'missing' | 'error'; account: Record<string, unknown> | null; fetched_at?: string; message?: string | null; error?: string }`
+- `TrafficTrendItem`: `{ date: string; label: string; upload_traffic: number; download_traffic: number; total_traffic: number }`
+- `TrafficSummary`: `{ weekly: { week_upload: number; week_download: number; week_total: number; active_days: number }; monthly: { month_upload: number; month_download: number; month_total: number; active_days: number }; peak: { record_date: string; total_traffic: number; upload_traffic: number; download_traffic: number } | null }`
