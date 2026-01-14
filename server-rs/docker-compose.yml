@@ -1,0 +1,76 @@
+version: "3.9"
+
+services:
+  mariadb:
+    image: mariadb:10.11
+    container_name: soga-rs-mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: soga_panel
+      MYSQL_USER: soga
+      MYSQL_PASSWORD: Abc123
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./data/mariadb:/var/lib/mysql
+    command:
+      [
+        "--character-set-server=utf8mb4",
+        "--collation-server=utf8mb4_unicode_ci",
+        "--default-time-zone=+08:00"
+      ]
+
+  redis:
+    image: redis:7.2
+    container_name: soga-rs-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    environment:
+      TZ: Asia/Shanghai
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: soga-rs-phpmyadmin
+    environment:
+      PMA_HOST: mariadb
+      PMA_USER: soga
+      PMA_PASSWORD: Abc123
+      PMA_ARBITRARY: "1"
+      TZ: Asia/Shanghai
+    ports:
+      - "8080:80"
+    depends_on:
+      - mariadb
+
+  rust-server:
+    image: alpine:3.20
+    container_name: soga-rs-server
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./dist:/app/dist:ro
+      - ./dist/.env:/app/.env:ro
+    environment:
+      DB_HOST: mariadb
+      REDIS_HOST: redis
+      TZ: Asia/Shanghai
+      RUST_LOG: info
+    depends_on:
+      - mariadb
+      - redis
+    ports:
+      - "18788:18788"
+    command:
+      [
+        "/app/dist/soga-panel-server-linux_arm64",
+        "-c",
+        "/app/.env",
+        "-PORT",
+        "18788"
+      ]

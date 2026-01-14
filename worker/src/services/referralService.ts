@@ -280,6 +280,23 @@ export class ReferralService {
     if (!inviterId || inviterId <= 0) {
       return 0;
     }
+    const inviterEligible = await this.db.db
+      .prepare(
+        `
+        SELECT id
+        FROM users
+        WHERE id = ?
+          AND status = 1
+          AND class > 0
+          AND (class_expire_time IS NULL OR class_expire_time > datetime('now', '+8 hours'))
+        LIMIT 1
+      `
+      )
+      .bind(inviterId)
+      .first<{ id: number } | null>();
+    if (!inviterEligible) {
+      return 0;
+    }
 
     if (params.sourceId) {
       const existing = await this.db.db

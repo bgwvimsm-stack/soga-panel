@@ -164,6 +164,23 @@ export class ReferralService {
     if (!inviterId || inviterId <= 0) {
       return { success: false, reason: "no_inviter" };
     }
+    const inviterEligible = await this.db.db
+      .prepare(
+        `
+        SELECT id
+        FROM users
+        WHERE id = ?
+          AND status = 1
+          AND class > 0
+          AND (class_expire_time IS NULL OR class_expire_time > CURRENT_TIMESTAMP)
+        LIMIT 1
+      `
+      )
+      .bind(inviterId)
+      .first<{ id: number } | null>();
+    if (!inviterEligible) {
+      return { success: false, reason: "inviter_inactive" };
+    }
 
     // 避免对同一 source 重复发放返利
     if (params.sourceId) {
