@@ -60,7 +60,7 @@ async fn get_wallet(
   let recharge_stats = sqlx::query(
     r#"
     SELECT
-      COALESCE(SUM(CASE WHEN status = 1 THEN amount ELSE 0 END), 0) as total_recharged
+      CAST(COALESCE(SUM(CASE WHEN status = 1 THEN amount ELSE 0 END), 0) AS DOUBLE) as total_recharged
     FROM recharge_records
     WHERE user_id = ?
     "#
@@ -80,7 +80,7 @@ async fn get_wallet(
   let purchase_stats = sqlx::query(
     r#"
     SELECT
-      COALESCE(SUM(CASE WHEN status = 1 THEN price ELSE 0 END), 0) as total_spent
+      CAST(COALESCE(SUM(CASE WHEN status = 1 THEN price ELSE 0 END), 0) AS DOUBLE) as total_spent
     FROM package_purchase_records
     WHERE user_id = ?
     "#
@@ -287,8 +287,8 @@ async fn get_wallet_stats(
     r#"
     SELECT
       COUNT(*) as total_recharges,
-      COALESCE(SUM(CASE WHEN status = 1 THEN amount ELSE 0 END), 0) as total_recharged,
-      COALESCE(SUM(CASE WHEN status = 0 THEN amount ELSE 0 END), 0) as pending_amount
+      CAST(COALESCE(SUM(CASE WHEN status = 1 THEN amount ELSE 0 END), 0) AS DOUBLE) as total_recharged,
+      CAST(COALESCE(SUM(CASE WHEN status = 0 THEN amount ELSE 0 END), 0) AS DOUBLE) as pending_amount
     FROM recharge_records
     WHERE user_id = ?
     "#
@@ -305,7 +305,7 @@ async fn get_wallet_stats(
     r#"
     SELECT
       COUNT(*) as total_purchases,
-      COALESCE(SUM(CASE WHEN status = 1 THEN price ELSE 0 END), 0) as total_spent
+      CAST(COALESCE(SUM(CASE WHEN status = 1 THEN price ELSE 0 END), 0) AS DOUBLE) as total_spent
     FROM package_purchase_records
     WHERE user_id = ?
     "#
@@ -764,6 +764,9 @@ fn parse_decimal(row: &sqlx::mysql::MySqlRow, column: &str, fallback: f64) -> f6
   if let Ok(Some(value)) = row.try_get::<Option<f64>, _>(column) {
     return value;
   }
+  if let Ok(Some(value)) = row.try_get::<Option<sqlx::types::BigDecimal>, _>(column) {
+    return value.to_string().parse::<f64>().unwrap_or(fallback);
+  }
   if let Ok(Some(value)) = row.try_get::<Option<String>, _>(column) {
     return value.parse::<f64>().unwrap_or(fallback);
   }
@@ -789,7 +792,7 @@ async fn list_recharge_records(
     r#"
     SELECT
       rr.id,
-      rr.amount,
+      CAST(rr.amount AS DOUBLE) as amount,
       rr.payment_method,
       rr.trade_no,
       rr.status,
@@ -1045,7 +1048,7 @@ struct GiftCardRow {
 async fn get_gift_card_by_code(state: &AppState, code: &str) -> Result<Option<GiftCardRow>, String> {
   let row = sqlx::query(
     r#"
-    SELECT id, card_type, status, balance_amount, duration_days, traffic_value_gb,
+    SELECT id, card_type, status, CAST(balance_amount AS DOUBLE) as balance_amount, duration_days, traffic_value_gb,
            reset_traffic_gb, package_id, max_usage, per_user_limit, used_count, start_at, end_at
     FROM gift_cards
     WHERE code = ? AND status = 1

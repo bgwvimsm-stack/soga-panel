@@ -154,7 +154,7 @@ async fn get_users(
       bark_enabled,
       speed_limit,
       device_limit,
-      money,
+      CAST(money AS DOUBLE) AS money,
       register_ip,
       invite_code,
       invite_limit,

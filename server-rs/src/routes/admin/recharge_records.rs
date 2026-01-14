@@ -85,7 +85,7 @@ async fn get_recharge_records(
     SELECT
       rr.id,
       rr.user_id,
-      rr.amount,
+      CAST(rr.amount AS DOUBLE) as amount,
       rr.payment_method,
       rr.trade_no,
       rr.status,
@@ -213,6 +213,11 @@ fn fix_money_precision(amount: f64) -> f64 {
 fn parse_decimal(row: &sqlx::mysql::MySqlRow, column: &str, fallback: f64) -> f64 {
   if let Ok(value) = row.try_get::<Option<f64>, _>(column) {
     return value.unwrap_or(fallback);
+  }
+  if let Ok(value) = row.try_get::<Option<sqlx::types::BigDecimal>, _>(column) {
+    return value
+      .map(|val| val.to_string().parse::<f64>().unwrap_or(fallback))
+      .unwrap_or(fallback);
   }
   if let Ok(value) = row.try_get::<Option<String>, _>(column) {
     return value

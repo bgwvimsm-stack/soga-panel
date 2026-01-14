@@ -325,6 +325,11 @@ fn parse_decimal(row: &sqlx::mysql::MySqlRow, column: &str, fallback: f64) -> f6
   if let Ok(value) = row.try_get::<Option<f64>, _>(column) {
     return value.unwrap_or(fallback);
   }
+  if let Ok(value) = row.try_get::<Option<sqlx::types::BigDecimal>, _>(column) {
+    return value
+      .map(|val| val.to_string().parse::<f64>().unwrap_or(fallback))
+      .unwrap_or(fallback);
+  }
   if let Ok(value) = row.try_get::<Option<String>, _>(column) {
     return value
       .and_then(|val| val.parse::<f64>().ok())
@@ -336,6 +341,15 @@ fn parse_decimal(row: &sqlx::mysql::MySqlRow, column: &str, fallback: f64) -> f6
 fn read_optional_decimal(row: &sqlx::mysql::MySqlRow, column: &str) -> Option<String> {
   if let Ok(value) = row.try_get::<Option<f64>, _>(column) {
     return value.map(|val| format!("{:.2}", val));
+  }
+  if let Ok(value) = row.try_get::<Option<sqlx::types::BigDecimal>, _>(column) {
+    return value.map(|val| {
+      val
+        .to_string()
+        .parse::<f64>()
+        .map(|num| format!("{:.2}", num))
+        .unwrap_or_else(|_| val.to_string())
+    });
   }
   if let Ok(value) = row.try_get::<Option<String>, _>(column) {
     return value;

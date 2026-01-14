@@ -111,7 +111,7 @@ async fn get_system_stats(
     SELECT
       COALESCE(SUM(transfer_enable), 0) AS total_traffic,
       COALESCE(SUM(upload_today + download_today), 0) AS today_traffic,
-      COALESCE(AVG(transfer_enable), 0) AS average_quota
+      CAST(COALESCE(AVG(transfer_enable), 0) AS DOUBLE) AS average_quota
     FROM users
     "#
   )
@@ -297,7 +297,7 @@ async fn get_node_status(
       n.node_config,
       n.created_at,
       n.updated_at,
-      ns.cpu_usage,
+      CAST(ns.cpu_usage AS DOUBLE) AS cpu_usage,
       ns.memory_total,
       ns.memory_used,
       ns.swap_total,
