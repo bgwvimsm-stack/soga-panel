@@ -112,19 +112,42 @@ fn parse_payload_bytes(bytes: &[u8]) -> Result<serde_json::Map<String, Value>, S
     if let Some(map) = value.as_object() {
       return Ok(map.clone());
     }
-  }
-
-  let text = std::str::from_utf8(bytes).map_err(|_| "payload decode failed".to_string())?;
-  if text.trim().is_empty() {
+    if let Some(text) = value.as_str() {
+      return Ok(parse_payload_text(text));
+    }
     return Ok(serde_json::Map::new());
   }
-  let map = serde_urlencoded::from_str::<std::collections::HashMap<String, String>>(text)
-    .map_err(|_| "payload decode failed".to_string())?;
+
+  let text = match std::str::from_utf8(bytes) {
+    Ok(value) => value,
+    Err(_) => return Ok(serde_json::Map::new())
+  };
+  Ok(parse_payload_text(text))
+}
+
+fn parse_payload_text(text: &str) -> serde_json::Map<String, Value> {
+  let trimmed = text.trim();
+  if trimmed.is_empty() {
+    return serde_json::Map::new();
+  }
+
+  if (trimmed.starts_with('{') && trimmed.ends_with('}')) || trimmed.starts_with('[') {
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+      if let Some(map) = value.as_object() {
+        return map.clone();
+      }
+    }
+  }
+
+  let map = match serde_urlencoded::from_str::<std::collections::HashMap<String, String>>(trimmed) {
+    Ok(value) => value,
+    Err(_) => return serde_json::Map::new()
+  };
   let mut output = serde_json::Map::new();
   for (key, value) in map {
     output.insert(key, Value::String(value));
   }
-  Ok(output)
+  output
 }
 
 fn text_response(status: StatusCode, body: &str) -> Response {
@@ -184,7 +207,9 @@ pub(crate) async fn mark_recharge_paid(
   state: &AppState,
   trade_no: &str
 ) -> Result<Option<RechargePaidResult>, String> {
-  let record = sqlx::query("SELECT id, user_id, amount, status FROM recharge_records WHERE trade_no = ?")
+  let record = sqlx::query(
+    "SELECT id, user_id, CAST(amount AS DOUBLE) as amount, status FROM recharge_records WHERE trade_no = ?"
+  )
     .bind(trade_no)
     .fetch_optional(&state.db)
     .await
@@ -251,7 +276,10 @@ pub(crate) async fn mark_purchase_paid(
 ) -> Result<Option<PurchasePaidResult>, String> {
   let record = sqlx::query(
     r#"
-    SELECT id, user_id, package_id, status, price, package_price, discount_amount,
+    SELECT id, user_id, package_id, status,
+           CAST(price AS DOUBLE) as price,
+           CAST(package_price AS DOUBLE) as package_price,
+           CAST(discount_amount AS DOUBLE) as discount_amount,
            coupon_id, coupon_code, purchase_type
     FROM package_purchase_records
     WHERE trade_no = ?
@@ -536,6 +564,9 @@ async fn update_user_after_package_purchase(
 fn parse_decimal(row: &sqlx::mysql::MySqlRow, column: &str, fallback: f64) -> f64 {
   if let Ok(Some(value)) = row.try_get::<Option<f64>, _>(column) {
     return value;
+  }
+  if let Ok(Some(value)) = row.try_get::<Option<sqlx::types::BigDecimal>, _>(column) {
+    return value.to_string().parse::<f64>().unwrap_or(fallback);
   }
   if let Ok(Some(value)) = row.try_get::<Option<String>, _>(column) {
     return value.parse::<f64>().unwrap_or(fallback);

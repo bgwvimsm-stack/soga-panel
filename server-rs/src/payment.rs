@@ -108,8 +108,16 @@ pub fn verify_callback(env: &AppEnv, payload: &serde_json::Map<String, Value>) -
   }
 
   let mut epusdt = verify_epusdt_callback(env, payload);
-  epusdt.method = Some("epusdt".to_string());
-  epusdt
+  if epusdt.ok {
+    epusdt.method = Some("epusdt".to_string());
+    return epusdt;
+  }
+
+  PaymentCallbackResult {
+    ok: false,
+    trade_no: None,
+    method: None
+  }
 }
 
 pub fn verify_epay_callback(env: &AppEnv, payload: &serde_json::Map<String, Value>) -> PaymentCallbackResult {
@@ -134,6 +142,7 @@ pub fn verify_epay_callback(env: &AppEnv, payload: &serde_json::Map<String, Valu
     };
   }
 
+  let sign_key = env.epay_key.clone().unwrap_or_default();
   let mut params = std::collections::BTreeMap::<String, String>::new();
   for (key, value) in payload.iter() {
     if key == "sign" {
@@ -146,7 +155,6 @@ pub fn verify_epay_callback(env: &AppEnv, payload: &serde_json::Map<String, Valu
     .map(|(k, v)| format!("{k}={v}"))
     .collect::<Vec<_>>()
     .join("&");
-  let sign_key = env.epay_key.clone().unwrap_or_default();
   let expected = md5_hex(&(base + &sign_key)).to_lowercase();
 
   PaymentCallbackResult {
@@ -464,8 +472,8 @@ fn md5_hex(input: &str) -> String {
 
 fn get_trade_no(payload: &serde_json::Map<String, Value>) -> Option<String> {
   payload
-    .get("trade_no")
-    .or_else(|| payload.get("out_trade_no"))
+    .get("out_trade_no")
+    .or_else(|| payload.get("trade_no"))
     .or_else(|| payload.get("order_id"))
     .map(value_to_string)
     .filter(|value| !value.trim().is_empty())

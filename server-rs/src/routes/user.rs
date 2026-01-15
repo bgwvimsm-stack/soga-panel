@@ -3484,6 +3484,9 @@ fn parse_decimal(row: &sqlx::mysql::MySqlRow, column: &str, fallback: f64) -> f6
   if let Ok(Some(value)) = row.try_get::<Option<f64>, _>(column) {
     return value;
   }
+  if let Ok(Some(value)) = row.try_get::<Option<sqlx::types::BigDecimal>, _>(column) {
+    return value.to_string().parse::<f64>().unwrap_or(fallback);
+  }
   if let Ok(Some(value)) = row.try_get::<Option<String>, _>(column) {
     return value.parse::<f64>().unwrap_or(fallback);
   }
@@ -3825,7 +3828,7 @@ fn map_traffic_rows(rows: Vec<sqlx::mysql::MySqlRow>) -> Vec<Value> {
         "actual_download_traffic": row.try_get::<Option<i64>, _>("actual_download_traffic").unwrap_or(Some(0)).unwrap_or(0),
         "total_traffic": row.try_get::<Option<i64>, _>("total_traffic").unwrap_or(Some(0)).unwrap_or(0),
         "actual_traffic": row.try_get::<Option<i64>, _>("actual_traffic").unwrap_or(Some(0)).unwrap_or(0),
-        "deduction_multiplier": row.try_get::<Option<f64>, _>("deduction_multiplier").unwrap_or(Some(1.0)).unwrap_or(1.0),
+        "deduction_multiplier": parse_decimal(&row, "deduction_multiplier", 1.0),
         "log_time": row.try_get::<Option<String>, _>("log_time").ok().flatten(),
         "created_at": format_datetime(row.try_get::<Option<NaiveDateTime>, _>("created_at").ok().flatten())
       })

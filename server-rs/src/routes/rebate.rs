@@ -649,6 +649,9 @@ fn parse_decimal(row: &sqlx::mysql::MySqlRow, column: &str, fallback: f64) -> f6
   if let Ok(Some(value)) = row.try_get::<Option<f64>, _>(column) {
     return value;
   }
+  if let Ok(Some(value)) = row.try_get::<Option<sqlx::types::BigDecimal>, _>(column) {
+    return value.to_string().parse::<f64>().unwrap_or(fallback);
+  }
   if let Ok(Some(value)) = row.try_get::<Option<String>, _>(column) {
     return value.parse::<f64>().unwrap_or(fallback);
   }
