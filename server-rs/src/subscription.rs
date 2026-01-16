@@ -37,6 +37,137 @@ const REGION_TAGS: [&str; 7] = [
   "🇰🇷 韩国节点",
   "🎥 奈飞节点"
 ];
+const VMESS_PROXY_KEYS: [&str; 22] = [
+  "name",
+  "type",
+  "server",
+  "port",
+  "udp",
+  "uuid",
+  "alterId",
+  "cipher",
+  "packet-encoding",
+  "global-padding",
+  "authenticated-length",
+  "tls",
+  "servername",
+  "alpn",
+  "fingerprint",
+  "client-fingerprint",
+  "skip-cert-verify",
+  "reality-opts",
+  "network",
+  "ws-opts",
+  "grpc-opts",
+  "smux"
+];
+const VLESS_PROXY_KEYS: [&str; 20] = [
+  "name",
+  "type",
+  "server",
+  "port",
+  "udp",
+  "uuid",
+  "flow",
+  "packet-encoding",
+  "tls",
+  "servername",
+  "alpn",
+  "fingerprint",
+  "client-fingerprint",
+  "skip-cert-verify",
+  "reality-opts",
+  "encryption",
+  "network",
+  "ws-opts",
+  "grpc-opts",
+  "smux"
+];
+const TROJAN_PROXY_KEYS: [&str; 17] = [
+  "name",
+  "type",
+  "server",
+  "port",
+  "password",
+  "udp",
+  "sni",
+  "alpn",
+  "client-fingerprint",
+  "fingerprint",
+  "skip-cert-verify",
+  "ss-opts",
+  "reality-opts",
+  "network",
+  "ws-opts",
+  "grpc-opts",
+  "smux"
+];
+const SS_PROXY_KEYS: [&str; 13] = [
+  "name",
+  "type",
+  "server",
+  "port",
+  "cipher",
+  "password",
+  "udp",
+  "udp-over-tcp",
+  "udp-over-tcp-version",
+  "ip-version",
+  "plugin",
+  "plugin-opts",
+  "smux"
+];
+const SSR_PROXY_KEYS: [&str; 11] = [
+  "name",
+  "type",
+  "server",
+  "port",
+  "cipher",
+  "password",
+  "obfs",
+  "protocol",
+  "obfs-param",
+  "protocol-param",
+  "udp"
+];
+const ANYTLS_PROXY_KEYS: [&str; 13] = [
+  "name",
+  "type",
+  "server",
+  "port",
+  "password",
+  "client-fingerprint",
+  "udp",
+  "idle-session-check-interval",
+  "idle-session-timeout",
+  "min-idle-session",
+  "sni",
+  "alpn",
+  "skip-cert-verify"
+];
+const HYSTERIA2_PROXY_KEYS: [&str; 14] = [
+  "name",
+  "type",
+  "server",
+  "port",
+  "ports",
+  "password",
+  "up",
+  "down",
+  "obfs",
+  "obfs-password",
+  "sni",
+  "skip-cert-verify",
+  "fingerprint",
+  "alpn"
+];
+const WS_OPTS_KEYS: [&str; 2] = ["path", "headers"];
+const HEADERS_KEYS: [&str; 1] = ["Host"];
+const REALITY_OPTS_KEYS: [&str; 2] = ["public-key", "short-id"];
+const GRPC_OPTS_KEYS: [&str; 1] = ["grpc-service-name"];
+const PLUGIN_OPTS_KEYS: [&str; 2] = ["mode", "host"];
+const SS_OPTS_KEYS: [&str; 3] = ["enabled", "method", "password"];
+const SMUX_KEYS: [&str; 1] = ["enabled"];
 
 static CLASH_RULES: OnceLock<Vec<Value>> = OnceLock::new();
 static SINGBOX_TEMPLATE: OnceLock<Value> = OnceLock::new();
@@ -375,29 +506,33 @@ fn with_fallback(values: Vec<String>, fallback: &[&str]) -> Vec<String> {
 }
 
 fn dump_yaml(value: &Value) -> String {
-  stringify_yaml(value, 0)
+  stringify_yaml(value, 0, None)
 }
 
-fn stringify_yaml(value: &Value, indent: usize) -> String {
+fn stringify_yaml(value: &Value, indent: usize, parent_key: Option<&str>) -> String {
   let spaces = "  ".repeat(indent);
   let mut result = String::new();
   match value {
     Value::Array(items) => {
       for item in items {
-        if item.is_object() {
-          result.push_str(&format!("{spaces}- {}\n", stringify_inline(item)));
-        } else if item.is_array() {
-          result.push_str(&format!("{spaces}- {}\n", stringify_inline(item)));
-        } else {
-          result.push_str(&format!("{spaces}- {}\n", value_to_yaml(item)));
+        match item {
+          Value::Object(_) | Value::Array(_) => {
+            result.push_str(&format!("{spaces}-\n"));
+            result.push_str(&stringify_yaml(item, indent + 1, parent_key));
+          }
+          _ => {
+            result.push_str(&format!("{spaces}- {}\n", value_to_yaml(item)));
+          }
         }
       }
     }
     Value::Object(map) => {
-      for (key, value) in map {
+      let keys = ordered_yaml_keys(map, parent_key);
+      for key in keys {
+        let value = map.get(&key).unwrap_or(&Value::Null);
         if value.is_array() || value.is_object() {
           result.push_str(&format!("{spaces}{key}:\n"));
-          result.push_str(&stringify_yaml(value, indent + 1));
+          result.push_str(&stringify_yaml(value, indent + 1, Some(&key)));
         } else {
           result.push_str(&format!("{spaces}{key}: {}\n", value_to_yaml(value)));
         }
@@ -410,21 +545,62 @@ fn stringify_yaml(value: &Value, indent: usize) -> String {
   result
 }
 
-fn stringify_inline(value: &Value) -> String {
-  match value {
-    Value::Object(map) => {
-      let mut parts = Vec::new();
-      for (key, value) in map {
-        if value.is_object() || value.is_array() {
-          parts.push(format!("{key}: {}", value.to_string()));
-        } else {
-          parts.push(format!("{key}: {}", value_to_yaml(value)));
+fn ordered_yaml_keys(map: &serde_json::Map<String, Value>, parent_key: Option<&str>) -> Vec<String> {
+  let preferred = preferred_yaml_key_order(map, parent_key);
+  let mut ordered = Vec::new();
+  let mut used = HashSet::new();
+  if let Some(order) = preferred {
+    for key in order {
+      if map.contains_key(*key) {
+        let key_string = (*key).to_string();
+        if used.insert(key_string.clone()) {
+          ordered.push(key_string);
         }
       }
-      format!("{{ {} }}", parts.join(", "))
     }
-    Value::Array(_) => value.to_string(),
-    _ => value_to_yaml(value)
+  }
+  let mut rest: Vec<String> = map
+    .keys()
+    .filter(|key| !used.contains(key.as_str()))
+    .cloned()
+    .collect();
+  rest.sort();
+  ordered.extend(rest);
+  ordered
+}
+
+fn preferred_yaml_key_order(
+  map: &serde_json::Map<String, Value>,
+  parent_key: Option<&str>
+) -> Option<&'static [&'static str]> {
+  if let Some(key) = parent_key {
+    let order = match key {
+      "ws-opts" => Some(&WS_OPTS_KEYS[..]),
+      "headers" => Some(&HEADERS_KEYS[..]),
+      "reality-opts" => Some(&REALITY_OPTS_KEYS[..]),
+      "grpc-opts" => Some(&GRPC_OPTS_KEYS[..]),
+      "plugin-opts" => Some(&PLUGIN_OPTS_KEYS[..]),
+      "ss-opts" => Some(&SS_OPTS_KEYS[..]),
+      "smux" => Some(&SMUX_KEYS[..]),
+      _ => None
+    };
+    if order.is_some() {
+      return order;
+    }
+  }
+
+  match map.get("type") {
+    Some(Value::String(proxy_type)) => match proxy_type.as_str() {
+      "vmess" => Some(&VMESS_PROXY_KEYS[..]),
+      "vless" => Some(&VLESS_PROXY_KEYS[..]),
+      "trojan" => Some(&TROJAN_PROXY_KEYS[..]),
+      "ss" => Some(&SS_PROXY_KEYS[..]),
+      "ssr" => Some(&SSR_PROXY_KEYS[..]),
+      "anytls" => Some(&ANYTLS_PROXY_KEYS[..]),
+      "hysteria2" => Some(&HYSTERIA2_PROXY_KEYS[..]),
+      _ => None
+    },
+    _ => None
   }
 }
 
@@ -832,7 +1008,11 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
         if ensure_string(config.get("stream_type")) == "ws" {
           let mut ws_opts = serde_json::Map::new();
           ws_opts.insert("path".to_string(), json!(normalize_path(config.get("path"))));
-          let host = resolve_config_string_value(&config, &["server", "host", "sni"], &server);
+          let host = if ensure_string(config.get("tls_type")) == "tls" {
+            tls_host.clone()
+          } else {
+            resolve_config_string_value(&config, &["server", "host", "sni"], &server)
+          };
           ws_opts.insert("headers".to_string(), json!({ "Host": host }));
           value.insert("ws-opts".to_string(), Value::Object(ws_opts));
         } else if ensure_string(config.get("stream_type")) == "grpc" {
@@ -892,7 +1072,11 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
         if ensure_string(config.get("stream_type")) == "ws" {
           let mut ws_opts = serde_json::Map::new();
           ws_opts.insert("path".to_string(), json!(normalize_path(config.get("path"))));
-          let host = resolve_config_string_value(&config, &["server", "host", "sni"], &server);
+          let host = if tls_mode == "tls" || tls_mode == "reality" {
+            tls_host.clone()
+          } else {
+            resolve_config_string_value(&config, &["server", "host", "sni"], &server)
+          };
           ws_opts.insert("headers".to_string(), json!({ "Host": host }));
           value.insert("ws-opts".to_string(), Value::Object(ws_opts));
         } else if ensure_string(config.get("stream_type")) == "grpc" {
@@ -917,7 +1101,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
           value.insert("network".to_string(), json!("ws"));
           let mut ws_opts = serde_json::Map::new();
           ws_opts.insert("path".to_string(), json!(normalize_path(config.get("path"))));
-          let host = resolve_config_string_value(&config, &["server", "sni"], &server);
+          let host = tls_host.clone();
           ws_opts.insert("headers".to_string(), json!({ "Host": host }));
           value.insert("ws-opts".to_string(), Value::Object(ws_opts));
         } else if ensure_string(config.get("stream_type")) == "grpc" {
