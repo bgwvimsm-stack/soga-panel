@@ -69,7 +69,12 @@ async fn get_node(State(state): State<AppState>, headers: HeaderMap) -> Response
     .cloned()
     .unwrap_or_else(|| json!({}));
 
-  Json(json!({ "basic": basic, "config": config })).into_response()
+  let payload = json!({ "basic": basic, "config": config });
+  let etag = generate_etag(&payload);
+  if is_etag_match(&headers, &etag) {
+    return not_modified(&etag);
+  }
+  json_with_etag(&payload, &etag)
 }
 
 async fn get_users(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -168,7 +173,7 @@ async fn get_audit_rules(State(state): State<AppState>, headers: HeaderMap) -> R
   }
 
   if rules.is_empty() {
-    let rows = sqlx::query("SELECT id, rule FROM audit_rules WHERE enabled = 1")
+    let rows = sqlx::query("SELECT id, rule FROM audit_rules WHERE enabled = 1 ORDER BY id ASC")
       .fetch_all(&state.db)
       .await;
     match rows {
@@ -213,7 +218,7 @@ async fn get_white_list(State(state): State<AppState>, headers: HeaderMap) -> Re
   }
 
   if white_list.is_empty() {
-    let rows = sqlx::query("SELECT rule FROM white_list WHERE status = 1")
+    let rows = sqlx::query("SELECT rule FROM white_list WHERE status = 1 ORDER BY id ASC")
       .fetch_all(&state.db)
       .await;
     match rows {
