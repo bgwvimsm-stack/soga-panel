@@ -1,8 +1,10 @@
 use std::env;
+use std::net::IpAddr;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct AppEnv {
+  pub listen: IpAddr,
   pub port: u16,
   pub db_host: String,
   pub db_port: u16,
@@ -127,7 +129,19 @@ fn parse_u64_opt(key: &str) -> Result<Option<u64>, String> {
   }
 }
 
+fn parse_ip(key: &str, default: &str) -> Result<IpAddr, String> {
+  match get_env(key) {
+    Some(value) => value
+      .parse::<IpAddr>()
+      .map_err(|_| format!("{key} must be a valid IP address")),
+    None => default
+      .parse::<IpAddr>()
+      .map_err(|_| format!("{key} default must be a valid IP address"))
+  }
+}
+
 pub fn load_env() -> Result<AppEnv, String> {
+  let listen = parse_ip("LISTEN", "127.0.0.1")?;
   let port = parse_u16("PORT", 18787)?;
   let db_host = get_env("DB_HOST").ok_or_else(|| "DB_HOST is required".to_string())?;
   let db_port = parse_u16("DB_PORT", 3306)?;
@@ -144,6 +158,7 @@ pub fn load_env() -> Result<AppEnv, String> {
   let redis_prefix = get_env("REDIS_PREFIX").unwrap_or_else(|| "soga:".to_string());
 
   Ok(AppEnv {
+    listen,
     port,
     db_host,
     db_port,
