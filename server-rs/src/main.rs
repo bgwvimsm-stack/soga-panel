@@ -126,7 +126,7 @@ async fn main() {
     .layer(cors)
     .layer(axum::middleware::from_fn(app_middleware));
 
-  let addr = SocketAddr::from(([0, 0, 0, 0], env.port));
+  let addr = SocketAddr::new(env.listen, env.port);
   println!("[server] listening on http://{}", addr);
 
   let listener = tokio::net::TcpListener::bind(addr).await;
@@ -260,7 +260,7 @@ fn print_help(env_path: Option<&str>) {
   let path = env_path.unwrap_or("../server/.env");
   let keys = read_env_keys(path);
   println!("Usage:");
-  println!("  soga-panel-server -c <.env路径> -PORT <端口> -KEY <值>");
+  println!("  soga-panel-server -c <.env路径> -PORT <端口> -LISTEN <地址> -KEY <值>");
   println!("  soga-panel-server Job <任务名>");
   println!();
   println!("常用参数:");
@@ -268,6 +268,7 @@ fn print_help(env_path: Option<&str>) {
   println!("  -v / -version        显示版本号");
   println!("  -c <path>            指定 .env 路径");
   println!("  -PORT <port>         指定服务端口");
+  println!("  -LISTEN <addr>       指定监听地址");
   println!();
   println!("任务执行:");
   for (name, desc) in job_descriptions() {
