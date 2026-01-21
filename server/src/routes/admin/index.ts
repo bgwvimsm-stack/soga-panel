@@ -59,9 +59,74 @@ export function createAdminRouter(ctx: AppContext) {
       return raw
         .split(",")
         .map((v) => Number(v.trim()))
-        .filter((n) => Number.isFinite(n));
+      .filter((n) => Number.isFinite(n));
     }
     return [];
+  };
+
+  const normalizeNodeIds = (value: unknown): number[] => {
+    let list: number[] = [];
+    if (Array.isArray(value)) {
+      list = value.map((id) => Number(id));
+    } else if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            list = parsed.map((id) => Number(id));
+          } else {
+            list = trimmed.split(",").map((id) => Number(id.trim()));
+          }
+        } catch {
+          list = trimmed.split(",").map((id) => Number(id.trim()));
+        }
+      }
+    }
+    const unique = new Set<number>();
+    for (const item of list) {
+      const num = Number(item);
+      if (Number.isFinite(num) && num > 0) {
+        unique.add(num);
+      }
+    }
+    return Array.from(unique);
+  };
+
+  const normalizeRuleJson = (value: unknown): { success: boolean; value?: string; message?: string } => {
+    if (value === null || value === undefined || value === "") {
+      return { success: false, message: "缺少规则JSON" };
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return { success: false, message: "缺少规则JSON" };
+      }
+      try {
+        const parsed = JSON.parse(trimmed);
+        return { success: true, value: JSON.stringify(parsed) };
+      } catch {
+        return { success: false, message: "DNS规则JSON无效" };
+      }
+    }
+    try {
+      return { success: true, value: JSON.stringify(value) };
+    } catch {
+      return { success: false, message: "DNS规则JSON无效" };
+    }
+  };
+
+  const findDnsRuleConflicts = async (nodeIds: number[], excludeId?: number) => {
+    if (!nodeIds.length) return [];
+    const conditions = nodeIds.map(() => "JSON_CONTAINS(node_ids, JSON_ARRAY(?))").join(" OR ");
+    const values: any[] = [...nodeIds];
+    let sql = `SELECT id, name, node_ids FROM dns_rules WHERE ${conditions}`;
+    if (excludeId && Number.isFinite(excludeId)) {
+      sql += " AND id != ?";
+      values.push(excludeId);
+    }
+    const result = await ctx.dbService.db.prepare(sql).bind(...values).all();
+    return result.results || [];
   };
 
   const listRedisKeys = async (maxKeys = 2000): Promise<string[]> => {
@@ -1886,6 +1951,152 @@ export function createAdminRouter(ctx: AppContext) {
     if (!id) return errorResponse(res, "ID 无效", 400);
     await ctx.dbService.db.prepare("DELETE FROM audit_rules WHERE id = ?").bind(id).run();
     await ctx.cache.deleteByPrefix("audit_rules");
+    return successResponse(res, null, "删除成功");
+  });
+
+  // DNS 规则管理
+  router.get("/dns-rules", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const page = Number(req.query.page ?? 1) || 1;
+    const limitRaw = req.query.limit ?? req.query.pageSize ?? 20;
+    const pageSize = Math.min(Number(limitRaw) || 20, 200);
+    const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+    const offset = (page - 1) * pageSize;
+
+    const conditions: string[] = [];
+    const values: any[] = [];
+    if (search) {
+      conditions.push("(name LIKE ? OR description LIKE ?)");
+      values.push(`%${search}%`, `%${search}%`);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const totalRow = await ctx.dbService.db
+      .prepare(`SELECT COUNT(*) as total FROM dns_rules ${where}`)
+      .bind(...values)
+      .first<{ total?: number | string | null } | null>();
+    const total = ensureNumber(totalRow?.total, 0);
+
+    const rows = await ctx.dbService.db
+      .prepare(
+        `
+        SELECT id, name, description, rule_json, node_ids, enabled, created_at, updated_at
+        FROM dns_rules
+        ${where}
+        ORDER BY id ASC
+        LIMIT ? OFFSET ?
+      `
+      )
+      .bind(...values, pageSize, offset)
+      .all();
+
+    return successResponse(res, {
+      data: rows.results || [],
+      total,
+      pagination: {
+        total,
+        page,
+        limit: pageSize,
+        pages: total > 0 ? Math.ceil(total / pageSize) : 0
+      }
+    });
+  });
+
+  router.post("/dns-rules", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const { name, description, rule_json, node_ids, enabled } = req.body || {};
+    if (!name) return errorResponse(res, "缺少规则名称", 400);
+
+    const parsedRuleJson = normalizeRuleJson(rule_json);
+    if (!parsedRuleJson.success) return errorResponse(res, parsedRuleJson.message, 400);
+
+    const nodeIdList = normalizeNodeIds(node_ids);
+    if (!nodeIdList.length) return errorResponse(res, "请绑定至少一个节点", 400);
+
+    const conflicts = await findDnsRuleConflicts(nodeIdList);
+    if (conflicts.length) {
+      return errorResponse(res, "节点已被其他DNS规则绑定", 409, { conflicts });
+    }
+
+    const result = toRunResult(
+      await ctx.dbService.db
+        .prepare(
+          `
+          INSERT INTO dns_rules (name, description, rule_json, node_ids, enabled, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        `
+        )
+        .bind(
+          name,
+          description || "",
+          parsedRuleJson.value,
+          JSON.stringify(nodeIdList),
+          enabled !== undefined ? Number(enabled) : 1
+        )
+        .run()
+    );
+    if (getChanges(result) <= 0) {
+      return errorResponse(res, "创建失败", 500);
+    }
+
+    const rows = await ctx.dbService.db
+      .prepare("SELECT * FROM dns_rules ORDER BY id DESC LIMIT 1")
+      .all();
+    const created = (rows.results || [])[0] || null;
+    await ctx.cache.deleteByPrefix("dns_rules_");
+    return successResponse(res, created, "创建成功");
+  });
+
+  router.put("/dns-rules/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const id = Number(req.params.id);
+    if (!id) return errorResponse(res, "ID 无效", 400);
+    const { name, description, rule_json, node_ids, enabled } = req.body || {};
+    if (!name) return errorResponse(res, "缺少规则名称", 400);
+
+    const parsedRuleJson = normalizeRuleJson(rule_json);
+    if (!parsedRuleJson.success) return errorResponse(res, parsedRuleJson.message, 400);
+
+    const nodeIdList = normalizeNodeIds(node_ids);
+    if (!nodeIdList.length) return errorResponse(res, "请绑定至少一个节点", 400);
+
+    const conflicts = await findDnsRuleConflicts(nodeIdList, id);
+    if (conflicts.length) {
+      return errorResponse(res, "节点已被其他DNS规则绑定", 409, { conflicts });
+    }
+
+    await ctx.dbService.db
+      .prepare(
+        `
+        UPDATE dns_rules
+        SET name = ?, description = ?, rule_json = ?, node_ids = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `
+      )
+      .bind(
+        name,
+        description || "",
+        parsedRuleJson.value,
+        JSON.stringify(nodeIdList),
+        enabled !== undefined ? Number(enabled) : 1,
+        id
+      )
+      .run();
+
+    const updated = await ctx.dbService.db
+      .prepare("SELECT * FROM dns_rules WHERE id = ?")
+      .bind(id)
+      .first();
+    await ctx.cache.deleteByPrefix("dns_rules_");
+    return successResponse(res, updated, "更新成功");
+  });
+
+  router.delete("/dns-rules/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    const id = Number(req.params.id);
+    if (!id) return errorResponse(res, "ID 无效", 400);
+    await ctx.dbService.db.prepare("DELETE FROM dns_rules WHERE id = ?").bind(id).run();
+    await ctx.cache.deleteByPrefix("dns_rules_");
     return successResponse(res, null, "删除成功");
   });
 

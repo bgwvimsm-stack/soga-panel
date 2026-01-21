@@ -44,6 +44,23 @@ export class DatabaseService {
     return result.results || [];
   }
 
+  async getDnsRulesByNodeId(nodeId: number) {
+    const result = await this.db
+      .prepare(
+        `
+        SELECT id, rule_json
+        FROM dns_rules
+        WHERE enabled = 1
+          AND JSON_CONTAINS(node_ids, JSON_ARRAY(?))
+        ORDER BY id ASC
+        LIMIT 2
+      `
+      )
+      .bind(nodeId)
+      .all();
+    return result.results || [];
+  }
+
   async getWhiteList() {
     const result = await this.db.prepare("SELECT * FROM white_list WHERE status = 1").all();
     return result.results || [];

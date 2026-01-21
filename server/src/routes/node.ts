@@ -110,6 +110,54 @@ export function createNodeRouter(ctx: AppContext) {
     return sendETagJson(res, rules, etag);
   });
 
+  // DNS 规则
+  router.get("/dns_rules", async (req: Request, res: Response) => {
+    const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);
+    if (!auth.success) return errorResponse(res, auth.message, 401);
+    const cacheKey = `dns_rules_${auth.nodeId}`;
+    let ruleJsonRaw: string | null = null;
+    let ruleValue: unknown | null = null;
+
+    try {
+      ruleJsonRaw = await ctx.cache.get(cacheKey);
+    } catch {
+      ruleJsonRaw = null;
+    }
+
+    if (ruleJsonRaw) {
+      ruleValue = safeJson(ruleJsonRaw, null);
+    }
+
+    if (ruleValue === null) {
+      const rows = (await ctx.dbService.getDnsRulesByNodeId(auth.nodeId)) as Array<{
+        id: number;
+        rule_json?: unknown;
+      }>;
+      if (!rows.length) return errorResponse(res, "DNS规则不存在", 404);
+      if (rows.length > 1) return errorResponse(res, "节点已绑定多条DNS规则", 409);
+
+      const raw =
+        typeof rows[0].rule_json === "string"
+          ? rows[0].rule_json
+          : JSON.stringify(rows[0].rule_json ?? {});
+      ruleValue = safeJson(raw, null);
+      if (ruleValue === null) return errorResponse(res, "DNS规则JSON无效", 500);
+
+      try {
+        await ctx.cache.set(cacheKey, JSON.stringify(ruleValue), 86400);
+      } catch {
+        // 忽略缓存失败
+      }
+    }
+
+    const etag = generateETag(ruleValue);
+    if (isETagMatch(req, etag)) {
+      return sendNotModified(res, etag);
+    }
+
+    return sendETagJson(res, ruleValue, etag);
+  });
+
   // 白名单
   router.get("/white_list", async (req: Request, res: Response) => {
     const auth = validateSogaAuth(req, ctx.env.NODE_API_KEY);

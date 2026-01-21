@@ -21,6 +21,11 @@ type AuditRuleRow = {
   rule: string | null;
 };
 
+type DnsRuleRow = {
+  id: number;
+  rule_json: string | null;
+};
+
 type WhiteListRow = {
   rule: string | null;
 };
@@ -259,6 +264,70 @@ export class SogaAPI {
 
       // 返回带 ETAG 的响应
       return createETagResponse(formattedRules, etag);
+    } catch (error) {
+      return new Response(
+        JSON.stringify({
+          code: 500,
+          message: error.message,
+        }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+  }
+
+  // 获取 DNS 规则
+  async getDnsRules(request) {
+    try {
+      const authResult = await validateSogaAuth(request, this.env);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+
+      const nodeId = authResult.nodeId;
+      const cacheKey = `dns_rules_${nodeId}`;
+      let ruleValue: unknown | null = null;
+
+      const cachedData = await this.cache.get(cacheKey);
+      if (typeof cachedData === "string") {
+        try {
+          ruleValue = JSON.parse(cachedData);
+        } catch {
+          ruleValue = null;
+        }
+      }
+
+      if (ruleValue === null) {
+        const rules = (await this.db.getDnsRulesByNodeId(nodeId)) as DnsRuleRow[];
+        if (!rules.length) {
+          return errorResponse("DNS规则不存在", 404);
+        }
+        if (rules.length > 1) {
+          return errorResponse("节点已绑定多条DNS规则", 409);
+        }
+
+        const raw = ensureString(rules[0]?.rule_json, "");
+        if (!raw) {
+          return errorResponse("DNS规则JSON无效", 500);
+        }
+
+        try {
+          ruleValue = JSON.parse(raw);
+        } catch {
+          return errorResponse("DNS规则JSON无效", 500);
+        }
+
+        await this.cache.set(cacheKey, JSON.stringify(ruleValue), 86400);
+      }
+
+      const etag = generateETag(ruleValue);
+      if (isETagMatch(request, etag)) {
+        return createNotModifiedResponse(etag);
+      }
+
+      return createETagResponse(ruleValue, etag);
     } catch (error) {
       return new Response(
         JSON.stringify({

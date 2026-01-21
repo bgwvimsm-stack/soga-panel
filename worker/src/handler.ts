@@ -55,6 +55,7 @@ export async function handleRequest(
     "GET /api/v1/node": () => sogaAPI.getNode(request),
     "GET /api/v1/users": () => sogaAPI.getUsers(request),
     "GET /api/v1/audit_rules": () => sogaAPI.getAuditRules(request),
+    "GET /api/v1/dns_rules": () => sogaAPI.getDnsRules(request),
     "GET /api/v1/white_list": () => sogaAPI.getWhiteList(request),
     "POST /api/v1/traffic": () => sogaAPI.submitTraffic(request),
     "POST /api/v1/alive_ip": () => sogaAPI.submitAliveIP(request),
@@ -191,6 +192,10 @@ export async function handleRequest(
     "POST /api/admin/audit-rules": () => adminAPI.createAuditRule(request),
     "PUT /api/admin/audit-rules/:id": () => adminAPI.updateAuditRule(request),
     "DELETE /api/admin/audit-rules/:id": () => adminAPI.deleteAuditRule(request),
+    "GET /api/admin/dns-rules": () => adminAPI.getDnsRules(request),
+    "POST /api/admin/dns-rules": () => adminAPI.createDnsRule(request),
+    "PUT /api/admin/dns-rules/:id": () => adminAPI.updateDnsRule(request),
+    "DELETE /api/admin/dns-rules/:id": () => adminAPI.deleteDnsRule(request),
     
     // 白名单管理
     "GET /api/admin/whitelist": () => adminAPI.getWhitelist(request),

@@ -65,6 +65,22 @@ export class DatabaseService {
     return result.results || [];
   }
 
+  // 获取 DNS 规则（按节点）
+  async getDnsRulesByNodeId(nodeId) {
+    const stmt = this.db.prepare(`
+      SELECT id, rule_json
+      FROM dns_rules
+      WHERE enabled = 1
+        AND EXISTS (
+          SELECT 1 FROM json_each(dns_rules.node_ids) WHERE json_each.value = ?
+        )
+      ORDER BY id ASC
+      LIMIT 2
+    `);
+    const result = await stmt.bind(nodeId).all();
+    return result.results || [];
+  }
+
   // 获取白名单
   async getWhiteList() {
     const stmt = this.db.prepare("SELECT * FROM white_list WHERE status = 1");

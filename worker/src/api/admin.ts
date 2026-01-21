@@ -451,6 +451,82 @@ export class AdminAPI {
     return this.mapSharedIdRow(row);
   }
 
+  private normalizeNodeIds(value: unknown): number[] {
+    let list: number[] = [];
+
+    if (Array.isArray(value)) {
+      list = value.map((id) => Number(id));
+    } else if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            list = parsed.map((id) => Number(id));
+          } else {
+            list = trimmed.split(",").map((id) => Number(id.trim()));
+          }
+        } catch {
+          list = trimmed.split(",").map((id) => Number(id.trim()));
+        }
+      }
+    }
+
+    const unique = new Set<number>();
+    for (const item of list) {
+      const num = Number(item);
+      if (Number.isFinite(num) && num > 0) {
+        unique.add(num);
+      }
+    }
+    return Array.from(unique);
+  }
+
+  private normalizeRuleJson(value: unknown): { success: boolean; value?: string; message?: string } {
+    if (value === null || value === undefined || value === "") {
+      return { success: false, message: "缺少规则JSON" };
+    }
+
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return { success: false, message: "缺少规则JSON" };
+      }
+      try {
+        const parsed = JSON.parse(trimmed);
+        return { success: true, value: JSON.stringify(parsed) };
+      } catch {
+        return { success: false, message: "DNS规则JSON无效" };
+      }
+    }
+
+    try {
+      return { success: true, value: JSON.stringify(value) };
+    } catch {
+      return { success: false, message: "DNS规则JSON无效" };
+    }
+  }
+
+  private async findDnsRuleConflicts(nodeIds: number[], excludeId?: number) {
+    if (nodeIds.length === 0) return [];
+    const placeholders = nodeIds.map(() => "?").join(", ");
+    let sql = `
+      SELECT id, name, node_ids
+      FROM dns_rules
+      WHERE EXISTS (
+        SELECT 1 FROM json_each(dns_rules.node_ids) WHERE json_each.value IN (${placeholders})
+      )
+    `;
+    const params: unknown[] = [...nodeIds];
+    if (excludeId && Number.isFinite(excludeId)) {
+      sql += " AND id != ?";
+      params.push(excludeId);
+    }
+
+    const result = await this.db.db.prepare(sql).bind(...params).all();
+    return result.results ?? [];
+  }
+
   private normalizeTimestampValue(value: unknown, field: string): number {
     if (value === undefined || value === null) {
       throw new Error(`${field} 不能为空`);
@@ -3698,6 +3774,216 @@ export class AdminAPI {
       return successResponse({ message: "审计规则删除成功" });
     } catch (error) {
       console.error("删除审计规则失败:", error);
+      return errorResponse(error.message, 500);
+    }
+  }
+
+  // ===== DNS 规则管理 =====
+
+  /**
+   * 获取 DNS 规则
+   * GET /api/admin/dns-rules
+   */
+  async getDnsRules(request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const page = parseInt(url.searchParams.get("page")) || 1;
+      const limitParam = parseInt(url.searchParams.get("limit")) || 20;
+      const safeLimit = limitParam > 0 ? limitParam : 20;
+      const search = url.searchParams.get("search");
+      const offset = (page - 1) * safeLimit;
+
+      let whereConditions = [];
+      let params = [];
+
+      if (search) {
+        whereConditions.push("(name LIKE ? OR description LIKE ?)");
+        params.push(`%${search}%`, `%${search}%`);
+      }
+
+      const whereClause = whereConditions.length > 0
+        ? ` WHERE ${whereConditions.join(" AND ")}`
+        : "";
+
+      const totalRow = await this.db.db
+        .prepare(`SELECT COUNT(*) as total FROM dns_rules${whereClause}`)
+        .bind(...params)
+        .first<CountRow>();
+      const totalCount = ensureNumber(totalRow?.total);
+
+      const rulesResult = await this.db.db
+        .prepare(`SELECT 
+          id, name, description, rule_json, node_ids, enabled, created_at, updated_at
+         FROM dns_rules${whereClause}
+         ORDER BY id ASC
+         LIMIT ? OFFSET ?`)
+        .bind(...params, safeLimit, offset)
+        .all();
+
+      return successResponse({
+        data: rulesResult.results ?? [],
+        total: totalCount,
+        pagination: {
+          total: totalCount,
+          page,
+          limit: safeLimit,
+          pages: totalCount > 0 ? Math.ceil(totalCount / safeLimit) : 0,
+        }
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error("获取DNS规则失败:", err);
+      return errorResponse(err.message, 500);
+    }
+  }
+
+  /**
+   * 创建 DNS 规则
+   * POST /api/admin/dns-rules
+   */
+  async createDnsRule(request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const data = await request.json();
+      const { name, description, rule_json, node_ids, enabled } = data || {};
+
+      if (!name) {
+        return errorResponse("缺少规则名称", 400);
+      }
+
+      const parsedRuleJson = this.normalizeRuleJson(rule_json);
+      if (!parsedRuleJson.success) {
+        return errorResponse(parsedRuleJson.message, 400);
+      }
+
+      const nodeIdList = this.normalizeNodeIds(node_ids);
+      if (nodeIdList.length === 0) {
+        return errorResponse("请绑定至少一个节点", 400);
+      }
+
+      const conflict = await this.findDnsRuleConflicts(nodeIdList);
+      if (conflict.length > 0) {
+        return errorResponse("节点已被其他DNS规则绑定", 409, { conflicts: conflict });
+      }
+
+      const result = await this.db.db.prepare(`
+        INSERT INTO dns_rules (name, description, rule_json, node_ids, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'))
+      `).bind(
+        name,
+        description || '',
+        parsedRuleJson.value,
+        JSON.stringify(nodeIdList),
+        enabled !== undefined ? enabled : 1
+      ).run();
+
+      const newRule = await this.db.db.prepare(
+        "SELECT * FROM dns_rules WHERE id = ?"
+      ).bind(result.meta.last_row_id).first();
+
+      await this.cache.deleteByPrefix("dns_rules_");
+      return successResponse(newRule);
+    } catch (error) {
+      console.error("创建DNS规则失败:", error);
+      return errorResponse(error.message, 500);
+    }
+  }
+
+  /**
+   * 更新 DNS 规则
+   * PUT /api/admin/dns-rules/:id
+   */
+  async updateDnsRule(request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const ruleId = url.pathname.split('/').pop();
+      const data = await request.json();
+      const { name, description, rule_json, node_ids, enabled } = data || {};
+
+      if (!ruleId) {
+        return errorResponse("ID 无效", 400);
+      }
+      if (!name) {
+        return errorResponse("缺少规则名称", 400);
+      }
+
+      const parsedRuleJson = this.normalizeRuleJson(rule_json);
+      if (!parsedRuleJson.success) {
+        return errorResponse(parsedRuleJson.message, 400);
+      }
+
+      const nodeIdList = this.normalizeNodeIds(node_ids);
+      if (nodeIdList.length === 0) {
+        return errorResponse("请绑定至少一个节点", 400);
+      }
+
+      const conflict = await this.findDnsRuleConflicts(nodeIdList, Number(ruleId));
+      if (conflict.length > 0) {
+        return errorResponse("节点已被其他DNS规则绑定", 409, { conflicts: conflict });
+      }
+
+      await this.db.db.prepare(`
+        UPDATE dns_rules 
+        SET name = ?, description = ?, rule_json = ?, node_ids = ?, enabled = ?, 
+            updated_at = datetime('now', '+8 hours')
+        WHERE id = ?
+      `).bind(
+        name,
+        description || '',
+        parsedRuleJson.value,
+        JSON.stringify(nodeIdList),
+        enabled !== undefined ? enabled : 1,
+        ruleId
+      ).run();
+
+      const updatedRule = await this.db.db.prepare(
+        "SELECT * FROM dns_rules WHERE id = ?"
+      ).bind(ruleId).first();
+
+      await this.cache.deleteByPrefix("dns_rules_");
+      return successResponse(updatedRule);
+    } catch (error) {
+      console.error("更新DNS规则失败:", error);
+      return errorResponse(error.message, 500);
+    }
+  }
+
+  /**
+   * 删除 DNS 规则
+   * DELETE /api/admin/dns-rules/:id
+   */
+  async deleteDnsRule(request) {
+    try {
+      const adminCheck = await this.validateAdmin(request);
+      if (!adminCheck.success) {
+        return errorResponse(adminCheck.message, 401);
+      }
+
+      const url = new URL(request.url);
+      const ruleId = url.pathname.split('/').pop();
+
+      await this.db.db.prepare(
+        "DELETE FROM dns_rules WHERE id = ?"
+      ).bind(ruleId).run();
+
+      await this.cache.deleteByPrefix("dns_rules_");
+      return successResponse({ message: "DNS规则删除成功" });
+    } catch (error) {
+      console.error("删除DNS规则失败:", error);
       return errorResponse(error.message, 500);
     }
   }
