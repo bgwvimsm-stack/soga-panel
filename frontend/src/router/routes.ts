@@ -301,6 +301,16 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: "dns-rules",
+        name: "AdminDnsRules",
+        component: () => import("@/views/admin/dns-rules.vue"),
+        meta: {
+          title: "DNS规则",
+          requiresAuth: true,
+          requiresAdmin: true
+        }
+      },
+      {
         path: "audit-logs",
         name: "AdminAuditLogs",
         component: () => import("@/views/admin/audit-logs.vue"),

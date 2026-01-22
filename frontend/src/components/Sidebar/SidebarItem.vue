@@ -133,6 +133,7 @@ const iconMap = {
   'admin-users': IconAdminUsers,
   'admin-audit-group': IconAdminAuditGroup,
   'admin-audit-rules': IconAdminAuditRules,
+  'admin-dns-rules': IconAdminAuditRules,
   'admin-whitelist': IconAdminWhitelist,
   'admin-audit-logs': IconAdminAuditLogs,
   'admin-system-configs': IconAdminSystemConfigs,

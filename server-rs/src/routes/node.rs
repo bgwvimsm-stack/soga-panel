@@ -20,6 +20,7 @@ pub fn router() -> Router<AppState> {
     .route("/node", get(get_node))
     .route("/users", get(get_users))
     .route("/audit_rules", get(get_audit_rules))
+    .route("/dns_rules", get(get_dns_rules))
     .route("/white_list", get(get_white_list))
     .route("/traffic", post(post_traffic))
     .route("/alive_ip", post(post_alive_ip))
@@ -193,6 +194,68 @@ async fn get_audit_rules(State(state): State<AppState>, headers: HeaderMap) -> R
   }
 
   let payload = Value::Array(rules);
+  let etag = generate_etag(&payload);
+  if is_etag_match(&headers, &etag) {
+    return not_modified(&etag);
+  }
+  json_with_etag(&payload, &etag)
+}
+
+async fn get_dns_rules(State(state): State<AppState>, headers: HeaderMap) -> Response {
+  let auth = match validate_soga_auth(&headers, state.env.node_api_key.as_deref()) {
+    Ok(auth) => auth,
+    Err(resp) => return resp
+  };
+
+  let cache_key = format!("dns_rules_{}", auth.node_id);
+  let cached = cache_get(&state, &cache_key).await;
+  let mut rule_value: Option<Value> = None;
+
+  if let Some(json_str) = cached {
+    if let Ok(parsed) = serde_json::from_str::<Value>(&json_str) {
+      rule_value = Some(parsed);
+    }
+  }
+
+  if rule_value.is_none() {
+    let rows = sqlx::query(
+      "SELECT id, CAST(rule_json AS CHAR) AS rule_json FROM dns_rules WHERE enabled = 1 AND JSON_CONTAINS(node_ids, JSON_ARRAY(?)) ORDER BY id ASC LIMIT 2"
+    )
+      .bind(auth.node_id)
+      .fetch_all(&state.db)
+      .await;
+
+    match rows {
+      Ok(records) => {
+        if records.is_empty() {
+          return error(StatusCode::NOT_FOUND, "DNS规则不存在", None);
+        }
+        if records.len() > 1 {
+          return error(StatusCode::CONFLICT, "节点已绑定多条DNS规则", None);
+        }
+
+        let raw = records[0]
+          .try_get::<Option<String>, _>("rule_json")
+          .unwrap_or(None)
+          .unwrap_or_else(|| "{}".to_string());
+        let parsed = match serde_json::from_str::<Value>(&raw) {
+          Ok(value) => value,
+          Err(_) => return error(StatusCode::INTERNAL_SERVER_ERROR, "DNS规则JSON无效", None)
+        };
+        rule_value = Some(parsed);
+        let _ = cache_set(
+          &state,
+          &cache_key,
+          &serde_json::to_string(rule_value.as_ref().unwrap()).unwrap_or_default(),
+          86400
+        )
+        .await;
+      }
+      Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None)
+    }
+  }
+
+  let payload = rule_value.unwrap_or_else(|| json!({}));
   let etag = generate_etag(&payload);
   if is_etag_match(&headers, &etag) {
     return not_modified(&etag);

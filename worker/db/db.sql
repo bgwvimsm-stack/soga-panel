@@ -141,6 +141,28 @@ CREATE TABLE
         updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
     );
 
+-- DNS 规则表
+-- 字段说明：
+-- id: DNS 规则唯一标识ID（主键）
+-- name: 规则名称（不能为空）
+-- description: 规则描述
+-- rule_json: 规则 JSON 内容
+-- enabled: 规则启用状态（0-禁用，1-启用）
+-- node_ids: 绑定节点ID列表（JSON 数组）
+-- created_at: 创建时间（UTC+8时区）
+-- updated_at: 更新时间（UTC+8时区）
+CREATE TABLE
+    IF NOT EXISTS dns_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        description TEXT,
+        rule_json TEXT NOT NULL,
+        enabled INTEGER DEFAULT 1,
+        node_ids TEXT NOT NULL,
+        created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+        updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
+    );
+
 -- 审计白名单表
 -- 字段说明：
 -- id: 白名单规则唯一标识ID（主键）

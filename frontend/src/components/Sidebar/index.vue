@@ -158,9 +158,10 @@ const adminRoutes: MenuRoute[] = [
     path: '/admin/audit-system',
     name: 'admin-audit-system',
     icon: 'admin-audit-group',
-    title: '审计系统',
+    title: '路由系统',
     children: [
       { path: '/admin/audit-rules', name: 'admin-audit-rules', icon: 'admin-audit-rules', title: '审计规则' },
+      { path: '/admin/dns-rules', name: 'admin-dns-rules', icon: 'admin-dns-rules', title: 'DNS规则' },
       { path: '/admin/whitelist', name: 'admin-whitelist', icon: 'admin-whitelist', title: '审计白名单' },
       { path: '/admin/audit-logs', name: 'admin-audit-logs', icon: 'admin-audit-logs', title: '审计记录' }
     ]
