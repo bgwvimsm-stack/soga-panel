@@ -391,7 +391,9 @@ async fn ensure_dns_rule_unique(
     .map(|_| "JSON_CONTAINS(node_ids, JSON_ARRAY(?))")
     .collect::<Vec<&str>>()
     .join(" OR ");
-  let mut sql = format!("SELECT id, name, CAST(node_ids AS CHAR) AS node_ids FROM dns_rules WHERE {conditions}");
+  let mut sql = format!(
+    "SELECT id, name, CAST(node_ids AS CHAR) AS node_ids FROM dns_rules WHERE ({conditions})"
+  );
   if let Some(_) = exclude_id {
     sql.push_str(" AND id != ?");
   }

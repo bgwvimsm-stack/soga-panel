@@ -120,7 +120,7 @@ export function createAdminRouter(ctx: AppContext) {
     if (!nodeIds.length) return [];
     const conditions = nodeIds.map(() => "JSON_CONTAINS(node_ids, JSON_ARRAY(?))").join(" OR ");
     const values: any[] = [...nodeIds];
-    let sql = `SELECT id, name, node_ids FROM dns_rules WHERE ${conditions}`;
+    let sql = `SELECT id, name, node_ids FROM dns_rules WHERE (${conditions})`;
     if (excludeId && Number.isFinite(excludeId)) {
       sql += " AND id != ?";
       values.push(excludeId);
