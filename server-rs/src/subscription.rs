@@ -960,6 +960,30 @@ fn generate_hysteria_link(
   format!("hysteria2://{}:{}?{}#{}", host, port, query, encode(name))
 }
 
+fn generate_anytls_link(
+  name: &str,
+  server: &str,
+  port: i64,
+  tls_host: &str,
+  config: &Value,
+  user: &SubscriptionUser
+) -> String {
+  let host = format_host_for_url(server);
+  let password = encode(user.passwd.as_deref().unwrap_or(""));
+  let peer = resolve_config_string_value(
+    config,
+    &["sni", "host", "server"],
+    if !tls_host.is_empty() { tls_host } else { server }
+  );
+  let params = vec![
+    ("peer".to_string(), peer),
+    ("insecure".to_string(), "1".to_string()),
+    ("udp".to_string(), "1".to_string())
+  ];
+  let query = build_query_string(params);
+  format!("anytls://{}@{}:{}?{}#{}", password, host, port, query, encode(name))
+}
+
 pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser) -> String {
   let mut proxies: Vec<Value> = Vec::new();
   let mut proxy_names: Vec<String> = Vec::new();
@@ -2244,22 +2268,11 @@ pub fn generate_shadowrocket_config(nodes: &[SubscriptionNode], user: &Subscript
     let name = node.name.clone();
 
     let line = match node_type.as_str() {
-      "v2ray" => format!(
-        "vmess://{}@{}:{}#{}",
-        user.uuid.clone().unwrap_or_default(),
-        server,
-        port,
-        encode(&name)
-      ),
+      "v2ray" => generate_vmess_link(&name, &server, port, &tls_host, &config, user),
       "vless" => generate_vless_link(&name, &server, port, &tls_host, &config, &client, user),
-      "trojan" => format!(
-        "trojan://{}@{}:{}#{}",
-        encode(&user.passwd.clone().unwrap_or_default()),
-        server,
-        port,
-        encode(&name)
-      ),
+      "trojan" => generate_trojan_link(&name, &server, port, &tls_host, &config, user),
       "ss" => generate_shadowsocks_link(&name, &server, port, &tls_host, &config, user),
+      "anytls" => generate_anytls_link(&name, &server, port, &tls_host, &config, user),
       _ => String::new()
     };
     if !line.is_empty() {
