@@ -260,6 +260,20 @@ const isGmailAlias = (email: string) => {
   return local.includes("+") || local.includes(".");
 };
 
+const validateGmailAlias = (rule: any, value: any, callback: any) => {
+  if (!value) {
+    callback();
+    return;
+  }
+
+  if (isGmailAlias(String(value))) {
+    callback(new Error("暂不支持使用 Gmail 别名注册，请使用原始邮箱地址"));
+    return;
+  }
+
+  callback();
+};
+
 const validateConfirmPassword = (rule: any, value: any, callback: any) => {
   if (value !== registerForm.password) {
     callback(new Error("两次输入密码不一致"));
@@ -271,7 +285,8 @@ const validateConfirmPassword = (rule: any, value: any, callback: any) => {
 const registerRules = computed<FormRules>(() => ({
   email: [
     { required: true, message: "请输入邮箱地址", trigger: "blur" },
-    { type: "email", message: "请输入正确的邮箱格式", trigger: "blur" }
+    { type: "email", message: "请输入正确的邮箱格式", trigger: "blur" },
+    { validator: validateGmailAlias, trigger: ["blur", "change"] }
   ],
   username: [
     { required: true, message: "请输入用户名", trigger: "blur" },
@@ -362,6 +377,11 @@ const handleRegister = async () => {
     pendingAgreementAction.value = handleRegister;
     termsRef.value?.openDialog();
     ElMessage.warning("注册账号前需要先同意服务条款");
+    return;
+  }
+
+  if (isGmailAlias(registerForm.email)) {
+    ElMessage.warning("暂不支持使用 Gmail 别名注册，请使用原始邮箱地址");
     return;
   }
 
