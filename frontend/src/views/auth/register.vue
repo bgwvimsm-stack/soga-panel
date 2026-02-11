@@ -25,7 +25,31 @@
         @keyup.enter="handleRegister"
       >
         <el-form-item prop="email">
+          <div v-if="hasEmailSuffixOptions" class="email-combo">
+            <el-input
+              v-model="emailLocalPart"
+              placeholder="请输入邮箱前缀"
+              size="large"
+              clearable
+              :prefix-icon="Message"
+              class="email-local-input"
+            />
+            <el-select
+              v-model="selectedEmailSuffix"
+              placeholder="选择邮箱后缀"
+              size="large"
+              class="email-suffix-select"
+            >
+              <el-option
+                v-for="suffix in emailSuffixOptions"
+                :key="suffix"
+                :label="`@${suffix}`"
+                :value="suffix"
+              />
+            </el-select>
+          </div>
           <el-input
+            v-else
             v-model="registerForm.email"
             placeholder="请输入邮箱地址"
             size="large"
@@ -134,7 +158,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onBeforeUnmount, onMounted, computed } from "vue";
+import { ref, reactive, onBeforeUnmount, onMounted, computed, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { ElMessage, type FormInstance, type FormRules } from "element-plus";
 import { Message, User, Lock, MessageBox, Loading, Link } from "@element-plus/icons-vue";
@@ -178,10 +202,76 @@ const registerForm = reactive({
   inviteCode: ""
 });
 
+const parseEmailSuffixEnv = (): string[] => {
+  const raw = import.meta.env.VITE_EMAIL_SUFFIX_OPTIONS;
+  if (!raw) return [];
+
+  const normalize = (value: unknown) =>
+    String(value || "")
+      .replace(/^@/, "")
+      .trim();
+
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (Array.isArray(parsed)) {
+      return parsed.map(normalize).filter(Boolean);
+    }
+  } catch (error) {
+    console.warn("解析邮箱后缀环境变量失败，使用逗号分隔回退", error);
+  }
+
+  return String(raw)
+    .split(",")
+    .map(normalize)
+    .filter(Boolean);
+};
+
+const emailSuffixOptions = computed<string[]>(() => parseEmailSuffixEnv());
+const hasEmailSuffixOptions = computed(() => emailSuffixOptions.value.length > 0);
+const emailLocalPart = ref("");
+const selectedEmailSuffix = ref(emailSuffixOptions.value[0] || "");
+
+const composeEmailFromParts = () => {
+  if (!hasEmailSuffixOptions.value) return;
+  const localPart = emailLocalPart.value.replace(/@.*/, "").trim();
+
+  registerForm.email =
+    localPart && selectedEmailSuffix.value
+      ? `${localPart}@${selectedEmailSuffix.value}`
+      : "";
+};
+
+watch([emailLocalPart, selectedEmailSuffix], composeEmailFromParts);
+
+watch(
+  emailSuffixOptions,
+  options => {
+    if (options.length && !selectedEmailSuffix.value) {
+      selectedEmailSuffix.value = options[0];
+    }
+    composeEmailFromParts();
+  },
+  { immediate: true }
+);
+
 const isGmailAlias = (email: string) => {
   const [local = "", domain = ""] = email.toLowerCase().split("@");
   if (domain !== "gmail.com" && domain !== "googlemail.com") return false;
   return local.includes("+") || local.includes(".");
+};
+
+const validateGmailAlias = (rule: any, value: any, callback: any) => {
+  if (!value) {
+    callback();
+    return;
+  }
+
+  if (isGmailAlias(String(value))) {
+    callback(new Error("暂不支持使用 Gmail 别名注册，请使用原始邮箱地址"));
+    return;
+  }
+
+  callback();
 };
 
 const validateConfirmPassword = (rule: any, value: any, callback: any) => {
@@ -195,7 +285,8 @@ const validateConfirmPassword = (rule: any, value: any, callback: any) => {
 const registerRules = computed<FormRules>(() => ({
   email: [
     { required: true, message: "请输入邮箱地址", trigger: "blur" },
-    { type: "email", message: "请输入正确的邮箱格式", trigger: "blur" }
+    { type: "email", message: "请输入正确的邮箱格式", trigger: "blur" },
+    { validator: validateGmailAlias, trigger: ["blur", "change"] }
   ],
   username: [
     { required: true, message: "请输入用户名", trigger: "blur" },
@@ -286,6 +377,11 @@ const handleRegister = async () => {
     pendingAgreementAction.value = handleRegister;
     termsRef.value?.openDialog();
     ElMessage.warning("注册账号前需要先同意服务条款");
+    return;
+  }
+
+  if (isGmailAlias(registerForm.email)) {
+    ElMessage.warning("暂不支持使用 Gmail 别名注册，请使用原始邮箱地址");
     return;
   }
 
@@ -441,6 +537,77 @@ onBeforeUnmount(() => {
   :deep(.el-input__inner) {
     font-size: 15px;
   }
+}
+
+.email-combo {
+  display: flex;
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+  align-items: stretch;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.email-combo:focus-within {
+  border-color: #5a6cea;
+  box-shadow: 0 0 0 3px rgba(90, 108, 234, 0.15);
+}
+
+.email-local-input {
+  flex: 7;
+}
+
+.email-suffix-select {
+  flex: 0 0 30%;
+  width: 30%;
+  max-width: 40%;
+  min-width: 150px;
+  border-left: 1px solid #e5e7eb;
+}
+
+.email-combo :deep(.el-input__wrapper),
+.email-combo :deep(.el-select__wrapper) {
+  flex: 1;
+  min-height: 48px;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent;
+  border-radius: 0;
+  padding: 0 14px;
+  width: 100%;
+}
+
+.email-local-input :deep(.el-input__wrapper) {
+  padding-left: 16px;
+}
+
+.email-suffix-select :deep(.el-select__wrapper) {
+  width: 100%;
+  height: 100%;
+}
+
+.email-suffix-select :deep(.el-select__selected-item),
+.email-suffix-select :deep(.el-select__placeholder) {
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  color: #374151;
+  width: 100%;
+  flex: 1;
+}
+
+.email-suffix-select :deep(.el-select__caret) {
+  color: #9ca3af;
+}
+
+.email-suffix-select :deep(.el-select__selected-item) {
+  display: flex;
+  align-items: center;
+  color: #374151;
+  width: 100%;
 }
 
 .code-group {

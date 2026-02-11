@@ -83,7 +83,8 @@ declare global {
     VITE_HIDE_HOME: string;
     VITE_COMPRESSION: ViteCompression;
     VITE_GOOGLE_CLIENT_ID?: string;
-     VITE_TURNSTILE_SITE_KEY?: string;
+    VITE_TURNSTILE_SITE_KEY?: string;
+    VITE_EMAIL_SUFFIX_OPTIONS?: string;
     SITE_NAME?: string;
     VITE_SITE_NAME?: string;
     VITE_FORCE_SITE_NAME?: string;
