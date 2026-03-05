@@ -157,6 +157,19 @@
           />
         </el-form-item>
 
+        <el-form-item label="VIP等级">
+          <el-input-number
+            v-model="announcementForm.notification_min_class"
+            :min="0"
+            :max="999"
+            :disabled="Boolean(editingAnnouncement)"
+            style="width: 200px;"
+          />
+          <div style="font-size: 12px; color: #909399; margin-top: 4px;">
+            发送给等于或高于这个等级的用户，0为不分级
+          </div>
+        </el-form-item>
+
         <el-form-item label="通知方式">
           <el-select
             v-model="announcementForm.notification_channels"
@@ -259,7 +272,8 @@ const announcementForm = reactive({
   status: 1,
   is_pinned: false,
   priority: 0,
-  notification_channels: [] as string[]
+  notification_channels: [] as string[],
+  notification_min_class: 0
 });
 
 // 表单验证规则
@@ -346,6 +360,7 @@ const editAnnouncement = (announcement: any) => {
   announcementForm.is_pinned = Boolean(announcement.is_pinned);
   announcementForm.priority = Number(announcement.priority) || 0;
   announcementForm.notification_channels = [];
+  announcementForm.notification_min_class = 0;
   showCreateDialog.value = true;
 };
 
@@ -427,7 +442,8 @@ const saveAnnouncement = async () => {
     } else {
       await createAnnouncement({
         ...baseFormData,
-        notification_channels: [...announcementForm.notification_channels]
+        notification_channels: [...announcementForm.notification_channels],
+        notification_min_class: Number(announcementForm.notification_min_class) || 0
       });
       ElMessage.success('公告创建成功');
     }
@@ -453,6 +469,7 @@ const resetForm = () => {
   announcementForm.is_pinned = false;
   announcementForm.priority = 0;
   announcementForm.notification_channels = [];
+  announcementForm.notification_min_class = 0;
   announcementFormRef.value?.clearValidate();
 };
 

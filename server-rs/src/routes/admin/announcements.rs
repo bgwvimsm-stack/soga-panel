@@ -33,7 +33,8 @@ struct AnnouncementRequest {
   status: Option<i64>,
   is_pinned: Option<bool>,
   priority: Option<i64>,
-  notification_channels: Option<Value>
+  notification_channels: Option<Value>,
+  notification_min_class: Option<Value>
 }
 
 pub fn router() -> Router<AppState> {
@@ -118,6 +119,10 @@ async fn post_announcement(
   if has_channel_input(raw_channels.as_ref()) && channels.is_empty() {
     return error(StatusCode::BAD_REQUEST, "通知方式无效", None);
   }
+  let notification_min_class = match parse_notification_min_class(body.notification_min_class.as_ref()) {
+    Ok(value) => value,
+    Err(message) => return error(StatusCode::BAD_REQUEST, message, None)
+  };
 
   let title = body.title.unwrap_or_default().trim().to_string();
   let content = body.content.unwrap_or_default().trim().to_string();
@@ -171,6 +176,7 @@ async fn post_announcement(
       AnnouncementQueueInput {
         announcement_id,
         channels,
+        min_class: notification_min_class,
         title: title.clone(),
         content: content.clone(),
         content_html: content_html.clone(),
@@ -205,6 +211,30 @@ async fn post_announcement(
     object.insert("notification_queue".to_string(), json!(queue_result));
   }
   success(payload, "创建成功").into_response()
+}
+
+fn parse_notification_min_class(raw: Option<&Value>) -> Result<i64, &'static str> {
+  let Some(value) = raw else {
+    return Ok(0);
+  };
+  match value {
+    Value::Null => Ok(0),
+    Value::Number(number) => number
+      .as_i64()
+      .map(|value| value.max(0))
+      .ok_or("VIP等级无效"),
+    Value::String(text) => {
+      let trimmed = text.trim();
+      if trimmed.is_empty() {
+        return Ok(0);
+      }
+      match trimmed.parse::<i64>() {
+        Ok(value) => Ok(value.max(0)),
+        Err(_) => Err("VIP等级无效")
+      }
+    }
+    _ => Err("VIP等级无效")
+  }
 }
 
 async fn put_announcement(

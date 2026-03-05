@@ -36,6 +36,7 @@ type QueuePayload = {
 type EnqueueInput = {
   announcementId: number;
   channels: string[];
+  minClass: number;
   title: string;
   content: string;
   contentHtml: string;
@@ -109,9 +110,11 @@ export class MessageQueueService {
         success: true,
         queued_count: 0,
         channels: [],
+        min_class: Math.max(0, Number(input.minClass || 0)),
         channel_stats: {} as Record<string, number>
       };
     }
+    const minClass = Math.max(0, Number(input.minClass || 0));
 
     const siteConfigs = await this.loadSiteConfigs();
     const payload: QueuePayload = {
@@ -140,7 +143,7 @@ export class MessageQueueService {
     const channelStats: Record<string, number> = {};
 
     for (const channel of channels) {
-      const recipients = await this.getRecipientsByChannel(channel);
+      const recipients = await this.getRecipientsByChannel(channel, minClass);
       channelStats[channel] = recipients.length;
       for (const recipient of recipients) {
         await insertStmt
@@ -163,6 +166,7 @@ export class MessageQueueService {
       success: true,
       queued_count: queuedCount,
       channels,
+      min_class: minClass,
       channel_stats: channelStats
     };
   }
@@ -280,7 +284,8 @@ export class MessageQueueService {
       .run();
   }
 
-  private async getRecipientsByChannel(channel: MessageChannel): Promise<RecipientRow[]> {
+  private async getRecipientsByChannel(channel: MessageChannel, minClass: number): Promise<RecipientRow[]> {
+    const safeMinClass = Math.max(0, Number(minClass || 0));
     if (channel === "email") {
       const result = await this.db.db
         .prepare(
@@ -290,8 +295,10 @@ export class MessageQueueService {
           WHERE status = 1
             AND email IS NOT NULL
             AND email != ''
+            AND (? <= 0 OR class >= ?)
         `
         )
+        .bind(safeMinClass, safeMinClass)
         .all<RecipientRow>();
       return result.results ?? [];
     }
@@ -305,8 +312,10 @@ export class MessageQueueService {
           AND bark_enabled = 1
           AND bark_key IS NOT NULL
           AND bark_key != ''
+          AND (? <= 0 OR class >= ?)
       `
       )
+      .bind(safeMinClass, safeMinClass)
       .all<RecipientRow>();
     return result.results ?? [];
   }

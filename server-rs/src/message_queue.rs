@@ -43,6 +43,7 @@ impl MessageChannel {
 pub struct AnnouncementQueueInput {
   pub announcement_id: i64,
   pub channels: Vec<MessageChannel>,
+  pub min_class: i64,
   pub title: String,
   pub content: String,
   pub content_html: String,
@@ -54,6 +55,7 @@ pub struct EnqueueResult {
   pub success: bool,
   pub queued_count: i64,
   pub channels: Vec<String>,
+  pub min_class: i64,
   pub channel_stats: HashMap<String, i64>
 }
 
@@ -63,6 +65,7 @@ impl EnqueueResult {
       success: true,
       queued_count: 0,
       channels: Vec::new(),
+      min_class: 0,
       channel_stats: HashMap::new()
     }
   }
@@ -149,6 +152,7 @@ pub async fn enqueue_announcement_notifications(
   if input.channels.is_empty() {
     return Ok(EnqueueResult::empty());
   }
+  let min_class = input.min_class.max(0);
 
   let (site_name, site_url) = load_site_configs(state).await?;
   let payload = QueuePayload {
@@ -170,7 +174,7 @@ pub async fn enqueue_announcement_notifications(
   let mut channel_names: Vec<String> = Vec::new();
 
   for channel in input.channels {
-    let recipients = get_recipients_by_channel(state, channel).await?;
+    let recipients = get_recipients_by_channel(state, channel, min_class).await?;
     let channel_name = channel.as_str().to_string();
     channel_names.push(channel_name.clone());
     channel_stats.insert(channel_name.clone(), recipients.len() as i64);
@@ -202,6 +206,7 @@ pub async fn enqueue_announcement_notifications(
     success: true,
     queued_count,
     channels: channel_names,
+    min_class,
     channel_stats
   })
 }
@@ -384,8 +389,10 @@ async fn release_stale_processing_messages(state: &AppState) -> Result<(), Strin
 
 async fn get_recipients_by_channel(
   state: &AppState,
-  channel: MessageChannel
+  channel: MessageChannel,
+  min_class: i64
 ) -> Result<Vec<RecipientRow>, String> {
+  let safe_min_class = min_class.max(0);
   let rows = if channel == MessageChannel::Email {
     sqlx::query(
       r#"
@@ -394,8 +401,11 @@ async fn get_recipients_by_channel(
       WHERE status = 1
         AND email IS NOT NULL
         AND email != ''
+        AND (? <= 0 OR class >= ?)
       "#
     )
+    .bind(safe_min_class)
+    .bind(safe_min_class)
     .fetch_all(&state.db)
     .await
     .map_err(|err| err.to_string())?
@@ -408,8 +418,11 @@ async fn get_recipients_by_channel(
         AND bark_enabled = 1
         AND bark_key IS NOT NULL
         AND bark_key != ''
+        AND (? <= 0 OR class >= ?)
       "#
     )
+    .bind(safe_min_class)
+    .bind(safe_min_class)
     .fetch_all(&state.db)
     .await
     .map_err(|err| err.to_string())?

@@ -30,7 +30,7 @@ export function createAnnouncementRouter(ctx: AppContext) {
   router.post("/admin", async (req: Request, res: Response) => {
     const user = (req as any).user;
     if (!user?.is_admin) return errorResponse(res, "需要管理员权限", 403);
-    const { title, content, type, status, is_pinned, priority, notification_channels } = req.body || {};
+    const { title, content, type, status, is_pinned, priority, notification_channels, notification_min_class } = req.body || {};
     if (!title || !content) return errorResponse(res, "标题和内容不能为空", 400);
     const normalizedChannels = normalizeNotificationChannels(notification_channels);
     if (
@@ -48,12 +48,14 @@ export function createAnnouncementRouter(ctx: AppContext) {
         is_pinned,
         priority,
         notification_channels: normalizedChannels,
+        notification_min_class,
         created_by: Number(user.id)
       });
       return successResponse(res, created, "创建成功");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const statusCode = message.includes("通知方式无效") ? 400 : 500;
+      const statusCode =
+        message.includes("通知方式无效") || message.includes("VIP等级无效") ? 400 : 500;
       return errorResponse(res, message || "创建失败", statusCode);
     }
   });

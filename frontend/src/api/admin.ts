@@ -22,6 +22,7 @@ export interface CreateAnnouncementRequest {
   is_pinned?: boolean;
   priority?: number;
   notification_channels?: string[];
+  notification_min_class?: number;
 }
 
 export interface UpdateAnnouncementRequest extends CreateAnnouncementRequest {

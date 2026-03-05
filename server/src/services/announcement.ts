@@ -104,17 +104,24 @@ export class AnnouncementService {
     is_pinned?: boolean;
     priority?: number;
     notification_channels?: unknown;
+    notification_min_class?: unknown;
     created_by: number;
   }) {
     const now = getUtc8Timestamp();
     const notificationChannels = this.messageQueueService.normalizeChannels(
       data.notification_channels
     );
+    const notificationMinClass = this.parseNotificationMinClass(
+      data.notification_min_class
+    );
     if (
       this.hasNotificationChannelInput(data.notification_channels) &&
       notificationChannels.length === 0
     ) {
       throw new Error("通知方式无效");
+    }
+    if (notificationMinClass === null) {
+      throw new Error("VIP等级无效");
     }
 
     const contentHtml = this.markdownToHtml(data.content);
@@ -158,6 +165,7 @@ export class AnnouncementService {
       queueResult = await this.messageQueueService.enqueueAnnouncementNotifications({
         announcementId: newId,
         channels: notificationChannels,
+        minClass: notificationMinClass,
         title: ensureString(data.title),
         content: ensureString(data.content),
         contentHtml,
@@ -226,5 +234,12 @@ export class AnnouncementService {
     if (Array.isArray(channels)) return channels.length > 0;
     if (typeof channels === "string") return channels.trim().length > 0;
     return channels !== undefined && channels !== null;
+  }
+
+  private parseNotificationMinClass(value: unknown) {
+    if (value === undefined || value === null || value === "") return 0;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.max(0, Math.floor(parsed));
   }
 }
