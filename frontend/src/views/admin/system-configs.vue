@@ -69,6 +69,7 @@
             <li><strong>register_enabled</strong>: 0=禁用，1=开放注册，2=仅允许邀请码注册</li>
             <li><strong>default_class</strong>: 新用户默认等级，数字越大权限越高</li>
             <li><strong>register_email_verification_enabled</strong>: 1 开启注册验证码，0 可关闭此功能</li>
+            <li><strong>message_queue_page_size</strong>: 消息队列每分钟发送条数（用于邮件/Bark等通知限速）</li>
             <li><strong>rebate_rate</strong>: 邀请返利比例，0.1 表示 10%</li>
             <li><strong>rebate_mode</strong>: first_order=首单返利，every_order=每笔返利</li>
             <li><strong>invite_default_limit</strong>: 默认邀请码可使用次数（0 表示不限）</li>
@@ -161,6 +162,7 @@ const getInputType = (key: string) => {
     key.includes('expire_days') ||
     key.includes('class') ||
     key.includes('reset_day') ||
+    key.includes('page_size') ||
     key.endsWith('_amount') ||
     key.endsWith('_rate')
   ) {
@@ -185,6 +187,9 @@ const getUnit = (key: string) => {
   }
   if (key.endsWith('_amount')) {
     return '元'
+  }
+  if (key.includes('page_size')) {
+    return '条/分钟'
   }
   return ''
 }

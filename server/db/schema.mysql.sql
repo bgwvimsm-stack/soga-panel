@@ -199,6 +199,25 @@ CREATE TABLE IF NOT EXISTS announcements (
   CONSTRAINT fk_announcements_user FOREIGN KEY (created_by) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE IF NOT EXISTS message_queue (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '消息队列 ID',
+  announcement_id BIGINT NOT NULL COMMENT '关联公告 ID',
+  user_id BIGINT NOT NULL COMMENT '接收用户 ID',
+  channel VARCHAR(32) NOT NULL COMMENT '通知通道（email/bark/...)',
+  recipient VARCHAR(512) NOT NULL COMMENT '接收地址（邮箱/Bark Key）',
+  payload LONGTEXT NOT NULL COMMENT '消息快照 JSON',
+  status TINYINT NOT NULL DEFAULT 0 COMMENT '状态（0待发送 1发送中 2成功 3失败）',
+  attempt_count INT NOT NULL DEFAULT 0 COMMENT '已尝试次数',
+  max_attempts INT NOT NULL DEFAULT 3 COMMENT '最大尝试次数',
+  last_error TEXT COMMENT '最近一次错误',
+  scheduled_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '计划发送时间',
+  sent_at DATETIME COMMENT '发送成功时间',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  CONSTRAINT fk_message_queue_announcement FOREIGN KEY (announcement_id) REFERENCES announcements(id) ON DELETE CASCADE,
+  CONSTRAINT fk_message_queue_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS system_configs (
   id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '配置项 ID',
   `key` VARCHAR(255) NOT NULL UNIQUE COMMENT '配置键',
@@ -610,6 +629,11 @@ CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements (is_active)
 CREATE INDEX IF NOT EXISTS idx_announcements_pinned ON announcements (is_pinned);
 CREATE INDEX IF NOT EXISTS idx_announcements_created_at ON announcements (created_at);
 CREATE INDEX IF NOT EXISTS idx_announcements_expires_at ON announcements (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_message_queue_status_schedule ON message_queue (status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_message_queue_channel_status ON message_queue (channel, status);
+CREATE INDEX IF NOT EXISTS idx_message_queue_announcement ON message_queue (announcement_id);
+CREATE INDEX IF NOT EXISTS idx_message_queue_user ON message_queue (user_id);
 
 CREATE INDEX IF NOT EXISTS idx_packages_status ON packages (status);
 CREATE INDEX IF NOT EXISTS idx_packages_level ON packages (level);

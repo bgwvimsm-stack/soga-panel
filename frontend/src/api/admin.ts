@@ -21,6 +21,7 @@ export interface CreateAnnouncementRequest {
   status: number;
   is_pinned?: boolean;
   priority?: number;
+  notification_channels?: string[];
 }
 
 export interface UpdateAnnouncementRequest extends CreateAnnouncementRequest {

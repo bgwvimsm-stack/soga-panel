@@ -133,7 +133,7 @@ export default {
       // 根据 cron 表达式判断执行哪个任务
       // 每分钟执行：用户过期检查 (*/1 * * * *)
       if (cron === '*/1 * * * *') {
-        logger.scheduler('user_expiration_check', 'started');
+        logger.scheduler('minute_tasks', 'started');
         const userExpirationResult = await scheduler.checkExpiredUsers();
         results.executed_tasks.push({
           task: 'user_expiration_check',
@@ -141,10 +141,23 @@ export default {
           result: userExpirationResult
         });
 
-        if (userExpirationResult.success) {
-          logger.scheduler('user_expiration_check', 'completed', Date.now() - taskStartTime, userExpirationResult);
+        const messageQueueResult = await scheduler.processMessageQueue();
+        results.executed_tasks.push({
+          task: 'message_queue_dispatch',
+          time: beijingTime.toISOString(),
+          result: messageQueueResult
+        });
+
+        if (userExpirationResult.success && messageQueueResult.success) {
+          logger.scheduler('minute_tasks', 'completed', Date.now() - taskStartTime, {
+            user_expiration: userExpirationResult,
+            message_queue: messageQueueResult
+          });
         } else {
-          logger.scheduler('user_expiration_check', 'failed', Date.now() - taskStartTime, userExpirationResult);
+          logger.scheduler('minute_tasks', 'failed', Date.now() - taskStartTime, {
+            user_expiration: userExpirationResult,
+            message_queue: messageQueueResult
+          });
         }
       }
 

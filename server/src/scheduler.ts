@@ -2,6 +2,7 @@ import cron from "node-cron";
 import type { AppEnv } from "./config/env";
 import { DatabaseService } from "./services/database";
 import { CacheService } from "./services/cache";
+import { MessageQueueService } from "./services/messageQueue";
 
 export type SchedulerJobKey =
   | "userExpirationCheck"
@@ -99,6 +100,7 @@ export function getSchedulerStatus() {
 // Node 版定时任务：尽量对齐 Worker 版 SchedulerService 逻辑
 export function startSchedulers(db: DatabaseService, cache: CacheService, env: AppEnv) {
   schedulerState.startedAt = new Date().toISOString();
+  const messageQueueService = new MessageQueueService(db, env);
 
   // 每分钟执行一次：检查过期用户（账号/等级），避免长时间挂在已过期状态
   cron.schedule(
@@ -169,6 +171,10 @@ export function startSchedulers(db: DatabaseService, cache: CacheService, env: A
           expired_accounts: expiredAccounts.length,
           expired_levels: expiredLevels.length
         });
+
+        const queueResult = await messageQueueService.processPendingMessages();
+        console.log("[scheduler] message queue dispatch", queueResult);
+
         updateJobStatus("userExpirationCheck", {
           lastResult: "success",
           lastDurationMs: Date.now() - started

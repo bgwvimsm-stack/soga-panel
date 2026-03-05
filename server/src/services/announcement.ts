@@ -1,12 +1,16 @@
 import { DatabaseService } from "./database";
 import { ensureNumber, ensureString, getLastRowId, toRunResult } from "../utils/d1";
 import { getUtc8Timestamp } from "../utils/time";
+import type { AppEnv } from "../config/env";
+import { MessageQueueService } from "./messageQueue";
 
 export class AnnouncementService {
   private readonly db: DatabaseService;
+  private readonly messageQueueService: MessageQueueService;
 
-  constructor(db: DatabaseService) {
+  constructor(db: DatabaseService, env: AppEnv) {
     this.db = db;
+    this.messageQueueService = new MessageQueueService(db, env);
   }
 
   // 简易 Markdown -> HTML，用于公告展示
@@ -99,9 +103,20 @@ export class AnnouncementService {
     status?: number;
     is_pinned?: boolean;
     priority?: number;
+    notification_channels?: unknown;
     created_by: number;
   }) {
     const now = getUtc8Timestamp();
+    const notificationChannels = this.messageQueueService.normalizeChannels(
+      data.notification_channels
+    );
+    if (
+      this.hasNotificationChannelInput(data.notification_channels) &&
+      notificationChannels.length === 0
+    ) {
+      throw new Error("通知方式无效");
+    }
+
     const contentHtml = this.markdownToHtml(data.content);
     const result = toRunResult(
       await this.db.db
@@ -127,10 +142,33 @@ export class AnnouncementService {
     );
 
     const newId = getLastRowId(result);
-    return await this.db.db
+    if (!newId || newId <= 0) {
+      throw new Error("创建公告失败：无法获取公告ID");
+    }
+    const created = await this.db.db
       .prepare("SELECT * FROM announcements WHERE id = ?")
       .bind(newId)
       .first();
+
+    let queueResult: Record<string, unknown> = {
+      queued_count: 0,
+      channels: []
+    };
+    if (notificationChannels.length > 0) {
+      queueResult = await this.messageQueueService.enqueueAnnouncementNotifications({
+        announcementId: newId,
+        channels: notificationChannels,
+        title: ensureString(data.title),
+        content: ensureString(data.content),
+        contentHtml,
+        type: ensureString(data.type ?? "notice")
+      });
+    }
+
+    return {
+      ...(created || {}),
+      notification_queue: queueResult
+    };
   }
 
   async update(id: number, payload: Partial<{ title: string; content: string; type: string; status: number; is_pinned: boolean; priority: number }>) {
@@ -182,5 +220,11 @@ export class AnnouncementService {
 
   async delete(id: number) {
     await this.db.db.prepare("DELETE FROM announcements WHERE id = ?").bind(id).run();
+  }
+
+  private hasNotificationChannelInput(channels: unknown) {
+    if (Array.isArray(channels)) return channels.length > 0;
+    if (typeof channels === "string") return channels.trim().length > 0;
+    return channels !== undefined && channels !== null;
   }
 }

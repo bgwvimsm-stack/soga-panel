@@ -3,6 +3,7 @@ mod cache;
 mod crypto;
 mod etag;
 mod jobs;
+mod message_queue;
 mod mail;
 mod passkey;
 mod payment;

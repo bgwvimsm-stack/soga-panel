@@ -156,6 +156,28 @@
             inactive-text="禁用"
           />
         </el-form-item>
+
+        <el-form-item label="通知方式">
+          <el-select
+            v-model="announcementForm.notification_channels"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="请选择通知方式"
+            :disabled="Boolean(editingAnnouncement)"
+            style="width: 100%;"
+          >
+            <el-option
+              v-for="item in notificationChannelOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
+            />
+          </el-select>
+          <div style="font-size: 12px; color: #909399; margin-top: 4px;">
+            仅创建公告时生效，勾选后会写入消息队列并由定时任务异步发送
+          </div>
+        </el-form-item>
       </el-form>
 
       <template #footer>
@@ -187,6 +209,10 @@ const submitting = ref(false);
 const showCreateDialog = ref(false);
 const editingAnnouncement = ref<any>(null);
 const announcements = ref<Announcement[]>([]);
+const notificationChannelOptions = [
+  { label: "邮件通知", value: "email" },
+  { label: "Bark 通知", value: "bark" }
+];
 
 // 分页配置
 const pagerConfig = reactive<VxePagerConfig>({
@@ -232,7 +258,8 @@ const announcementForm = reactive({
   type: 'notice',
   status: 1,
   is_pinned: false,
-  priority: 0
+  priority: 0,
+  notification_channels: [] as string[]
 });
 
 // 表单验证规则
@@ -318,6 +345,7 @@ const editAnnouncement = (announcement: any) => {
   announcementForm.status = announcement.status;
   announcementForm.is_pinned = Boolean(announcement.is_pinned);
   announcementForm.priority = Number(announcement.priority) || 0;
+  announcementForm.notification_channels = [];
   showCreateDialog.value = true;
 };
 
@@ -384,7 +412,7 @@ const saveAnnouncement = async () => {
     await announcementFormRef.value.validate();
     submitting.value = true;
 
-    const formData = {
+    const baseFormData = {
       title: announcementForm.title,
       content: announcementForm.content,
       type: announcementForm.type,
@@ -394,10 +422,13 @@ const saveAnnouncement = async () => {
     };
 
     if (editingAnnouncement.value) {
-      await updateAnnouncement(editingAnnouncement.value.id, formData);
+      await updateAnnouncement(editingAnnouncement.value.id, baseFormData);
       ElMessage.success('公告更新成功');
     } else {
-      await createAnnouncement(formData);
+      await createAnnouncement({
+        ...baseFormData,
+        notification_channels: [...announcementForm.notification_channels]
+      });
       ElMessage.success('公告创建成功');
     }
 
@@ -421,6 +452,7 @@ const resetForm = () => {
   announcementForm.status = 1;
   announcementForm.is_pinned = false;
   announcementForm.priority = 0;
+  announcementForm.notification_channels = [];
   announcementFormRef.value?.clearValidate();
 };
 

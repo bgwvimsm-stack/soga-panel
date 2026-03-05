@@ -6,9 +6,12 @@ export type D1RunResult<T extends Record<string, unknown> = Record<string, unkno
   D1Result<T> & {
     changes?: number;
     lastRowId?: number;
+    last_row_id?: number;
+    last_rowid?: number;
     meta?: {
       changes?: number;
       changed_db_rows?: number;
+      last_row_id?: number;
       last_rowid?: number;
       duration?: number;
     };
@@ -36,9 +39,12 @@ export function toRunResult<T extends Record<string, unknown> = Record<string, u
 export function getLastRowId(result: D1RunResult | null | undefined): number | null {
   if (!result) return null;
   if (typeof result.lastRowId === "number") return result.lastRowId;
+  if (typeof result.last_row_id === "number") return result.last_row_id;
+  if (typeof result.last_rowid === "number") return result.last_rowid;
   const meta = result.meta;
-  if (meta && typeof meta.last_rowid === "number") {
-    return meta.last_rowid;
+  if (meta) {
+    if (typeof meta.last_row_id === "number") return meta.last_row_id;
+    if (typeof meta.last_rowid === "number") return meta.last_rowid;
   }
   return null;
 }
