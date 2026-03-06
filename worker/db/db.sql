@@ -350,6 +350,41 @@ CREATE TABLE IF NOT EXISTS announcements (
     FOREIGN KEY (created_by) REFERENCES users(id)
 );
 
+-- 消息队列表
+-- 字段说明：
+-- announcement_id: 关联公告ID
+-- user_id: 接收用户ID
+-- channel: 通知通道（email、bark，未来可扩展）
+-- recipient: 接收地址（email地址、bark key等）
+-- payload: 通知内容JSON快照，兼容不同通道
+-- status: 状态（0=待发送，1=发送中，2=发送成功，3=发送失败）
+-- attempt_count: 已尝试次数
+-- max_attempts: 最大尝试次数
+-- last_error: 最近一次错误信息
+-- scheduled_at: 计划发送时间戳（UTC+8秒级时间戳）
+-- sent_at: 成功发送时间戳（UTC+8秒级时间戳）
+-- created_at: 创建时间戳（UTC+8秒级时间戳）
+-- updated_at: 更新时间戳（UTC+8秒级时间戳）
+CREATE TABLE IF NOT EXISTS message_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    announcement_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    last_error TEXT,
+    scheduled_at INTEGER NOT NULL,
+    sent_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+
+    FOREIGN KEY (announcement_id) REFERENCES announcements(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 -- 系统配置表
 -- 字段说明：
 -- id: 系统配置唯一标识ID（主键）
@@ -1013,6 +1048,12 @@ CREATE INDEX IF NOT EXISTS idx_announcements_active ON announcements(is_active);
 CREATE INDEX IF NOT EXISTS idx_announcements_pinned ON announcements(is_pinned);
 CREATE INDEX IF NOT EXISTS idx_announcements_created_at ON announcements(created_at);
 CREATE INDEX IF NOT EXISTS idx_announcements_expires_at ON announcements(expires_at);
+
+-- 消息队列索引
+CREATE INDEX IF NOT EXISTS idx_message_queue_status_schedule ON message_queue(status, scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_message_queue_channel_status ON message_queue(channel, status);
+CREATE INDEX IF NOT EXISTS idx_message_queue_announcement_id ON message_queue(announcement_id);
+CREATE INDEX IF NOT EXISTS idx_message_queue_user_id ON message_queue(user_id);
 
 -- 套餐相关索引
 CREATE INDEX IF NOT EXISTS idx_packages_status ON packages (status);

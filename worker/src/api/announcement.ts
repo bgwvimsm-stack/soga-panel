@@ -1,6 +1,7 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Env } from '../types';
 import { DatabaseService } from '../services/database';
+import { MessageQueueService } from "../services/message-queue";
 import { successResponse as success, errorResponse as error } from '../utils/response';
 import { getUtc8Timestamp } from '../utils/crypto';
 import { ensureNumber, ensureString, toRunResult, getChanges, getLastRowId } from '../utils/d1';
@@ -32,11 +33,13 @@ export class AnnouncementAPI {
   private readonly env: Env;
   private readonly db: D1Database;
   private readonly dbService: DatabaseService;
+  private readonly messageQueueService: MessageQueueService;
 
   constructor(env: Env) {
     this.env = env;
     this.db = env.DB as D1Database;
     this.dbService = new DatabaseService(env.DB);
+    this.messageQueueService = new MessageQueueService(env);
   }
 
   // 获取公告列表（用户端）
@@ -150,9 +153,19 @@ export class AnnouncementAPI {
     try {
       const data = await request.json();
       const { title, content, type = 'notice', status = 1, is_pinned = false, priority = 0 } = data as Record<string, unknown>;
+      const rawChannels = (data as Record<string, unknown>).notification_channels;
+      const rawNotificationMinClass = (data as Record<string, unknown>).notification_min_class;
+      const notificationChannels = this.messageQueueService.normalizeChannels(rawChannels);
+      const notificationMinClass = this.parseNotificationMinClass(rawNotificationMinClass);
 
       if (!title || !content) {
         return error('标题和内容不能为空', 400);
+      }
+      if (this.hasNotificationChannelInput(rawChannels) && notificationChannels.length === 0) {
+        return error('通知方式无效', 400);
+      }
+      if (notificationMinClass === null) {
+        return error('VIP等级无效', 400);
       }
 
       // 获取用户ID（从认证中间件中）
@@ -186,14 +199,34 @@ export class AnnouncementAPI {
       );
 
       const newId = getLastRowId(insertResult);
+      if (!newId || newId <= 0) {
+        return error('创建公告失败：无法获取公告ID', 500);
+      }
       const newAnnouncement = await this.db
         .prepare('SELECT * FROM announcements WHERE id = ?')
         .bind(newId)
         .first<AnnouncementRow>();
 
+      let queueResult: Record<string, unknown> = {
+        queued_count: 0,
+        channels: []
+      };
+      if (notificationChannels.length > 0) {
+        queueResult = await this.messageQueueService.enqueueAnnouncementNotifications({
+          announcementId: newId,
+          channels: notificationChannels,
+          minClass: notificationMinClass,
+          title: ensureString(title),
+          content: ensureString(content),
+          contentHtml,
+          type: ensureString(type)
+        });
+      }
+
       return success({
         ...newAnnouncement,
         status: newAnnouncement?.is_active,
+        notification_queue: queueResult,
         message: '公告创建成功'
       });
     } catch (err) {
@@ -287,6 +320,20 @@ export class AnnouncementAPI {
       console.error('Delete announcement error:', err);
       return error('删除公告失败', 500);
     }
+  }
+
+  private hasNotificationChannelInput(channels: unknown) {
+    if (Array.isArray(channels)) return channels.length > 0;
+    if (typeof channels === 'string') return channels.trim().length > 0;
+    return channels !== undefined && channels !== null;
+  }
+
+  private parseNotificationMinClass(value: unknown) {
+    if (value === undefined || value === null || value === '') return 0;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    const normalized = Math.floor(parsed);
+    return Math.max(0, normalized);
   }
 
   // 简单的Markdown转HTML（基础版本）

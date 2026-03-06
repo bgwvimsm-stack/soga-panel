@@ -44,6 +44,7 @@ INSERT OR IGNORE INTO system_configs (key, value, description) VALUES
 ('traffic_reset_day', '0', '流量重置日（0=不执行每月定时任务，1-31=每月几号）'),
 ('subscription_url', '', '订阅链接地址（为空时使用默认面板地址）'),
 ('register_email_verification_enabled', '1', '注册是否需要邮箱验证码（1=开启，0=关闭）'),
+('message_queue_page_size', '20', '消息队列每分钟发送分页大小'),
 ('rebate_rate', '0', '邀请返利比例（0-1之间，例如0.1表示10%）'),
 ('rebate_mode', 'every_order', '返利模式：first_order（首单）或 every_order（循环）'),
 ('rebate_withdraw_fee_rate', '0.05', '返利提现手续费比例（0-1之间，例如0.05=5%）'),

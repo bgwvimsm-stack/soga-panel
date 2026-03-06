@@ -6,7 +6,7 @@ import { errorResponse, successResponse } from "../../utils/response";
 
 export function createAnnouncementRouter(ctx: AppContext) {
   const router = Router();
-  const service = new AnnouncementService(ctx.dbService);
+  const service = new AnnouncementService(ctx.dbService, ctx.env);
 
   // 用户端
   router.get("/", async (req: Request, res: Response) => {
@@ -30,18 +30,34 @@ export function createAnnouncementRouter(ctx: AppContext) {
   router.post("/admin", async (req: Request, res: Response) => {
     const user = (req as any).user;
     if (!user?.is_admin) return errorResponse(res, "需要管理员权限", 403);
-    const { title, content, type, status, is_pinned, priority } = req.body || {};
+    const { title, content, type, status, is_pinned, priority, notification_channels, notification_min_class } = req.body || {};
     if (!title || !content) return errorResponse(res, "标题和内容不能为空", 400);
-    const created = await service.create({
-      title,
-      content,
-      type,
-      status,
-      is_pinned,
-      priority,
-      created_by: Number(user.id)
-    });
-    return successResponse(res, created, "创建成功");
+    const normalizedChannels = normalizeNotificationChannels(notification_channels);
+    if (
+      hasNotificationChannelInput(notification_channels) &&
+      normalizedChannels.length === 0
+    ) {
+      return errorResponse(res, "通知方式无效", 400);
+    }
+    try {
+      const created = await service.create({
+        title,
+        content,
+        type,
+        status,
+        is_pinned,
+        priority,
+        notification_channels: normalizedChannels,
+        notification_min_class,
+        created_by: Number(user.id)
+      });
+      return successResponse(res, created, "创建成功");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const statusCode =
+        message.includes("通知方式无效") || message.includes("VIP等级无效") ? 400 : 500;
+      return errorResponse(res, message || "创建失败", statusCode);
+    }
   });
 
   router.put("/admin/:id", async (req: Request, res: Response) => {
@@ -63,4 +79,44 @@ export function createAnnouncementRouter(ctx: AppContext) {
   });
 
   return router;
+}
+
+function hasNotificationChannelInput(value: unknown) {
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "string") return value.trim().length > 0;
+  return value !== undefined && value !== null;
+}
+
+function normalizeNotificationChannels(value: unknown) {
+  const supported = new Set(["email", "bark"]);
+  const source = extractChannelList(value);
+  const normalized = source
+    .map((item) => String(item ?? "").trim().toLowerCase())
+    .filter((item) => supported.has(item));
+  return Array.from(new Set(normalized));
+}
+
+function extractChannelList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item ?? ""));
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.map((item) => String(item ?? ""));
+        }
+      } catch {
+        // ignore parse error and fallback to comma split
+      }
+    }
+    return trimmed
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+  return [];
 }

@@ -5,6 +5,7 @@ import type { Logger } from "../utils/logger";
 import { DatabaseService } from "./database";
 import { ExpiryCheckerService } from "./expiry-checker";
 import { TrafficResetService } from "./traffic-reset";
+import { MessageQueueService } from "./message-queue";
 import type { SystemConfigManager } from "../utils/systemConfig";
 import { createSystemConfigManager } from "../utils/systemConfig";
 import { getLogger } from "../utils/logger";
@@ -47,6 +48,7 @@ export class SchedulerService {
   private readonly logger: Logger;
   private readonly expiryChecker: ExpiryCheckerService;
   private readonly trafficReset: TrafficResetService;
+  private readonly messageQueue: MessageQueueService;
   private readonly configManager: SystemConfigManager;
 
   constructor(env: Env) {
@@ -55,6 +57,7 @@ export class SchedulerService {
     this.logger = getLogger(env);
     this.expiryChecker = new ExpiryCheckerService(env);
     this.trafficReset = new TrafficResetService(env);
+    this.messageQueue = new MessageQueueService(env);
     this.configManager = createSystemConfigManager(env);
   }
 
@@ -471,6 +474,13 @@ export class SchedulerService {
         message: `检查过期用户失败: ${err.message}`
       };
     }
+  }
+
+  /**
+   * 处理消息队列（每分钟）
+   */
+  async processMessageQueue() {
+    return this.messageQueue.processPendingMessages();
   }
 
   /**

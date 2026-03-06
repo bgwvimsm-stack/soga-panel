@@ -20,9 +20,12 @@ export function toRunResult<T = Record<string, unknown>>(result: D1Result<T>): D
 export function getLastRowId(result: D1RunResult | null | undefined): number | null {
   if (!result) return null;
   if (typeof result.lastRowId === "number") return result.lastRowId;
+  if (typeof (result as any).last_row_id === "number") return (result as any).last_row_id;
+  if (typeof (result as any).last_rowid === "number") return (result as any).last_rowid;
   const meta = result.meta;
-  if (meta && typeof meta.last_rowid === "number") {
-    return meta.last_rowid;
+  if (meta) {
+    if (typeof (meta as any).last_row_id === "number") return (meta as any).last_row_id;
+    if (typeof meta.last_rowid === "number") return meta.last_rowid;
   }
   return null;
 }

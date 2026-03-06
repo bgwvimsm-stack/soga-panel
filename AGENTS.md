@@ -1,33 +1,90 @@
 # Repository Guidelines
 
+## 语言要求
+- 始终使用中文交流与文档说明。
+
 ## 项目结构与模块组织
-- `frontend/`：基于 Vue 3 + Vite 的管理面板，核心页面与组件位于 `src/views` 与 `src/components`，公共状态在 `src/store`（Pinia）。
-- `worker/`：Cloudflare Worker 后端，`src/` 目录存放路由与服务，`db/` 下含 D1 schema 及迁移脚本。
-- `docs/`：设计、部署与集成文档；向贡献者解释上下游依赖时请优先引用此处。
-- `mock-epay/` 与 `vue-pure-admin/`：分别用于支付联调和 UI 底座示例，仅在调试或升级 UI 体系时需要改动。
+- `frontend/`：Vue 3 + Vite 前端（用户端 + 管理端），核心目录为 `src/views`、`src/components`、`src/api`、`src/store`。
+- `worker/`：Cloudflare Workers 后端（D1 数据库），包含 `src/` 业务逻辑与 `db/` SQL/迁移脚本。
+- `server/`：Node/Express 自托管后端（MariaDB/Redis），用于非 Cloudflare 部署场景。
+- `server-rs/`：Rust + Axum 自托管后端（MariaDB/Redis），接口目标与 `worker/server` 保持兼容。
+- `docs/`：部署、架构与模块文档，涉及流程或配置调整时优先同步此目录。
+- `mock-epay/`：支付联调 mock 服务；`vue-pure-admin/`：前端底座参考工程（仅升级底座时改动）。
+
+## 推荐开发路径
+- 默认主链路：`worker + frontend`（Cloudflare Workers + Pages）。
+- 自托管链路：`server + frontend` 或 `server-rs + frontend`。
+- 变更接口/字段时，优先确认三套后端的一致性（至少保证当前目标部署链路完整可用）。
 
 ## 构建、测试与开发命令
-- 首次安装：`pnpm install --filter ./worker`、`pnpm install --filter ./frontend`（需 Node 18+，全局安装 `wrangler`）。
-- 后端本地调试：在 `worker/` 内运行 `pnpm dev` 使用 `wrangler dev` 启动 18787 端口，自动加载 `.dev.vars`。
-- 前端开发：在 `frontend/` 中执行 `pnpm dev` 热重载，`pnpm build` 构建，`pnpm deploy` 会构建并通过 Wrangler Pages 推送 `dist/`。
-- 数据库初始化示例：`wrangler d1 execute soga-panel-d1 --file=./db/db.sql --remote`；不要忽略生产配置中的 JWT、Soga WebAPI 与支付密钥。
+- 环境要求：Node.js >= 18.12（CI 使用 Node 20）、pnpm、Wrangler；Rust 链路需安装稳定版 Rust/Cargo。
+- 前端开发（`frontend/`）：
+  - `pnpm install`
+  - `pnpm dev`
+  - `pnpm build`
+  - `pnpm typecheck`
+  - `pnpm deploy`（构建并发布 Pages）
+- Worker 开发（`worker/`）：
+  - `pnpm install`
+  - `pnpm dev`（默认 18787，使用 `wrangler-dev.toml`）
+  - `pnpm deploy`
+  - `pnpm typecheck`
+  - `pnpm test:email`
+- Node 后端开发（`server/`）：
+  - `pnpm install`
+  - `pnpm dev`
+  - `pnpm typecheck`
+  - `pnpm build`
+  - `pnpm start`
+- Rust 后端开发（`server-rs/`）：
+  - `cargo check`
+  - `cargo run -- -c ../server/.env`
+  - `cargo build --release`
+  - `bash scripts/build-binaries.sh`（多目标构建）
+
+## 数据库初始化与迁移
+- Worker（D1）常用初始化：
+  - `wrangler d1 execute <db-name> --file=./db/db.sql --remote`
+  - `wrangler d1 execute <db-name> --file=./db/insert_required_data.sql --remote`
+  - `wrangler d1 execute <db-name> --file=./db/insert_package_data.sql --remote`（可选）
+- Node/Rust（MariaDB）常用初始化：
+  - `mysql -u <user> -p <db> < server/db/schema.mysql.sql`
+  - `mysql -u <user> -p <db> < server/db/insert_required_data.mysql.sql`
+  - `mysql -u <user> -p <db> < server/db/insert_package_data.mysql.sql`（可选）
+- 修改数据模型时，需同步检查：
+  - `worker/db/db.sql` 与 `worker/db/migrations/`
+  - `server/db/schema.mysql.sql` 与 `server/db/migrations/`
+  - 受影响的 API 与前端字段映射
 
 ## 代码风格与命名约定
-- TypeScript、Vue、Worker 均使用 2 空格缩进；保持 ESLint/Vite 默认的单引号和分号风格。
-- 组件与 Pinia store 使用 PascalCase（如 `UserDashboard.vue`），组合式函数采用 `useXxx` 命名。
-- Worker 中的 handler 以资源名命名（`userRouter`, `orderService`），并通过 `export const` 暴露。
-- 提交前运行 `pnpm --filter ./frontend run typecheck` 与 `pnpm --filter ./worker run typecheck`；必要时使用 `vue-tsc` 或 `tsc` 确保无隐式 `any`。
+- 默认 UTF-8、LF、2 空格缩进（参照 `frontend/.editorconfig`）。
+- TypeScript/Vue 现有代码风格以双引号和分号为主，遵循仓库既有格式，不混用风格。
+- Vue 页面文件多采用 kebab-case（如 `shared-ids.vue`），通用组件使用 PascalCase（如 `LanguageSwitcher.vue`）。
+- 组合式函数使用 `useXxx` 命名；后端服务/路由文件按领域命名（`auth`、`traffic`、`ticket` 等）。
+- Rust 代码提交前运行 `cargo fmt`（如环境已安装 rustfmt）。
 
-## 测试指引
-- 目前以手动与端到端验证为主：前端通过 `pnpm dev` 联动 Worker，核对主要通路（登录、套餐、支付回调）。
-- Worker 层提供 `pnpm test:email` 以验证邮件发送脚本；可在 `wrangler dev --remote` 下对接真实 D1 进行冒烟。
-- 建议新增脚本时配套 `c8` 覆盖统计，并遵循 `tests/<feature>.spec.ts` 命名；将测试命令写入 `package.json` 以便 CI 继承。
+## 测试与验证指引
+- 提交前至少执行目标模块的类型检查与构建：
+  - `frontend`: `pnpm typecheck` + `pnpm build`
+  - `worker`: `pnpm typecheck`
+  - `server`: `pnpm typecheck` + `pnpm build`
+  - `server-rs`: `cargo check`
+- 当前项目仍以联调验证为主，关键回归路径：
+  - 登录/注册/找回密码
+  - 套餐购买与支付回调
+  - 订阅链接生成与节点拉取（`/api/v1/*`）
+  - 管理端用户、节点、公告、工单、流量统计
 
 ## 提交与 Pull Request 规范
-- Git 历史以动词开头的简洁英文/中英混合信息为主（如 `fix: auth refresh`、`add: 新增二步认证`）；请保持同样格式并附带作用域描述。
-- PR 描述需包含：变更摘要、影响模块（前端/Worker/文档）、测试方式（命令或截图），以及关联 issue/工单链接。
-- 若改动涉及部署或安全配置，请在 PR 中标注所需的环境变量或 Cloudflare 资源调整，便于审核与回滚。
+- Commit 建议使用动词开头 + 作用域：`fix(auth): ...`、`feat(payment): ...`、`docs(deploy): ...`。
+- PR 必填信息：
+  - 变更摘要
+  - 影响模块（`frontend/worker/server/server-rs/docs`）
+  - 验证方式（命令、截图、关键接口）
+  - 关联 issue/工单
+- 涉及部署或配置变更时，明确列出新增/修改的环境变量与 Cloudflare/MariaDB/Redis 资源需求。
 
 ## 安全与配置提示
-- 不要在仓库提交 `.dev.vars`、D1 导出的密钥或支付证书；本地调试使用 `.example` 模板复制。
-- 修改 `deploy.sh` 或 `wrangler*.toml` 时请同步更新 `docs/deployment-guide.md`，确保上线流程一致。
+- 禁止提交密钥与敏感配置：`.env`、`.dev.vars`、`wrangler.toml` 实例、支付证书、数据库导出。
+- 本地调试优先使用模板文件（如 `*.template`、`.env.*.example`）复制后再改。
+- 修改 `deploy.sh`、`wrangler*.toml*`、数据库初始化脚本时，需同步更新 `docs/deployment-guide.md` 与相关模块文档。

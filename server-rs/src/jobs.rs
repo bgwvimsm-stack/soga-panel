@@ -4,6 +4,7 @@ use serde_json::json;
 use sqlx::Row;
 
 use crate::cache::cache_delete_by_prefix;
+use crate::message_queue::process_pending_messages;
 use crate::state::AppState;
 
 #[derive(Clone, Copy)]
@@ -133,6 +134,16 @@ async fn run_user_expiration_check(state: &AppState) -> Result<(), String> {
     "[job] userExpirationCheck done: expired_accounts={}, expired_levels={}",
     expired_account_ids.len(),
     expired_level_ids.len()
+  );
+
+  let queue_result = process_pending_messages(state).await?;
+  println!(
+    "[job] messageQueueDispatch done: fetched={}, sent={}, retrying={}, failed={}, skipped={}",
+    queue_result.fetched,
+    queue_result.sent,
+    queue_result.retrying,
+    queue_result.failed,
+    queue_result.skipped
   );
   Ok(())
 }
