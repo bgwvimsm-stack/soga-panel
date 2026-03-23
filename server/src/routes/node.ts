@@ -22,9 +22,12 @@ export function createNodeRouter(ctx: AppContext) {
 
     const nodeConfigRaw = ensureString(node.node_config, "{}") || "{}";
     const nodeConfigJson = safeJson(nodeConfigRaw, {});
+    const rawConfig = nodeConfigJson.config || {};
     const responseConfig = {
       basic: nodeConfigJson.basic || { pull_interval: 60, push_interval: 60, speed_limit: 0 },
-      config: nodeConfigJson.config || {}
+      config: isSSRNodeType(auth.nodeType)
+        ? normalizeSSRNodeConfig(nodeConfigJson, rawConfig)
+        : rawConfig
     };
 
     return res.status(200).json(responseConfig);
@@ -288,6 +291,39 @@ function safeJson(raw: string, fallback: any) {
   } catch {
     return fallback;
   }
+}
+
+function isSSRNodeType(nodeType: string): boolean {
+  return nodeType === "ssr" || nodeType === "shadowsocksr";
+}
+
+function readConfigString(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") return String(value);
+  return "";
+}
+
+function normalizeSSRNodeConfig(root: any, config: any) {
+  const normalized =
+    config && typeof config === "object" && !Array.isArray(config)
+      ? { ...config }
+      : {};
+  const client =
+    root && typeof root === "object" && !Array.isArray(root) ? root.client : null;
+
+  const password =
+    readConfigString(normalized.password) ||
+    readConfigString(normalized.passwd) ||
+    readConfigString(root?.password) ||
+    readConfigString(root?.passwd) ||
+    readConfigString(client?.password) ||
+    readConfigString(client?.passwd);
+
+  if (password || !Object.prototype.hasOwnProperty.call(normalized, "password")) {
+    normalized.password = password;
+  }
+
+  return normalized;
 }
 
 function decodeBase64Safe(value?: string | null) {

@@ -65,10 +65,13 @@ async fn get_node(State(state): State<AppState>, headers: HeaderMap) -> Response
     .get("basic")
     .cloned()
     .unwrap_or_else(|| json!({ "pull_interval": 60, "push_interval": 60, "speed_limit": 0 }));
-  let config = config_value
+  let mut config = config_value
     .get("config")
     .cloned()
     .unwrap_or_else(|| json!({}));
+  if is_ssr_node_type(&auth.node_type) {
+    config = normalize_ssr_node_config(&config_value, config);
+  }
 
   let payload = json!({ "basic": basic, "config": config });
   let etag = generate_etag(&payload);
@@ -683,6 +686,49 @@ fn build_ss_password(node_config: &Value, user_password: &str) -> String {
   } else {
     node_password.to_string()
   }
+}
+
+fn is_ssr_node_type(node_type: &str) -> bool {
+  matches!(node_type, "ssr" | "shadowsocksr")
+}
+
+fn value_as_trimmed_string(value: Option<&Value>) -> String {
+  match value {
+    Some(Value::String(text)) => text.trim().to_string(),
+    Some(Value::Number(number)) => number.to_string(),
+    _ => String::new()
+  }
+}
+
+fn normalize_ssr_node_config(root: &Value, config: Value) -> Value {
+  let mut map = match config {
+    Value::Object(value) => value,
+    _ => serde_json::Map::new()
+  };
+  let client = root.get("client");
+
+  let mut password = value_as_trimmed_string(map.get("password"));
+  if password.is_empty() {
+    password = value_as_trimmed_string(map.get("passwd"));
+  }
+  if password.is_empty() {
+    password = value_as_trimmed_string(root.get("password"));
+  }
+  if password.is_empty() {
+    password = value_as_trimmed_string(root.get("passwd"));
+  }
+  if password.is_empty() {
+    password = value_as_trimmed_string(client.and_then(|value| value.get("password")));
+  }
+  if password.is_empty() {
+    password = value_as_trimmed_string(client.and_then(|value| value.get("passwd")));
+  }
+
+  if !password.is_empty() || !map.contains_key("password") {
+    map.insert("password".to_string(), Value::String(password));
+  }
+
+  Value::Object(map)
 }
 
 #[derive(Clone)]
