@@ -21,6 +21,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@noble/post-quantum": "0.5.4",
     "@pureadmin/table": "^3.3.0",
     "@pureadmin/utils": "^2.6.3",
     "@vueuse/core": "^14.1.0",

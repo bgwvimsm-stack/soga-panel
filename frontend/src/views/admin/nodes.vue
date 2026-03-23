@@ -495,6 +495,75 @@
                     </el-col>
                   </el-row>
                 </template>
+
+                <div class="section-subtitle">VLESS Encryption</div>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="认证方式">
+                      <el-select v-model="nodeForm.config_vlessenc_auth" placeholder="请选择认证方式">
+                        <el-option
+                          v-for="item in vlessEncryptionAuthOptions"
+                          :key="item.value"
+                          :label="item.label"
+                          :value="item.value"
+                        />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+
+                <template v-if="isVlessEncryptionEnabled">
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="加密模式">
+                        <el-select v-model="nodeForm.config_vlessenc_mode" placeholder="请选择模式">
+                          <el-option v-for="item in vlessEncryptionModeOptions" :key="item" :label="item" :value="item" />
+                        </el-select>
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="恢复时长">
+                        <el-input v-model="nodeForm.config_vlessenc_seconds" placeholder="如 600s 或 100-500s" />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                      <el-form-item>
+                        <el-button type="primary" plain style="width: 100%;" @click="generateVlessEncryption">
+                          一键生成Encryption
+                        </el-button>
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+
+                  <el-row :gutter="16">
+                    <el-col :span="24">
+                      <el-form-item label="Decryption">
+                        <el-input
+                          v-model="nodeForm.config_decryption"
+                          type="textarea"
+                          :rows="2"
+                          placeholder="服务端参数，不可留空。禁用时请显式填 none"
+                        />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+
+                  <el-row :gutter="16">
+                    <el-col :span="24">
+                      <el-form-item label="Encryption">
+                        <el-input
+                          v-model="nodeForm.config_encryption"
+                          type="textarea"
+                          :rows="3"
+                          placeholder="客户端参数，建议使用上方一键生成"
+                        />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                </template>
               </template>
 
               <!-- Hysteria 配置 -->
@@ -627,6 +696,7 @@
 import { ref, reactive, onMounted, computed, watch } from 'vue';
 import { ElMessage, ElMessageBox, type FormInstance } from 'element-plus';
 import { Plus, Search, CircleCheck, CircleClose, EditPen, SwitchButton, ArrowDown, CopyDocument, View, Delete } from '@element-plus/icons-vue';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { VxeTableBar } from '@/components/ReVxeTableBar';
 import { getNodes, createNode, updateNode, deleteNode as deleteNodeAPI, batchUpdateNodes, type Node } from '@/api/admin';
 
@@ -702,6 +772,13 @@ const ssrSinglePortOptions = ['protocol', 'obfs'];
 const streamTypeOptions = ['tcp', 'ws', 'http', 'h2', 'grpc'];
 const tlsOptions = ['none', 'tls'];
 const vlessTlsOptions = ['none', 'tls', 'reality'];
+const vlessEncryptionModeOptions = ['native', 'xorpub', 'random'];
+const vlessEncryptionAuthOptions = [
+  { label: 'none（不启用）', value: 'none' },
+  { label: 'X25519（兼容优先）', value: 'x25519' },
+  { label: 'ML-KEM-768（抗量子）', value: 'mlkem768' }
+];
+const VLESS_ENCRYPTION_PROTOCOL = 'mlkem768x25519plus';
 const hysteriaObfsOptions = ['plain', 'salamander'];
 const nodes = ref<Node[]>([]);
 const selectedNodes = ref<Node[]>([]);
@@ -768,6 +845,11 @@ const nodeForm = reactive({
   config_path: '',
   config_service_name: '',
   config_flow: '',
+  config_decryption: '',
+  config_encryption: '',
+  config_vlessenc_mode: 'native',
+  config_vlessenc_auth: 'none',
+  config_vlessenc_seconds: '600s',
   config_server_names: '',
   config_private_key: '',
   config_short_ids: '',
@@ -866,6 +948,57 @@ const base64UrlToBytes = (value: string) => {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
+};
+
+const normalizeVlessEncryptionMode = (value: string) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return vlessEncryptionModeOptions.includes(normalized) ? normalized : 'native';
+};
+
+const normalizeVlessDecryptionSeconds = (value: string) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return '600s';
+  if (/^\d+s$/.test(normalized)) return normalized;
+  if (/^\d+-\d+s$/.test(normalized)) {
+    const [from, to] = normalized.slice(0, -1).split('-').map((item) => Number(item));
+    if (Number.isFinite(from) && Number.isFinite(to) && from > 0 && to >= from) {
+      return `${from}-${to}s`;
+    }
+  }
+  return '600s';
+};
+
+const parseVlessEncryptionAuth = (parts: string[]) => {
+  for (let i = parts.length - 1; i >= 3; i--) {
+    try {
+      const bytes = base64UrlToBytes(parts[i]);
+      if (bytes.length === 64) return 'mlkem768';
+      if (bytes.length === 32) return 'x25519';
+    } catch {
+      // ignore invalid block
+    }
+  }
+  return 'x25519';
+};
+
+const syncVlessEncryptionFormFromConfig = (decryptionValue: string) => {
+  const value = String(decryptionValue || '').trim();
+  if (!value || value === 'none') {
+    nodeForm.config_vlessenc_auth = 'none';
+    nodeForm.config_vlessenc_mode = 'native';
+    nodeForm.config_vlessenc_seconds = '600s';
+    return;
+  }
+  const parts = value.split('.').map((item) => item.trim()).filter(Boolean);
+  if (parts.length < 4 || parts[0] !== VLESS_ENCRYPTION_PROTOCOL) {
+    nodeForm.config_vlessenc_auth = 'none';
+    nodeForm.config_vlessenc_mode = 'native';
+    nodeForm.config_vlessenc_seconds = '600s';
+    return;
+  }
+  nodeForm.config_vlessenc_auth = parseVlessEncryptionAuth(parts);
+  nodeForm.config_vlessenc_mode = normalizeVlessEncryptionMode(parts[1]);
+  nodeForm.config_vlessenc_seconds = normalizeVlessDecryptionSeconds(parts[2]);
 };
 
 const gf = (init?: number[]) => {
@@ -1095,6 +1228,42 @@ const regenerateVlessReality = () => {
   ensureVlessRealityDefaults(true);
 };
 
+const generateVlessEncryption = () => {
+  if (nodeForm.type !== 'vless') {
+    ElMessage.warning('仅 VLESS 节点支持生成 VLESS Encryption');
+    return;
+  }
+
+  if (nodeForm.config_vlessenc_auth === 'none') {
+    ElMessage.warning('请先选择认证方式');
+    return;
+  }
+  const auth = nodeForm.config_vlessenc_auth === 'mlkem768' ? 'mlkem768' : 'x25519';
+  const mode = normalizeVlessEncryptionMode(nodeForm.config_vlessenc_mode);
+  const seconds = normalizeVlessDecryptionSeconds(nodeForm.config_vlessenc_seconds);
+
+  let decryptionKey = '';
+  let encryptionKey = '';
+
+  if (auth === 'mlkem768') {
+    const seed = getRandomBytes(64);
+    const { publicKey } = ml_kem768.keygen(seed);
+    decryptionKey = bytesToBase64Url(seed);
+    encryptionKey = bytesToBase64Url(publicKey);
+  } else {
+    const pair = generateX25519KeyPair();
+    decryptionKey = pair.privateKey;
+    encryptionKey = pair.publicKey;
+  }
+
+  nodeForm.config_vlessenc_auth = auth;
+  nodeForm.config_vlessenc_mode = mode;
+  nodeForm.config_vlessenc_seconds = seconds;
+  nodeForm.config_decryption = `${VLESS_ENCRYPTION_PROTOCOL}.${mode}.${seconds}.${decryptionKey}`;
+  nodeForm.config_encryption = `${VLESS_ENCRYPTION_PROTOCOL}.${mode}.0rtt.${encryptionKey}`;
+  ElMessage.success('VLESS Encryption 参数已生成');
+};
+
 const nodeRules = {
   name: [
     { required: true, message: '请输入节点名称', trigger: 'blur' },
@@ -1277,7 +1446,7 @@ const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
       ? { stream_type: 'tcp', path: '', service_name: '' }
       : {}),
     ...(type === 'vless'
-      ? { stream_type: 'tcp', tls_type: 'tls' }
+      ? { stream_type: 'tcp', tls_type: 'tls', decryption: 'none', encryption: 'none' }
       : {}),
     ...(type === 'hysteria'
       ? { obfs: 'plain', obfs_password: '', up_mbps: 1000, down_mbps: 1000 }
@@ -1385,6 +1554,9 @@ const applyConfigToState = (config: any) => {
     nodeForm.config_path = nodeConfigState.config.path || '';
     nodeForm.config_service_name = nodeConfigState.config.service_name || '';
     nodeForm.config_flow = nodeConfigState.config.flow || '';
+    nodeForm.config_decryption = nodeConfigState.config.decryption || '';
+    nodeForm.config_encryption = nodeConfigState.config.encryption || '';
+    syncVlessEncryptionFormFromConfig(nodeForm.config_decryption);
     nodeForm.config_server_names = Array.isArray(nodeConfigState.config.server_names)
       ? nodeConfigState.config.server_names.join(',')
       : nodeConfigState.config.server_names || '';
@@ -1411,6 +1583,7 @@ const applyConfigToState = (config: any) => {
 };
 
 const isSS2022 = computed(() => nodeForm.type === 'ss' && ss2022Ciphers.includes(nodeForm.config_method));
+const isVlessEncryptionEnabled = computed(() => nodeForm.config_vlessenc_auth !== 'none');
 
 watch(() => nodeForm.config_method, (val, oldVal) => {
   if (isConfigSyncing.value) return;
@@ -1429,6 +1602,26 @@ watch(() => nodeForm.type, (val, oldVal) => {
   }
   if (val === 'vless' && oldVal !== 'vless') {
     ensureVlessRealityDefaults();
+  }
+});
+
+watch(() => nodeForm.config_vlessenc_auth, (val, oldVal) => {
+  if (isConfigSyncing.value) return;
+  if (nodeForm.type !== 'vless') return;
+  if (val === 'none') {
+    nodeForm.config_decryption = 'none';
+    nodeForm.config_encryption = 'none';
+    nodeForm.config_vlessenc_mode = 'native';
+    nodeForm.config_vlessenc_seconds = '600s';
+    return;
+  }
+  if (oldVal === 'none') {
+    if ((nodeForm.config_decryption || '').trim().toLowerCase() === 'none') {
+      nodeForm.config_decryption = '';
+    }
+    if ((nodeForm.config_encryption || '').trim().toLowerCase() === 'none') {
+      nodeForm.config_encryption = '';
+    }
   }
 });
 
@@ -1529,6 +1722,8 @@ const buildConfigFromForm = () => {
         merged.config.short_ids = nodeForm.config_short_ids.split(',').map(item => item.trim()).filter(Boolean);
       }
       if (nodeForm.config_private_key) merged.config.private_key = nodeForm.config_private_key;
+      merged.config.decryption = (nodeForm.config_decryption || '').trim() || 'none';
+      merged.config.encryption = (nodeForm.config_encryption || '').trim() || 'none';
       if ('public_key' in merged.config) delete merged.config.public_key;
       if (nodeForm.client_publickey) {
         (merged.client as any).publickey = nodeForm.client_publickey;
@@ -1858,6 +2053,11 @@ const resetForm = () => {
   nodeForm.config_path = '';
   nodeForm.config_service_name = '';
   nodeForm.config_flow = '';
+  nodeForm.config_decryption = '';
+  nodeForm.config_encryption = '';
+  nodeForm.config_vlessenc_mode = 'native';
+  nodeForm.config_vlessenc_auth = 'none';
+  nodeForm.config_vlessenc_seconds = '600s';
   nodeForm.config_server_names = '';
   nodeForm.config_private_key = '';
   nodeForm.config_short_ids = '';

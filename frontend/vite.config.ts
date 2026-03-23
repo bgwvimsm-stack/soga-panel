@@ -60,7 +60,8 @@ export default defineConfig(({ mode }) => {
   
     
     build: {
-      target: "es2015",
+      // VLESS Encryption 依赖 BigInt；es2015 会将 ** 转成 Math.pow 导致运行时异常
+      target: "es2020",
       outDir: "dist",
       assetsDir: "assets",
       sourcemap: false,
