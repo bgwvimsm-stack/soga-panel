@@ -869,7 +869,7 @@ function buildQuantumultXVmessEntry(node: any, config: any, user: SubscriptionUs
   }
 
   const options: string[] = [];
-  pushOption(options, "method", config.security || "auto");
+  pushOption(options, "method", "chacha20-poly1305");
   pushOption(options, "password", user.uuid);
   pushOption(options, "fast-open", false);
   pushOption(options, "udp-relay", false);

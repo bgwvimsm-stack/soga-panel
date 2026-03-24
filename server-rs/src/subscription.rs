@@ -2164,10 +2164,7 @@ fn build_quantumultx_vmess_entry(
     return String::new();
   }
   let mut options: Vec<String> = Vec::new();
-  options.push(format!(
-    "method={}",
-    resolve_config_string_value(config, &["security"], "auto")
-  ));
+  options.push("method=chacha20-poly1305".to_string());
   options.push(format!("password={}", user.uuid.clone().unwrap_or_default()));
   options.push("fast-open=false".to_string());
   options.push("udp-relay=false".to_string());
