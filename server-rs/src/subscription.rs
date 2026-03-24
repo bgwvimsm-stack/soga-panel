@@ -291,8 +291,14 @@ fn resolve_reality_public_key(config: &Value, client: &Value) -> String {
   )
 }
 
-fn resolve_vless_client_encryption(config: &Value) -> String {
-  let encryption = ensure_string(config.get("encryption")).trim().to_string();
+fn resolve_vless_client_encryption(config: &Value, client: &Value) -> String {
+  let encryption = ensure_string(
+    client
+      .get("encryption")
+      .or_else(|| config.get("encryption"))
+  )
+  .trim()
+  .to_string();
   if encryption.is_empty() {
     "none".to_string()
   } else {
@@ -794,7 +800,7 @@ fn generate_vless_link(
   );
 
   let mut params: Vec<(String, String)> = Vec::new();
-  params.push(("encryption".to_string(), resolve_vless_client_encryption(config)));
+  params.push(("encryption".to_string(), resolve_vless_client_encryption(config, client)));
   params.push(("type".to_string(), stream_type));
 
   let tls_type = ensure_string(config.get("tls_type"));
@@ -1063,7 +1069,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
         value.insert("server".to_string(), json!(server));
         value.insert("port".to_string(), json!(port));
         value.insert("uuid".to_string(), json!(user.uuid.clone().unwrap_or_default()));
-        value.insert("encryption".to_string(), json!(resolve_vless_client_encryption(&config)));
+        value.insert("encryption".to_string(), json!(resolve_vless_client_encryption(&config, &client)));
         let tls_mode = ensure_string(config.get("tls_type"));
         value.insert(
           "tls".to_string(),
