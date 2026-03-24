@@ -56,6 +56,11 @@ function resolveRealityPublicKey(config: any, client: any) {
   return ensureString(client?.publickey || client?.public_key || config.public_key, "");
 }
 
+function resolveVlessClientEncryption(config: any) {
+  const encryption = ensureString(config?.encryption, "").trim();
+  return encryption || "none";
+}
+
 /**
  * 生成 V2Ray 订阅配置
  * @param {Array} nodes - 节点列表
@@ -136,7 +141,7 @@ function generateVlessLink(node, config, user, client) {
   );
   const sni = ensureString(config.sni || node.tls_host || config.host || config.server || node.server, "");
 
-  params.set("encryption", "none");
+  params.set("encryption", resolveVlessClientEncryption(config));
   params.set("type", config.stream_type || "tcp");
 
   if (config.tls_type === "tls") {
@@ -366,6 +371,7 @@ export function generateClashConfig(nodes, user) {
           server,
           port,
           uuid: user.uuid,
+          encryption: resolveVlessClientEncryption(config),
           tls: config.tls_type === "tls" || config.tls_type === "reality",
           "skip-cert-verify": true,
           network: config.stream_type || "tcp",
