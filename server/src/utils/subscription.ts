@@ -100,6 +100,10 @@ function resolveVlessClientEncryption(config: any, client: any) {
   return encryption || "none";
 }
 
+function isVlessEncryptionEnabled(config: any, client: any) {
+  return resolveVlessClientEncryption(config, client).toLowerCase() !== "none";
+}
+
 // ---------------- V2Ray 订阅 ----------------
 
 export function generateV2rayConfig(nodes: SubscriptionNode[], user: SubscriptionUser): string {
@@ -650,6 +654,9 @@ export function generateSingboxConfig(nodes: SubscriptionNode[], user: Subscript
 
   for (const node of nodes) {
     const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
+    if (node.type === "vless" && isVlessEncryptionEnabled(config, client)) {
+      continue;
+    }
     const tag = resolveOutboundTag(node, usedTags);
     const matchName = ensureString(node.name, tag);
     let outbound: SingboxOutbound | null = null;
@@ -943,6 +950,9 @@ export function generateQuantumultXConfig(nodes: SubscriptionNode[], user: Subsc
 
   for (const node of nodes) {
     const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
+    if (node.type === "vless" && isVlessEncryptionEnabled(config, client)) {
+      continue;
+    }
     let line = "";
 
     switch (node.type) {
@@ -1026,7 +1036,10 @@ export function generateSurgeConfig(nodes: SubscriptionNode[], user: Subscriptio
   const proxyNames: string[] = [];
 
   for (const node of nodes) {
-    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
+    if (node.type === "vless" && isVlessEncryptionEnabled(config, client)) {
+      continue;
+    }
     let proxy = "";
 
     switch (node.type) {

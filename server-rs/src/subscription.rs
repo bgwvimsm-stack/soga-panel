@@ -306,6 +306,10 @@ fn resolve_vless_client_encryption(config: &Value, client: &Value) -> String {
   }
 }
 
+fn is_vless_encryption_enabled(config: &Value, client: &Value) -> bool {
+  resolve_vless_client_encryption(config, client).to_lowercase() != "none"
+}
+
 fn format_host_for_url(host: &str) -> String {
   if host.contains(':') && !host.starts_with('[') && !host.ends_with(']') {
     format!("[{host}]")
@@ -1791,6 +1795,9 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
     let tls_host = endpoint.tls_host;
     let config = endpoint.config;
     let client = endpoint.client;
+    if node_type == "vless" && is_vless_encryption_enabled(&config, &client) {
+      continue;
+    }
 
     let tag = resolve_outbound_tag(&node.name, &mut used_tags, &format!("{}-{}", node.node_type, node.id));
     let match_name = if node.name.is_empty() { tag.clone() } else { node.name.clone() };
@@ -2256,6 +2263,9 @@ pub fn generate_quantumultx_config(nodes: &[SubscriptionNode], user: &Subscripti
     let tls_host = endpoint.tls_host;
     let config = endpoint.config;
     let client = endpoint.client;
+    if node_type == "vless" && is_vless_encryption_enabled(&config, &client) {
+      continue;
+    }
     let name = node.name.clone();
     let line = match node_type.as_str() {
       "v2ray" => build_quantumultx_vmess_entry(&name, &server, port, &tls_host, &config, user),
@@ -2308,6 +2318,10 @@ pub fn generate_surge_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
     let port = endpoint.port;
     let tls_host = endpoint.tls_host;
     let config = endpoint.config;
+    let client = endpoint.client;
+    if node_type == "vless" && is_vless_encryption_enabled(&config, &client) {
+      continue;
+    }
     let name = node.name.clone();
 
     let proxy = match node_type.as_str() {

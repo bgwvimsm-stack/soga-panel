@@ -61,6 +61,10 @@ function resolveVlessClientEncryption(config: any, client: any) {
   return encryption || "none";
 }
 
+function isVlessEncryptionEnabled(config: any, client: any) {
+  return resolveVlessClientEncryption(config, client).toLowerCase() !== "none";
+}
+
 /**
  * 生成 V2Ray 订阅配置
  * @param {Array} nodes - 节点列表
@@ -700,6 +704,9 @@ export function generateSingboxConfig(nodes, user): string {
 
   for (const node of nodes) {
     const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
+    if (node.type === "vless" && isVlessEncryptionEnabled(config, client)) {
+      continue;
+    }
     const tag = resolveOutboundTag(node, usedTags);
     const matchName = ensureString(node.name, tag);
     let outbound: SingboxOutbound | null = null;
@@ -851,6 +858,9 @@ export function generateQuantumultXConfig(nodes, user) {
 
   for (const node of nodes) {
     const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
+    if (node.type === "vless" && isVlessEncryptionEnabled(config, client)) {
+      continue;
+    }
     let line = "";
 
     switch (node.type) {
@@ -1084,7 +1094,10 @@ export function generateSurgeConfig(nodes, user) {
   const proxyNames = [];
 
   for (const node of nodes) {
-    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
+    if (node.type === "vless" && isVlessEncryptionEnabled(config, client)) {
+      continue;
+    }
     let proxy = "";
 
     switch (node.type) {
