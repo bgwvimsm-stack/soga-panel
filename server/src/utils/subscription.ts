@@ -95,9 +95,13 @@ function resolveRealityPublicKey(config: any, client: any) {
   return ensureString(client?.publickey || client?.public_key || config.public_key, "");
 }
 
-function resolveVlessClientEncryption(config: any) {
-  const encryption = ensureString(config?.encryption, "").trim();
+function resolveVlessClientEncryption(config: any, client: any) {
+  const encryption = ensureString(client?.encryption || config?.encryption, "").trim();
   return encryption || "none";
+}
+
+function isVlessEncryptionEnabled(config: any, client: any) {
+  return resolveVlessClientEncryption(config, client).toLowerCase() !== "none";
 }
 
 // ---------------- V2Ray 订阅 ----------------
@@ -189,7 +193,7 @@ function generateVlessLink(node: any, config: any, user: SubscriptionUser, clien
   );
   const sni = ensureString(config.sni || node.tls_host || config.host || config.server || node.server, "");
 
-  params.set("encryption", resolveVlessClientEncryption(config));
+  params.set("encryption", resolveVlessClientEncryption(config, client));
   params.set("type", config.stream_type || "tcp");
 
   if (config.tls_type === "tls") {
@@ -372,7 +376,7 @@ export function generateClashConfig(nodes: SubscriptionNode[], user: Subscriptio
           server,
           port,
           uuid: user.uuid,
-          encryption: resolveVlessClientEncryption(config),
+          encryption: resolveVlessClientEncryption(config, client),
           tls: config.tls_type === "tls" || config.tls_type === "reality",
           "skip-cert-verify": true,
           network: config.stream_type || "tcp"
@@ -650,6 +654,9 @@ export function generateSingboxConfig(nodes: SubscriptionNode[], user: Subscript
 
   for (const node of nodes) {
     const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
+    if (node.type === "vless" && isVlessEncryptionEnabled(config, client)) {
+      continue;
+    }
     const tag = resolveOutboundTag(node, usedTags);
     const matchName = ensureString(node.name, tag);
     let outbound: SingboxOutbound | null = null;
@@ -862,7 +869,7 @@ function buildQuantumultXVmessEntry(node: any, config: any, user: SubscriptionUs
   }
 
   const options: string[] = [];
-  pushOption(options, "method", config.security || "auto");
+  pushOption(options, "method", "chacha20-poly1305");
   pushOption(options, "password", user.uuid);
   pushOption(options, "fast-open", false);
   pushOption(options, "udp-relay", false);
@@ -943,6 +950,9 @@ export function generateQuantumultXConfig(nodes: SubscriptionNode[], user: Subsc
 
   for (const node of nodes) {
     const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
+    if (node.type === "vless" && isVlessEncryptionEnabled(config, client)) {
+      continue;
+    }
     let line = "";
 
     switch (node.type) {
@@ -1026,7 +1036,10 @@ export function generateSurgeConfig(nodes: SubscriptionNode[], user: Subscriptio
   const proxyNames: string[] = [];
 
   for (const node of nodes) {
-    const { config, server, port, tlsHost } = resolveNodeEndpoint(node);
+    const { config, server, port, tlsHost, client } = resolveNodeEndpoint(node);
+    if (node.type === "vless" && isVlessEncryptionEnabled(config, client)) {
+      continue;
+    }
     let proxy = "";
 
     switch (node.type) {

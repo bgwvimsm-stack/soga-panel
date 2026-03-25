@@ -291,13 +291,23 @@ fn resolve_reality_public_key(config: &Value, client: &Value) -> String {
   )
 }
 
-fn resolve_vless_client_encryption(config: &Value) -> String {
-  let encryption = ensure_string(config.get("encryption")).trim().to_string();
+fn resolve_vless_client_encryption(config: &Value, client: &Value) -> String {
+  let encryption = ensure_string(
+    client
+      .get("encryption")
+      .or_else(|| config.get("encryption"))
+  )
+  .trim()
+  .to_string();
   if encryption.is_empty() {
     "none".to_string()
   } else {
     encryption
   }
+}
+
+fn is_vless_encryption_enabled(config: &Value, client: &Value) -> bool {
+  resolve_vless_client_encryption(config, client).to_lowercase() != "none"
 }
 
 fn format_host_for_url(host: &str) -> String {
@@ -794,7 +804,7 @@ fn generate_vless_link(
   );
 
   let mut params: Vec<(String, String)> = Vec::new();
-  params.push(("encryption".to_string(), resolve_vless_client_encryption(config)));
+  params.push(("encryption".to_string(), resolve_vless_client_encryption(config, client)));
   params.push(("type".to_string(), stream_type));
 
   let tls_type = ensure_string(config.get("tls_type"));
@@ -1063,7 +1073,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
         value.insert("server".to_string(), json!(server));
         value.insert("port".to_string(), json!(port));
         value.insert("uuid".to_string(), json!(user.uuid.clone().unwrap_or_default()));
-        value.insert("encryption".to_string(), json!(resolve_vless_client_encryption(&config)));
+        value.insert("encryption".to_string(), json!(resolve_vless_client_encryption(&config, &client)));
         let tls_mode = ensure_string(config.get("tls_type"));
         value.insert(
           "tls".to_string(),
@@ -1785,6 +1795,9 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
     let tls_host = endpoint.tls_host;
     let config = endpoint.config;
     let client = endpoint.client;
+    if node_type == "vless" && is_vless_encryption_enabled(&config, &client) {
+      continue;
+    }
 
     let tag = resolve_outbound_tag(&node.name, &mut used_tags, &format!("{}-{}", node.node_type, node.id));
     let match_name = if node.name.is_empty() { tag.clone() } else { node.name.clone() };
@@ -2151,10 +2164,7 @@ fn build_quantumultx_vmess_entry(
     return String::new();
   }
   let mut options: Vec<String> = Vec::new();
-  options.push(format!(
-    "method={}",
-    resolve_config_string_value(config, &["security"], "auto")
-  ));
+  options.push("method=chacha20-poly1305".to_string());
   options.push(format!("password={}", user.uuid.clone().unwrap_or_default()));
   options.push("fast-open=false".to_string());
   options.push("udp-relay=false".to_string());
@@ -2250,6 +2260,9 @@ pub fn generate_quantumultx_config(nodes: &[SubscriptionNode], user: &Subscripti
     let tls_host = endpoint.tls_host;
     let config = endpoint.config;
     let client = endpoint.client;
+    if node_type == "vless" && is_vless_encryption_enabled(&config, &client) {
+      continue;
+    }
     let name = node.name.clone();
     let line = match node_type.as_str() {
       "v2ray" => build_quantumultx_vmess_entry(&name, &server, port, &tls_host, &config, user),
@@ -2302,6 +2315,10 @@ pub fn generate_surge_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
     let port = endpoint.port;
     let tls_host = endpoint.tls_host;
     let config = endpoint.config;
+    let client = endpoint.client;
+    if node_type == "vless" && is_vless_encryption_enabled(&config, &client) {
+      continue;
+    }
     let name = node.name.clone();
 
     let proxy = match node_type.as_str() {

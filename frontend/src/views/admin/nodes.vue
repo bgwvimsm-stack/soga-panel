@@ -1446,7 +1446,7 @@ const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
       ? { stream_type: 'tcp', path: '', service_name: '' }
       : {}),
     ...(type === 'vless'
-      ? { stream_type: 'tcp', tls_type: 'tls', decryption: 'none', encryption: 'none' }
+      ? { stream_type: 'tcp', tls_type: 'tls', decryption: 'none' }
       : {}),
     ...(type === 'hysteria'
       ? { obfs: 'plain', obfs_password: '', up_mbps: 1000, down_mbps: 1000 }
@@ -1471,7 +1471,8 @@ const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
     server: '',
     port: type === 'anytls' ? 443 : null,
     tls_host: '',
-    publickey: ''
+    publickey: '',
+    ...(type === 'vless' ? { encryption: 'none' } : {})
   }
 });
 
@@ -1555,7 +1556,7 @@ const applyConfigToState = (config: any) => {
     nodeForm.config_service_name = nodeConfigState.config.service_name || '';
     nodeForm.config_flow = nodeConfigState.config.flow || '';
     nodeForm.config_decryption = nodeConfigState.config.decryption || '';
-    nodeForm.config_encryption = nodeConfigState.config.encryption || '';
+    nodeForm.config_encryption = (nodeConfigState.client as any).encryption || nodeConfigState.config.encryption || '';
     syncVlessEncryptionFormFromConfig(nodeForm.config_decryption);
     nodeForm.config_server_names = Array.isArray(nodeConfigState.config.server_names)
       ? nodeConfigState.config.server_names.join(',')
@@ -1723,7 +1724,8 @@ const buildConfigFromForm = () => {
       }
       if (nodeForm.config_private_key) merged.config.private_key = nodeForm.config_private_key;
       merged.config.decryption = (nodeForm.config_decryption || '').trim() || 'none';
-      merged.config.encryption = (nodeForm.config_encryption || '').trim() || 'none';
+      (merged.client as any).encryption = (nodeForm.config_encryption || '').trim() || 'none';
+      if ('encryption' in merged.config) delete merged.config.encryption;
       if ('public_key' in merged.config) delete merged.config.public_key;
       if (nodeForm.client_publickey) {
         (merged.client as any).publickey = nodeForm.client_publickey;
