@@ -344,13 +344,13 @@
                   <el-col :span="12">
                     <el-form-item label="TLS">
                       <el-select v-model="nodeForm.config_tls_type" placeholder="请选择TLS类型">
-                        <el-option v-for="item in tlsOptions" :key="item" :label="item" :value="item" />
+                        <el-option v-for="item in vmessTlsOptions" :key="item" :label="item" :value="item" />
                       </el-select>
                     </el-form-item>
                   </el-col>
                 </el-row>
                 <el-row :gutter="16">
-                  <el-col :span="12" v-if="nodeForm.config_tls_type === 'tls'">
+                  <el-col :span="12" v-if="nodeForm.config_tls_type === 'tls' || nodeForm.config_tls_type === 'reality'">
                     <el-form-item label="TLS Host">
                       <el-input v-model="nodeForm.client_tls_host" placeholder="SNI/ServerName" />
                     </el-form-item>
@@ -368,6 +368,59 @@
                     </el-form-item>
                   </el-col>
                 </el-row>
+                <template v-if="nodeForm.config_tls_type === 'reality'">
+                  <div class="section-subtitle">Reality</div>
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="目标地址">
+                        <el-input v-model="nodeForm.config_dest" placeholder="如 www.server.com:443" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="ServerNames">
+                        <el-input
+                          v-model="nodeForm.config_server_names"
+                          type="textarea"
+                          :rows="2"
+                          placeholder="用逗号分隔多个 server_name"
+                        />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                      <el-form-item label="Short IDs">
+                        <el-input
+                          v-model="nodeForm.config_short_ids"
+                          type="textarea"
+                          :rows="2"
+                          placeholder="用逗号分隔多个 short_id"
+                        />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="PrivateKey">
+                        <el-input v-model="nodeForm.config_private_key" placeholder="Reality private key" />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                      <el-form-item label="PublicKey">
+                        <el-input v-model="nodeForm.client_publickey" placeholder="Reality public key" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="24">
+                      <el-form-item>
+                        <el-button type="primary" plain @click="regenerateRealityKeys">
+                          一键生成 Short IDs / PrivateKey / PublicKey
+                        </el-button>
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                </template>
               </template>
 
               <!-- Trojan 配置 -->
@@ -382,12 +435,19 @@
                     </el-form-item>
                   </el-col>
                   <el-col :span="12">
-                    <el-form-item label="TLS Host">
-                      <el-input v-model="nodeForm.client_tls_host" placeholder="SNI/ServerName" />
+                    <el-form-item label="TLS">
+                      <el-select v-model="nodeForm.config_tls_type" placeholder="请选择TLS类型">
+                        <el-option v-for="item in trojanTlsOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
                     </el-form-item>
                   </el-col>
                 </el-row>
                 <el-row :gutter="16">
+                  <el-col :span="12" v-if="nodeForm.config_tls_type === 'tls' || nodeForm.config_tls_type === 'reality'">
+                    <el-form-item label="TLS Host">
+                      <el-input v-model="nodeForm.client_tls_host" placeholder="SNI/ServerName" />
+                    </el-form-item>
+                  </el-col>
                   <el-col :span="12" v-if="nodeForm.config_stream_type === 'ws'">
                     <el-form-item label="PATH">
                       <el-input v-model="nodeForm.config_path" placeholder="WebSocket 路径，如 /path" />
@@ -399,6 +459,59 @@
                     </el-form-item>
                   </el-col>
                 </el-row>
+                <template v-if="nodeForm.config_tls_type === 'reality'">
+                  <div class="section-subtitle">Reality</div>
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="目标地址">
+                        <el-input v-model="nodeForm.config_dest" placeholder="如 www.server.com:443" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="ServerNames">
+                        <el-input
+                          v-model="nodeForm.config_server_names"
+                          type="textarea"
+                          :rows="2"
+                          placeholder="用逗号分隔多个 server_name"
+                        />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                      <el-form-item label="Short IDs">
+                        <el-input
+                          v-model="nodeForm.config_short_ids"
+                          type="textarea"
+                          :rows="2"
+                          placeholder="用逗号分隔多个 short_id"
+                        />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="12">
+                      <el-form-item label="PrivateKey">
+                        <el-input v-model="nodeForm.config_private_key" placeholder="Reality private key" />
+                      </el-form-item>
+                    </el-col>
+                    <el-col :span="12">
+                      <el-form-item label="PublicKey">
+                        <el-input v-model="nodeForm.client_publickey" placeholder="Reality public key" />
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                  <el-row :gutter="16">
+                    <el-col :span="24">
+                      <el-form-item>
+                        <el-button type="primary" plain @click="regenerateRealityKeys">
+                          一键生成 Short IDs / PrivateKey / PublicKey
+                        </el-button>
+                      </el-form-item>
+                    </el-col>
+                  </el-row>
+                </template>
               </template>
 
               <!-- VLESS 配置 -->
@@ -488,7 +601,7 @@
                   <el-row :gutter="16">
                     <el-col :span="24">
                       <el-form-item>
-                        <el-button type="primary" plain @click="regenerateVlessReality">
+                        <el-button type="primary" plain @click="regenerateRealityKeys">
                           一键生成 Short IDs / PrivateKey / PublicKey
                         </el-button>
                       </el-form-item>
@@ -622,6 +735,55 @@
                         type="textarea"
                         :rows="4"
                         placeholder="每行一条，如 stop=8 或 1=100-400"
+                      />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+              </template>
+
+              <template v-if="echTlsEnabled">
+                <div class="section-subtitle">ECH</div>
+                <el-row :gutter="16">
+                  <el-col :span="12">
+                    <el-form-item label="启用ECH">
+                      <el-switch v-model="nodeForm.config_ech_enabled" />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16" v-if="nodeForm.config_ech_enabled">
+                  <el-col :span="12">
+                    <el-form-item label="Public Name">
+                      <el-input v-model="nodeForm.config_ech_public_name" placeholder="如 www.bing.com" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="12">
+                    <el-form-item>
+                      <el-button type="primary" plain style="width: 100%;" @click="generateEchMaterial">
+                        一键生成ECH Key/Config
+                      </el-button>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16" v-if="nodeForm.config_ech_enabled">
+                  <el-col :span="24">
+                    <el-form-item label="ECH Key">
+                      <el-input
+                        v-model="nodeForm.config_ech_key"
+                        type="textarea"
+                        :rows="3"
+                        placeholder="服务端 ECH key（写入 config.ech.key）"
+                      />
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16" v-if="nodeForm.config_ech_enabled">
+                  <el-col :span="24">
+                    <el-form-item label="ECH Config">
+                      <el-input
+                        v-model="nodeForm.client_ech_config"
+                        type="textarea"
+                        :rows="3"
+                        placeholder="客户端 ECH config（写入 client.ech.config）"
                       />
                     </el-form-item>
                   </el-col>
@@ -770,8 +932,9 @@ const ssrObfsOptions = [
 const ssrSinglePortOptions = ['protocol', 'obfs'];
 
 const streamTypeOptions = ['tcp', 'ws', 'http', 'h2', 'grpc'];
-const tlsOptions = ['none', 'tls'];
+const vmessTlsOptions = ['none', 'tls', 'reality'];
 const vlessTlsOptions = ['none', 'tls', 'reality'];
+const trojanTlsOptions = ['tls', 'reality'];
 const vlessEncryptionModeOptions = ['native', 'xorpub', 'random'];
 const vlessEncryptionAuthOptions = [
   { label: 'none（不启用）', value: 'none' },
@@ -835,6 +998,7 @@ const nodeForm = reactive({
   basic_speed_limit: 0,
   client_tls_host: '',
   client_publickey: '',
+  client_ech_config: '',
   config_method: '',
   config_password: '',
   config_protocol: '',
@@ -850,6 +1014,9 @@ const nodeForm = reactive({
   config_vlessenc_mode: 'native',
   config_vlessenc_auth: 'none',
   config_vlessenc_seconds: '600s',
+  config_ech_enabled: false,
+  config_ech_public_name: '',
+  config_ech_key: '',
   config_server_names: '',
   config_private_key: '',
   config_short_ids: '',
@@ -948,6 +1115,24 @@ const base64UrlToBytes = (value: string) => {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
+};
+
+const bytesToBase64 = (bytes: Uint8Array) => {
+  let binary = '';
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+};
+
+const base64ToBytes = (value: string) => {
+  if (!value) return new Uint8Array(0);
+  try {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  } catch {
+    return new Uint8Array(0);
+  }
 };
 
 const normalizeVlessEncryptionMode = (value: string) => {
@@ -1193,10 +1378,14 @@ const generateShortIds = (count = 5, byteLength = 8) => {
   return list;
 };
 
-const ensureVlessRealityDefaults = (forceRegenerate = false) => {
-  if (nodeForm.type !== 'vless' || nodeForm.config_tls_type !== 'reality') return;
+const supportsReality = computed(() => (
+  nodeForm.type === 'vless' || nodeForm.type === 'v2ray' || nodeForm.type === 'trojan'
+));
 
-  if (forceRegenerate || !nodeForm.config_flow) {
+const ensureRealityDefaults = (forceRegenerate = false) => {
+  if (!supportsReality.value || nodeForm.config_tls_type !== 'reality') return;
+
+  if (nodeForm.type === 'vless' && (forceRegenerate || !nodeForm.config_flow)) {
     nodeForm.config_flow = 'xtls-rprx-vision';
   }
 
@@ -1224,8 +1413,130 @@ const ensureVlessRealityDefaults = (forceRegenerate = false) => {
   }
 };
 
-const regenerateVlessReality = () => {
-  ensureVlessRealityDefaults(true);
+const regenerateRealityKeys = () => {
+  ensureRealityDefaults(true);
+};
+
+const concatBytes = (...parts: Uint8Array[]) => {
+  const total = parts.reduce((sum, arr) => sum + arr.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const arr of parts) {
+    out.set(arr, offset);
+    offset += arr.length;
+  }
+  return out;
+};
+
+const u16be = (value: number) => new Uint8Array([(value >>> 8) & 0xff, value & 0xff]);
+
+const encodeText = (value: string) => {
+  try {
+    return new TextEncoder().encode(value);
+  } catch {
+    const chars = Array.from(value);
+    return Uint8Array.from(chars.map((char) => char.charCodeAt(0) & 0xff));
+  }
+};
+
+const generateEchMaterial = () => {
+  if (!echTlsEnabled.value) {
+    ElMessage.warning('当前节点类型/TLS 模式不支持 ECH');
+    return;
+  }
+
+  const publicNameRaw = (nodeForm.config_ech_public_name || nodeForm.client_tls_host || 'www.bing.com').trim();
+  if (!publicNameRaw) {
+    ElMessage.warning('请先填写 ECH Public Name');
+    return;
+  }
+
+  const privateKey = getRandomBytes(32);
+  clampScalar(privateKey);
+  const publicKey = new Uint8Array(32);
+  scalarMult(publicKey, privateKey, X25519_BASE);
+
+  const cipherSuites: number[][] = [];
+  for (const kdfId of [1, 2, 3]) {
+    for (const aeadId of [1, 2, 3]) {
+      cipherSuites.push([kdfId, aeadId]);
+    }
+  }
+  const suitesBytes = new Uint8Array(cipherSuites.length * 4);
+  cipherSuites.forEach((suite, index) => {
+    suitesBytes.set(u16be(suite[0]), index * 4);
+    suitesBytes.set(u16be(suite[1]), index * 4 + 2);
+  });
+
+  const publicName = encodeText(publicNameRaw);
+  if (publicName.length === 0 || publicName.length > 255) {
+    ElMessage.warning('ECH Public Name 长度需在 1-255 字节');
+    return;
+  }
+  const configId = getRandomBytes(1);
+  const content = concatBytes(
+    configId,
+    u16be(0x0020),
+    u16be(publicKey.length),
+    publicKey,
+    u16be(suitesBytes.length),
+    suitesBytes,
+    new Uint8Array([0x00]),
+    new Uint8Array([publicName.length & 0xff]),
+    publicName,
+    u16be(0)
+  );
+  const echConfig = concatBytes(
+    u16be(0xfe0d),
+    u16be(content.length),
+    content
+  );
+  const echConfigList = concatBytes(u16be(echConfig.length), echConfig);
+  const echKey = concatBytes(u16be(privateKey.length), privateKey, echConfigList);
+
+  nodeForm.config_ech_public_name = publicNameRaw;
+  nodeForm.config_ech_key = bytesToBase64(echKey);
+  nodeForm.client_ech_config = bytesToBase64(echConfigList);
+  nodeForm.config_ech_enabled = true;
+  ElMessage.success('ECH 参数已生成');
+};
+
+const parseEchPublicNameFromConfig = (base64Config: string) => {
+  const bytes = base64ToBytes((base64Config || '').trim());
+  if (bytes.length < 10) return '';
+  const readU16 = (offset: number) => ((bytes[offset] << 8) | bytes[offset + 1]);
+
+  const listLen = readU16(0);
+  if (listLen <= 0 || bytes.length < 2 + listLen) return '';
+  let offset = 2;
+  if (offset + 4 > bytes.length) return '';
+  const version = readU16(offset);
+  if (version !== 0xfe0d) return '';
+  const configLen = readU16(offset + 2);
+  const contentStart = offset + 4;
+  const contentEnd = contentStart + configLen;
+  if (contentEnd > bytes.length) return '';
+  offset = contentStart;
+
+  if (offset + 1 + 2 + 2 > contentEnd) return '';
+  offset += 1; // config_id
+  offset += 2; // kem_id
+  const pubkeyLen = readU16(offset);
+  offset += 2 + pubkeyLen;
+  if (offset + 2 > contentEnd) return '';
+  const suiteLen = readU16(offset);
+  offset += 2 + suiteLen;
+  if (offset + 2 > contentEnd) return '';
+  offset += 1; // max_name_length
+  const publicNameLen = bytes[offset];
+  offset += 1;
+  if (offset + publicNameLen > contentEnd) return '';
+  const nameBytes = bytes.slice(offset, offset + publicNameLen);
+  try {
+    return new TextDecoder().decode(nameBytes);
+  } catch {
+    return String.fromCharCode(...Array.from(nameBytes));
+  }
 };
 
 const generateVlessEncryption = () => {
@@ -1443,7 +1754,7 @@ const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
       ? { stream_type: 'tcp', tls_type: 'none', path: '', service_name: '' }
       : {}),
     ...(type === 'trojan'
-      ? { stream_type: 'tcp', path: '', service_name: '' }
+      ? { stream_type: 'tcp', tls_type: 'tls', path: '', service_name: '' }
       : {}),
     ...(type === 'vless'
       ? { stream_type: 'tcp', tls_type: 'tls', decryption: 'none' }
@@ -1534,6 +1845,12 @@ const applyConfigToState = (config: any) => {
     nodeForm.client_server = nodeConfigState.client.server || '';
     nodeForm.client_tls_host = (nodeConfigState.client as any).tls_host || '';
     nodeForm.client_publickey = (nodeConfigState.client as any).publickey || nodeConfigState.config.public_key || '';
+    const echKey = typeof (nodeConfigState.config as any)?.ech?.key === 'string' ? (nodeConfigState.config as any).ech.key : '';
+    const echConfig = typeof (nodeConfigState.client as any)?.ech?.config === 'string' ? (nodeConfigState.client as any).ech.config : '';
+    nodeForm.config_ech_key = echKey;
+    nodeForm.client_ech_config = echConfig;
+    nodeForm.config_ech_enabled = Boolean(echKey || echConfig);
+    nodeForm.config_ech_public_name = parseEchPublicNameFromConfig(echConfig) || nodeForm.client_tls_host || 'www.bing.com';
     const clientPort = Number(nodeConfigState.client.port);
     nodeForm.client_port = Number.isFinite(clientPort) && clientPort > 0 ? clientPort : null;
     const servicePort = Number(nodeConfigState.config.port);
@@ -1551,7 +1868,8 @@ const applyConfigToState = (config: any) => {
     }
     nodeForm.config_single_port_type = nodeConfigState.config.single_port_type || '';
     nodeForm.config_stream_type = nodeConfigState.config.stream_type || 'tcp';
-    nodeForm.config_tls_type = nodeConfigState.config.tls_type || (nodeForm.type === 'vless' ? 'tls' : 'none');
+    nodeForm.config_tls_type = nodeConfigState.config.tls_type
+      || ((nodeForm.type === 'vless' || nodeForm.type === 'trojan') ? 'tls' : 'none');
     nodeForm.config_path = nodeConfigState.config.path || '';
     nodeForm.config_service_name = nodeConfigState.config.service_name || '';
     nodeForm.config_flow = nodeConfigState.config.flow || '';
@@ -1569,7 +1887,7 @@ const applyConfigToState = (config: any) => {
     nodeForm.config_obfs_password = nodeConfigState.config.obfs_password || '';
     ensureHysteriaObfsPassword();
     ensureSSRPassword();
-    ensureVlessRealityDefaults();
+    ensureRealityDefaults();
     nodeForm.config_padding_scheme = Array.isArray((nodeConfigState.config as any).padding_scheme)
       ? (nodeConfigState.config as any).padding_scheme.join('\n')
       : ((nodeConfigState.config as any).padding_scheme || '');
@@ -1585,6 +1903,13 @@ const applyConfigToState = (config: any) => {
 
 const isSS2022 = computed(() => nodeForm.type === 'ss' && ss2022Ciphers.includes(nodeForm.config_method));
 const isVlessEncryptionEnabled = computed(() => nodeForm.config_vlessenc_auth !== 'none');
+const echTlsEnabled = computed(() => {
+  if (nodeForm.type === 'v2ray' || nodeForm.type === 'vless' || nodeForm.type === 'trojan') {
+    return nodeForm.config_tls_type === 'tls' || nodeForm.config_tls_type === 'reality';
+  }
+  if (nodeForm.type === 'hysteria' || nodeForm.type === 'anytls') return true;
+  return false;
+});
 
 watch(() => nodeForm.config_method, (val, oldVal) => {
   if (isConfigSyncing.value) return;
@@ -1601,8 +1926,8 @@ watch(() => nodeForm.type, (val, oldVal) => {
   if (val === 'ssr' && oldVal !== 'ssr') {
     ensureSSRPassword();
   }
-  if (val === 'vless' && oldVal !== 'vless') {
-    ensureVlessRealityDefaults();
+  if ((val === 'vless' || val === 'v2ray' || val === 'trojan') && val !== oldVal) {
+    ensureRealityDefaults();
   }
 });
 
@@ -1635,7 +1960,16 @@ watch(() => nodeForm.config_obfs, (val, oldVal) => {
 
 watch(() => nodeForm.config_tls_type, (val, oldVal) => {
   if (val !== oldVal) {
-    ensureVlessRealityDefaults();
+    ensureRealityDefaults();
+    if (val !== 'tls' && val !== 'reality') {
+      nodeForm.config_ech_enabled = false;
+    }
+  }
+});
+
+watch(() => nodeForm.type, () => {
+  if (!echTlsEnabled.value) {
+    nodeForm.config_ech_enabled = false;
   }
 });
 
@@ -1680,22 +2014,73 @@ const buildConfigFromForm = () => {
     case 'v2ray':
       merged.config.stream_type = nodeForm.config_stream_type || merged.config.stream_type || 'tcp';
       merged.config.tls_type = nodeForm.config_tls_type || merged.config.tls_type || 'none';
-      merged.config.path = nodeForm.config_path || merged.config.path || '';
+      if (merged.config.stream_type === 'ws') {
+        merged.config.path = nodeForm.config_path || merged.config.path || '';
+      } else if ('path' in merged.config) {
+        delete merged.config.path;
+      }
       if (merged.config.stream_type === 'grpc') {
         merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
+      } else if ('service_name' in merged.config) {
+        delete merged.config.service_name;
+      }
+      if (merged.config.tls_type === 'reality') {
+        if (nodeForm.config_dest) merged.config.dest = nodeForm.config_dest;
+        if (nodeForm.config_server_names) {
+          merged.config.server_names = nodeForm.config_server_names.split(',').map(item => item.trim()).filter(Boolean);
+        }
+        if (nodeForm.config_short_ids) {
+          merged.config.short_ids = nodeForm.config_short_ids.split(',').map(item => item.trim()).filter(Boolean);
+        }
+        if (nodeForm.config_private_key) merged.config.private_key = nodeForm.config_private_key;
+        if (nodeForm.client_publickey) {
+          (merged.client as any).publickey = nodeForm.client_publickey;
+        } else if ('publickey' in merged.client) {
+          delete (merged.client as any).publickey;
+        }
       } else {
-        if ('service_name' in merged.config) delete merged.config.service_name;
+        if ('dest' in merged.config) delete merged.config.dest;
+        if ('server_names' in merged.config) delete merged.config.server_names;
+        if ('short_ids' in merged.config) delete merged.config.short_ids;
+        if ('private_key' in merged.config) delete merged.config.private_key;
+        if ('publickey' in merged.client) delete (merged.client as any).publickey;
       }
       break;
     case 'trojan':
       merged.config.stream_type = nodeForm.config_stream_type || merged.config.stream_type || 'tcp';
-      merged.config.path = nodeForm.config_path || merged.config.path || '';
+      merged.config.tls_type = nodeForm.config_tls_type || merged.config.tls_type || 'tls';
+      if (merged.config.stream_type === 'ws') {
+        merged.config.path = nodeForm.config_path || merged.config.path || '';
+      } else if ('path' in merged.config) {
+        delete merged.config.path;
+      }
       if (merged.config.stream_type === 'grpc') {
         merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
-      } else {
-        if ('service_name' in merged.config) delete merged.config.service_name;
+      } else if ('service_name' in merged.config) {
+        delete merged.config.service_name;
       }
       if (nodeForm.config_password) merged.config.password = nodeForm.config_password;
+      if (merged.config.tls_type === 'reality') {
+        if (nodeForm.config_dest) merged.config.dest = nodeForm.config_dest;
+        if (nodeForm.config_server_names) {
+          merged.config.server_names = nodeForm.config_server_names.split(',').map(item => item.trim()).filter(Boolean);
+        }
+        if (nodeForm.config_short_ids) {
+          merged.config.short_ids = nodeForm.config_short_ids.split(',').map(item => item.trim()).filter(Boolean);
+        }
+        if (nodeForm.config_private_key) merged.config.private_key = nodeForm.config_private_key;
+        if (nodeForm.client_publickey) {
+          (merged.client as any).publickey = nodeForm.client_publickey;
+        } else if ('publickey' in merged.client) {
+          delete (merged.client as any).publickey;
+        }
+      } else {
+        if ('dest' in merged.config) delete merged.config.dest;
+        if ('server_names' in merged.config) delete merged.config.server_names;
+        if ('short_ids' in merged.config) delete merged.config.short_ids;
+        if ('private_key' in merged.config) delete merged.config.private_key;
+        if ('publickey' in merged.client) delete (merged.client as any).publickey;
+      }
       break;
     case 'vless':
       merged.config.stream_type = nodeForm.config_stream_type || merged.config.stream_type || 'tcp';
@@ -1763,6 +2148,37 @@ const buildConfigFromForm = () => {
       merged.config.path = nodeForm.config_path || merged.config.path || '';
       merged.config.service_name = nodeForm.config_service_name || merged.config.service_name || '';
   }
+
+  if (echTlsEnabled.value && nodeForm.config_ech_enabled) {
+    const echKey = (nodeForm.config_ech_key || '').trim();
+    const echConfig = (nodeForm.client_ech_config || '').trim();
+
+    if (echKey) {
+      const ech = typeof merged.config.ech === 'object' && merged.config.ech ? { ...merged.config.ech } : {};
+      ech.key = echKey;
+      merged.config.ech = ech;
+    } else if ('ech' in merged.config) {
+      delete merged.config.ech;
+    }
+
+    if (echConfig) {
+      const clientEch = typeof (merged.client as any).ech === 'object' && (merged.client as any).ech
+        ? { ...(merged.client as any).ech }
+        : {};
+      clientEch.config = echConfig;
+      (merged.client as any).ech = clientEch;
+    } else if ('ech' in merged.client) {
+      delete (merged.client as any).ech;
+    }
+  } else {
+    if ('ech' in merged.config) {
+      delete merged.config.ech;
+    }
+    if ('ech' in merged.client) {
+      delete (merged.client as any).ech;
+    }
+  }
+
   return merged;
 };
 
@@ -1850,7 +2266,7 @@ const handleTypeChange = (value: string) => {
   advancedView.value = false;
   ensureSS2022Password();
   ensureSSRPassword();
-  ensureVlessRealityDefaults();
+  ensureRealityDefaults();
 };
 
 const editNode = (node: Node) => {
@@ -2041,6 +2457,7 @@ const resetForm = () => {
   nodeForm.client_port = null;
   nodeForm.client_tls_host = '';
   nodeForm.client_publickey = '';
+  nodeForm.client_ech_config = '';
   nodeForm.service_port = null;
   nodeForm.basic_pull_interval = 60;
   nodeForm.basic_push_interval = 60;
@@ -2060,6 +2477,9 @@ const resetForm = () => {
   nodeForm.config_vlessenc_mode = 'native';
   nodeForm.config_vlessenc_auth = 'none';
   nodeForm.config_vlessenc_seconds = '600s';
+  nodeForm.config_ech_enabled = false;
+  nodeForm.config_ech_public_name = '';
+  nodeForm.config_ech_key = '';
   nodeForm.config_server_names = '';
   nodeForm.config_private_key = '';
   nodeForm.config_short_ids = '';
