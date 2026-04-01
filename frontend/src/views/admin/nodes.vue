@@ -241,6 +241,16 @@
                   </el-form-item>
                 </el-col>
               </el-row>
+              <el-row :gutter="16" v-if="skipCertVerifyEnabled">
+                <el-col :span="12">
+                  <el-form-item label="允许不安全">
+                    <el-select v-model="nodeForm.client_skip_cert_verify" placeholder="请选择">
+                      <el-option label="否" :value="false" />
+                      <el-option label="是" :value="true" />
+                    </el-select>
+                  </el-form-item>
+                </el-col>
+              </el-row>
             </el-card>
 
             <el-card shadow="never" class="section-card">
@@ -765,6 +775,15 @@
                   </el-col>
                 </el-row>
                 <el-row :gutter="16" v-if="nodeForm.config_ech_enabled">
+                  <el-col :span="12">
+                    <el-form-item label="ECH 模式">
+                      <el-select v-model="nodeForm.config_ech_force_query" placeholder="请选择模式">
+                        <el-option v-for="item in echForceQueryOptions" :key="item" :label="item" :value="item" />
+                      </el-select>
+                    </el-form-item>
+                  </el-col>
+                </el-row>
+                <el-row :gutter="16" v-if="nodeForm.config_ech_enabled">
                   <el-col :span="24">
                     <el-form-item label="ECH Key">
                       <el-input
@@ -943,6 +962,7 @@ const vlessEncryptionAuthOptions = [
 ];
 const VLESS_ENCRYPTION_PROTOCOL = 'mlkem768x25519plus';
 const hysteriaObfsOptions = ['plain', 'salamander'];
+const echForceQueryOptions = ['none', 'half', 'full'];
 const nodes = ref<Node[]>([]);
 const selectedNodes = ref<Node[]>([]);
 const pagerConfig = reactive<VxePagerConfig>({
@@ -998,6 +1018,7 @@ const nodeForm = reactive({
   basic_speed_limit: 0,
   client_tls_host: '',
   client_publickey: '',
+  client_skip_cert_verify: false,
   client_ech_config: '',
   config_method: '',
   config_password: '',
@@ -1017,6 +1038,7 @@ const nodeForm = reactive({
   config_ech_enabled: false,
   config_ech_public_name: '',
   config_ech_key: '',
+  config_ech_force_query: 'none',
   config_server_names: '',
   config_private_key: '',
   config_short_ids: '',
@@ -1728,7 +1750,24 @@ type NodeConfigState = {
     port: number | null;
     tls_host: string;
     publickey?: string;
+    "skip-cert-verify"?: boolean;
   };
+};
+
+const toBooleanFlag = (value: unknown, fallback = false): boolean => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off', ''].includes(normalized)) return false;
+  }
+  return fallback;
+};
+
+const normalizeEchForceQuery = (value: unknown): string => {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return echForceQueryOptions.includes(normalized) ? normalized : 'none';
 };
 
 const createDefaultNodeConfig = (type = 'ss'): NodeConfigState => ({
@@ -1845,10 +1884,19 @@ const applyConfigToState = (config: any) => {
     nodeForm.client_server = nodeConfigState.client.server || '';
     nodeForm.client_tls_host = (nodeConfigState.client as any).tls_host || '';
     nodeForm.client_publickey = (nodeConfigState.client as any).publickey || nodeConfigState.config.public_key || '';
+    const rawSkipCertVerify = (nodeConfigState.client as any)['skip-cert-verify']
+      ?? (nodeConfigState.client as any).skip_cert_verify
+      ?? nodeConfigState.config['skip-cert-verify']
+      ?? nodeConfigState.config.insecure
+      ?? nodeConfigState.config.allow_insecure
+      ?? nodeConfigState.config.allowInsecure;
+    nodeForm.client_skip_cert_verify = toBooleanFlag(rawSkipCertVerify, false);
     const echKey = typeof (nodeConfigState.config as any)?.ech?.key === 'string' ? (nodeConfigState.config as any).ech.key : '';
     const echConfig = typeof (nodeConfigState.client as any)?.ech?.config === 'string' ? (nodeConfigState.client as any).ech.config : '';
+    const echForceQueryRaw = (nodeConfigState.config as any)?.ech?.force_query;
     nodeForm.config_ech_key = echKey;
     nodeForm.client_ech_config = echConfig;
+    nodeForm.config_ech_force_query = normalizeEchForceQuery(echForceQueryRaw);
     nodeForm.config_ech_enabled = Boolean(echKey || echConfig);
     nodeForm.config_ech_public_name = parseEchPublicNameFromConfig(echConfig) || nodeForm.client_tls_host || 'www.bing.com';
     const clientPort = Number(nodeConfigState.client.port);
@@ -1911,6 +1959,13 @@ const echTlsEnabled = computed(() => {
   return false;
 });
 
+const skipCertVerifyEnabled = computed(() => {
+  if (nodeForm.type === 'v2ray' || nodeForm.type === 'vless' || nodeForm.type === 'trojan') {
+    return nodeForm.config_tls_type === 'tls' || nodeForm.config_tls_type === 'reality';
+  }
+  return nodeForm.type === 'hysteria' || nodeForm.type === 'anytls';
+});
+
 watch(() => nodeForm.config_method, (val, oldVal) => {
   if (isConfigSyncing.value) return;
   if (val !== oldVal && nodeForm.type === 'ss' && ss2022Ciphers.includes(val)) {
@@ -1959,6 +2014,9 @@ watch(() => nodeForm.config_obfs, (val, oldVal) => {
 });
 
 watch(() => nodeForm.config_tls_type, (val, oldVal) => {
+  if (isConfigSyncing.value) return;
+  const requiresTlsType = nodeForm.type === 'v2ray' || nodeForm.type === 'vless' || nodeForm.type === 'trojan';
+  if (!requiresTlsType) return;
   if (val !== oldVal) {
     ensureRealityDefaults();
     if (val !== 'tls' && val !== 'reality') {
@@ -1970,6 +2028,13 @@ watch(() => nodeForm.config_tls_type, (val, oldVal) => {
 watch(() => nodeForm.type, () => {
   if (!echTlsEnabled.value) {
     nodeForm.config_ech_enabled = false;
+  }
+});
+
+watch(skipCertVerifyEnabled, (enabled) => {
+  if (isConfigSyncing.value) return;
+  if (!enabled) {
+    nodeForm.client_skip_cert_verify = false;
   }
 });
 
@@ -1987,6 +2052,16 @@ const buildConfigFromForm = () => {
   merged.config.port = servicePort ? Number(servicePort) : null;
   if (!merged.client.port && merged.config.port) {
     merged.client.port = merged.config.port;
+  }
+  if (skipCertVerifyEnabled.value) {
+    (merged.client as any)['skip-cert-verify'] = !!nodeForm.client_skip_cert_verify;
+  } else {
+    if ('skip-cert-verify' in merged.client) {
+      delete (merged.client as any)['skip-cert-verify'];
+    }
+    if ('skip_cert_verify' in merged.client) {
+      delete (merged.client as any).skip_cert_verify;
+    }
   }
   switch (nodeForm.type) {
     case 'ss':
@@ -2156,6 +2231,7 @@ const buildConfigFromForm = () => {
     if (echKey) {
       const ech = typeof merged.config.ech === 'object' && merged.config.ech ? { ...merged.config.ech } : {};
       ech.key = echKey;
+      ech.force_query = normalizeEchForceQuery(nodeForm.config_ech_force_query);
       merged.config.ech = ech;
     } else if ('ech' in merged.config) {
       delete merged.config.ech;
@@ -2194,8 +2270,8 @@ const parseNodeConfigJson = (jsonText: string) => {
 
 const handleViewToggle = (val: boolean) => {
   if (val) {
-    // 切到高级视图，使用当前状态填充JSON
-    nodeForm.node_config_json = JSON.stringify(normalizeNodeConfig(nodeConfigState), null, 2);
+    // 切到高级视图，使用当前表单实时值填充JSON
+    nodeForm.node_config_json = JSON.stringify(buildConfigFromForm(), null, 2);
   } else {
     // 切回普通视图，尝试解析JSON同步字段
     try {
@@ -2457,6 +2533,7 @@ const resetForm = () => {
   nodeForm.client_port = null;
   nodeForm.client_tls_host = '';
   nodeForm.client_publickey = '';
+  nodeForm.client_skip_cert_verify = false;
   nodeForm.client_ech_config = '';
   nodeForm.service_port = null;
   nodeForm.basic_pull_interval = 60;
@@ -2480,6 +2557,7 @@ const resetForm = () => {
   nodeForm.config_ech_enabled = false;
   nodeForm.config_ech_public_name = '';
   nodeForm.config_ech_key = '';
+  nodeForm.config_ech_force_query = 'none';
   nodeForm.config_server_names = '';
   nodeForm.config_private_key = '';
   nodeForm.config_short_ids = '';

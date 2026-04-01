@@ -310,6 +310,52 @@ fn resolve_ech_state<'a>(config: &'a Value, client: &'a Value) -> Option<&'a Val
     None
 }
 
+fn parse_boolean_flag(value: Option<&Value>) -> Option<bool> {
+    match value {
+        Some(Value::Bool(value)) => Some(*value),
+        Some(Value::Number(value)) => value.as_i64().map(|v| v != 0),
+        Some(Value::String(value)) => {
+            let normalized = value.trim().to_lowercase();
+            if ["1", "true", "yes", "on"].contains(&normalized.as_str()) {
+                Some(true)
+            } else if ["0", "false", "no", "off", ""].contains(&normalized.as_str()) {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn resolve_skip_cert_verify(config: &Value, client: &Value, fallback: bool) -> bool {
+    let from_client = parse_boolean_flag(
+        client
+            .get("skip-cert-verify")
+            .or_else(|| client.get("skip_cert_verify"))
+            .or_else(|| client.get("insecure"))
+            .or_else(|| client.get("allow_insecure"))
+            .or_else(|| client.get("allowInsecure")),
+    );
+    if let Some(value) = from_client {
+        return value;
+    }
+
+    let from_config = parse_boolean_flag(
+        config
+            .get("skip-cert-verify")
+            .or_else(|| config.get("skip_cert_verify"))
+            .or_else(|| config.get("insecure"))
+            .or_else(|| config.get("allow_insecure"))
+            .or_else(|| config.get("allowInsecure")),
+    );
+    if let Some(value) = from_config {
+        return value;
+    }
+
+    fallback
+}
+
 fn resolve_ech_config(config: &Value, client: &Value) -> String {
     if let Some(ech) = client.get("ech").and_then(|value| value.as_object()) {
         let value = ensure_string(ech.get("config")).trim().to_string();
@@ -749,14 +795,40 @@ fn value_to_yaml(value: &Value) -> String {
     }
 }
 
+fn decode_value_to_object(value: Value) -> Option<Value> {
+    let mut current = value;
+    for _ in 0..3 {
+        match current {
+            Value::String(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                current = serde_json::from_str::<Value>(trimmed).ok()?;
+            }
+            Value::Object(_) => return Some(current),
+            _ => return None,
+        }
+    }
+    if current.is_object() {
+        Some(current)
+    } else {
+        None
+    }
+}
+
 fn parse_node_config(node_config: &Value) -> (Value, Value, Value) {
-    if let Value::Object(map) = node_config {
-        let basic = map.get("basic").cloned().unwrap_or_else(|| json!({}));
-        let config = map
-            .get("config")
-            .cloned()
-            .unwrap_or_else(|| Value::Object(map.clone()));
-        let client = map.get("client").cloned().unwrap_or_else(|| json!({}));
+    let root = decode_value_to_object(node_config.clone());
+    if let Some(Value::Object(map)) = root {
+        let basic = decode_value_to_object(map.get("basic").cloned().unwrap_or_else(|| json!({})))
+            .unwrap_or_else(|| json!({}));
+        let config = if let Some(config_value) = map.get("config").cloned() {
+            decode_value_to_object(config_value).unwrap_or_else(|| json!({}))
+        } else {
+            Value::Object(map.clone())
+        };
+        let client = decode_value_to_object(map.get("client").cloned().unwrap_or_else(|| json!({})))
+            .unwrap_or_else(|| json!({}));
         (basic, config, client)
     } else {
         (json!({}), json!({}), json!({}))
@@ -1222,7 +1294,9 @@ fn generate_hysteria_link(
         server.to_string()
     };
     params.push(("peer".to_string(), peer));
-    params.push(("insecure".to_string(), "1".to_string()));
+    if resolve_skip_cert_verify(config, client, false) {
+        params.push(("insecure".to_string(), "1".to_string()));
+    }
     params.push((
         "upmbps".to_string(),
         resolve_config_string_value(config, &["up_mbps"], "100"),
@@ -1251,6 +1325,7 @@ fn generate_anytls_link(
     port: i64,
     tls_host: &str,
     config: &Value,
+    client: &Value,
     user: &SubscriptionUser,
 ) -> String {
     let host = format_host_for_url(server);
@@ -1264,11 +1339,10 @@ fn generate_anytls_link(
             server
         },
     );
-    let params = vec![
-        ("peer".to_string(), peer),
-        ("insecure".to_string(), "1".to_string()),
-        ("udp".to_string(), "1".to_string()),
-    ];
+    let mut params = vec![("peer".to_string(), peer), ("udp".to_string(), "1".to_string())];
+    if resolve_skip_cert_verify(config, client, false) {
+        params.push(("insecure".to_string(), "1".to_string()));
+    }
     let query = build_query_string(params);
     format!(
         "anytls://{}@{}:{}?{}#{}",
@@ -1317,11 +1391,17 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 );
                 value.insert("cipher".to_string(), json!("auto"));
                 let tls_mode = ensure_string(config.get("tls_type"));
+                let tls_enabled = tls_mode == "tls" || tls_mode == "reality";
                 value.insert(
                     "tls".to_string(),
-                    json!(tls_mode == "tls" || tls_mode == "reality"),
+                    json!(tls_enabled),
                 );
-                value.insert("skip-cert-verify".to_string(), json!(true));
+                if tls_enabled {
+                    value.insert(
+                        "skip-cert-verify".to_string(),
+                        json!(resolve_skip_cert_verify(&config, &client, false)),
+                    );
+                }
                 value.insert(
                     "network".to_string(),
                     json!(resolve_config_string_value(
@@ -1404,11 +1484,17 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                     json!(resolve_vless_client_encryption(&config, &client)),
                 );
                 let tls_mode = ensure_string(config.get("tls_type"));
+                let tls_enabled = tls_mode == "tls" || tls_mode == "reality";
                 value.insert(
                     "tls".to_string(),
-                    json!(tls_mode == "tls" || tls_mode == "reality"),
+                    json!(tls_enabled),
                 );
-                value.insert("skip-cert-verify".to_string(), json!(true));
+                if tls_enabled {
+                    value.insert(
+                        "skip-cert-verify".to_string(),
+                        json!(resolve_skip_cert_verify(&config, &client, false)),
+                    );
+                }
                 value.insert(
                     "network".to_string(),
                     json!(resolve_config_string_value(
@@ -1493,7 +1579,10 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                     "password".to_string(),
                     json!(user.passwd.clone().unwrap_or_default()),
                 );
-                value.insert("skip-cert-verify".to_string(), json!(true));
+                value.insert(
+                    "skip-cert-verify".to_string(),
+                    json!(resolve_skip_cert_verify(&config, &client, false)),
+                );
                 let sni = resolve_config_string_value(
                     &config,
                     &["sni"],
@@ -1688,7 +1777,10 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                     "min-idle-session".to_string(),
                     json!(ensure_i64(config.get("min_idle_session"), 0)),
                 );
-                value.insert("skip-cert-verify".to_string(), json!(true));
+                value.insert(
+                    "skip-cert-verify".to_string(),
+                    json!(resolve_skip_cert_verify(&config, &client, false)),
+                );
                 let sni = resolve_config_string_value(&config, &["sni"], &tls_host);
                 if !sni.is_empty() {
                     value.insert("sni".to_string(), json!(sni));
@@ -1711,7 +1803,10 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                     "password".to_string(),
                     json!(user.passwd.clone().unwrap_or_default()),
                 );
-                value.insert("skip-cert-verify".to_string(), json!(true));
+                value.insert(
+                    "skip-cert-verify".to_string(),
+                    json!(resolve_skip_cert_verify(&config, &client, false)),
+                );
                 let sni = resolve_config_string_value(&config, &["sni"], &tls_host);
                 if !sni.is_empty() {
                     value.insert("sni".to_string(), json!(sni));
@@ -2181,7 +2276,10 @@ fn build_singbox_tls(
         "server_name".to_string(),
         json!(resolve_sni(config, tls_host, server)),
     );
-    tls.insert("insecure".to_string(), json!(false));
+    tls.insert(
+        "insecure".to_string(),
+        json!(resolve_skip_cert_verify(config, client, false)),
+    );
     if let Some(alpn) = normalize_alpn(config.get("alpn")) {
         tls.insert("alpn".to_string(), json!(alpn));
     }
@@ -2891,7 +2989,9 @@ pub fn generate_shadowrocket_config(nodes: &[SubscriptionNode], user: &Subscript
             "hysteria" => {
                 generate_hysteria_link(&name, &server, port, &tls_host, &config, &client, user)
             }
-            "anytls" => generate_anytls_link(&name, &server, port, &tls_host, &config, user),
+            "anytls" => {
+                generate_anytls_link(&name, &server, port, &tls_host, &config, &client, user)
+            }
             _ => String::new(),
         };
         if !line.is_empty() {
