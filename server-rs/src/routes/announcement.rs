@@ -13,42 +13,42 @@ use crate::state::AppState;
 
 #[derive(Deserialize)]
 struct AnnouncementQuery {
-  limit: Option<i64>,
-  offset: Option<i64>
+    limit: Option<i64>,
+    offset: Option<i64>,
 }
 
 pub fn router() -> Router<AppState> {
-  Router::new().route("/", get(get_announcements))
+    Router::new().route("/", get(get_announcements))
 }
 
 async fn get_announcements(
-  State(state): State<AppState>,
-  Query(query): Query<AnnouncementQuery>
+    State(state): State<AppState>,
+    Query(query): Query<AnnouncementQuery>,
 ) -> Response {
-  let limit = query.limit.unwrap_or(10).max(1).min(100);
-  let offset = query.offset.unwrap_or(0).max(0);
-  let now = (Utc::now() + Duration::hours(8)).timestamp();
+    let limit = query.limit.unwrap_or(10).max(1).min(100);
+    let offset = query.offset.unwrap_or(0).max(0);
+    let now = (Utc::now() + Duration::hours(8)).timestamp();
 
-  let rows = sqlx::query(
-    r#"
+    let rows = sqlx::query(
+        r#"
     SELECT id, title, content, content_html, type, is_pinned, priority, created_at, expires_at
     FROM announcements
     WHERE is_active = 1 AND (expires_at IS NULL OR expires_at > ?)
     ORDER BY is_pinned DESC, priority DESC, created_at DESC
     LIMIT ? OFFSET ?
-    "#
-  )
-  .bind(now)
-  .bind(limit)
-  .bind(offset)
-  .fetch_all(&state.db)
-  .await;
-  let rows = match rows {
-    Ok(value) => value,
-    Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None)
-  };
+    "#,
+    )
+    .bind(now)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.db)
+    .await;
+    let rows = match rows {
+        Ok(value) => value,
+        Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None),
+    };
 
-  let items = rows
+    let items = rows
     .into_iter()
     .map(|row| {
       let created_at = row.try_get::<Option<i64>, _>("created_at").ok().flatten().unwrap_or(0);
@@ -71,5 +71,5 @@ async fn get_announcements(
     })
     .collect::<Vec<_>>();
 
-  success(items, "Success").into_response()
+    success(items, "Success").into_response()
 }

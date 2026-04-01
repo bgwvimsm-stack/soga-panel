@@ -1802,6 +1802,85 @@ export class AdminAPI {
     }
   }
 
+  private isRecord(value: unknown): value is Record<string, any> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+
+  private normalizeNodeConfigForStorage(
+    raw: unknown,
+    fallback: {
+      server?: unknown;
+      port?: unknown;
+      tlsHost?: unknown;
+      echKey?: unknown;
+      echConfig?: unknown;
+    } = {}
+  ): string {
+    let parsed: unknown = {};
+    try {
+      parsed = typeof raw === "string" ? JSON.parse(raw || "{}") : (raw ?? {});
+    } catch {
+      parsed = {};
+    }
+
+    const source = this.isRecord(parsed) ? parsed : {};
+    const hasStructured =
+      this.isRecord(source.basic) ||
+      this.isRecord(source.config) ||
+      this.isRecord(source.client);
+
+    const basicInput = hasStructured && this.isRecord(source.basic) ? source.basic : {};
+    const configInput = hasStructured
+      ? (this.isRecord(source.config) ? source.config : {})
+      : source;
+    const clientInput = hasStructured && this.isRecord(source.client) ? source.client : {};
+
+    const basic: Record<string, any> = {
+      pull_interval: ensureNumber((basicInput as any).pull_interval, 60),
+      push_interval: ensureNumber((basicInput as any).push_interval, 60),
+      speed_limit: ensureNumber((basicInput as any).speed_limit, 0)
+    };
+    const config: Record<string, any> = { ...configInput };
+    const client: Record<string, any> = { ...clientInput };
+
+    const resolvedServer = ensureString(client.server || config.server || config.host || fallback.server, "");
+    if (resolvedServer) {
+      client.server = resolvedServer;
+    }
+
+    const resolvedPort = ensureNumber(client.port || config.port || fallback.port, 0);
+    if (resolvedPort > 0) {
+      client.port = resolvedPort;
+      if (!ensureNumber(config.port, 0)) {
+        config.port = resolvedPort;
+      }
+    }
+
+    const resolvedTlsHost = ensureString(
+      client.tls_host || config.tls_host || config.host || fallback.tlsHost,
+      ""
+    );
+    if (resolvedTlsHost) {
+      client.tls_host = resolvedTlsHost;
+    }
+
+    const echKey = ensureString((config as any)?.ech?.key || fallback.echKey, "");
+    if (echKey) {
+      const ech = this.isRecord(config.ech) ? { ...config.ech } : {};
+      ech.key = echKey;
+      config.ech = ech;
+    }
+
+    const echConfig = ensureString((client as any)?.ech?.config || fallback.echConfig, "");
+    if (echConfig) {
+      const ech = this.isRecord(client.ech) ? { ...client.ech } : {};
+      ech.config = echConfig;
+      client.ech = ech;
+    }
+
+    return JSON.stringify({ basic, config, client });
+  }
+
   private parseNodeConfig(raw: unknown) {
     try {
       const parsed = typeof raw === "string" ? JSON.parse(raw || "{}") : (raw || {});
@@ -1918,23 +1997,13 @@ export class AdminAPI {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
-      // 处理节点配置，避免双重JSON编码
-      let configValue = '{}';
-      if (nodeData.node_config) {
-        if (typeof nodeData.node_config === 'string') {
-          try {
-            // 解析JSON字符串并重新压缩存储
-            const parsed = JSON.parse(nodeData.node_config);
-            configValue = JSON.stringify(parsed);
-          } catch (e) {
-            // 如果解析失败，直接使用原字符串
-            configValue = nodeData.node_config;
-          }
-        } else {
-          // 如果是对象，直接stringify
-          configValue = JSON.stringify(nodeData.node_config);
-        }
-      }
+      const configValue = this.normalizeNodeConfigForStorage(nodeData.node_config, {
+        server: nodeData.server,
+        port: nodeData.server_port,
+        tlsHost: nodeData.tls_host,
+        echKey: nodeData.ech_key,
+        echConfig: nodeData.ech_config
+      });
 
       const result = await stmt
         .bind(
@@ -2009,23 +2078,15 @@ export class AdminAPI {
       }
 
       // 处理节点配置
-      if (updateData.node_config) {
+      if (updateData.node_config !== undefined && updateData.node_config !== null) {
         updates.push("node_config = ?");
-        // 如果已经是字符串，先解析再压缩存储，避免双重JSON编码
-        let configValue;
-        if (typeof updateData.node_config === 'string') {
-          try {
-            // 解析JSON字符串并重新压缩（去除格式化）
-            const parsed = JSON.parse(updateData.node_config);
-            configValue = JSON.stringify(parsed);
-          } catch (e) {
-            // 如果解析失败，直接使用原字符串
-            configValue = updateData.node_config;
-          }
-        } else {
-          // 如果是对象，直接stringify
-          configValue = JSON.stringify(updateData.node_config);
-        }
+        const configValue = this.normalizeNodeConfigForStorage(updateData.node_config, {
+          server: updateData.server,
+          port: updateData.server_port,
+          tlsHost: updateData.tls_host,
+          echKey: updateData.ech_key,
+          echConfig: updateData.ech_config
+        });
         values.push(configValue);
       }
 

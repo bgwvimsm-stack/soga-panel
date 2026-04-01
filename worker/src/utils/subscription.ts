@@ -56,6 +56,58 @@ function resolveRealityPublicKey(config: any, client: any) {
   return ensureString(client?.publickey || client?.public_key || config.public_key, "");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function resolveEchConfig(config: any, client: any): string {
+  const fromClient = isRecord(client?.ech) ? ensureString((client.ech as any).config, "") : "";
+  if (fromClient) return fromClient.trim();
+  if (isRecord(config?.ech)) {
+    return ensureString((config.ech as any).config, "").trim();
+  }
+  return "";
+}
+
+function resolveEchState(config: any, client: any): Record<string, unknown> | null {
+  if (isRecord(client?.ech)) return client.ech as Record<string, unknown>;
+  if (isRecord(config?.ech)) return config.ech as Record<string, unknown>;
+  return null;
+}
+
+function splitPemLines(raw: string): string[] {
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function toSingboxPemLines(label: string, raw: string): string[] {
+  const cleaned = ensureString(raw, "").trim();
+  if (!cleaned) return [];
+  if (cleaned.includes("-----BEGIN")) {
+    return splitPemLines(cleaned);
+  }
+  const compact = cleaned.replace(/\s+/g, "");
+  const chunks: string[] = [];
+  for (let index = 0; index < compact.length; index += 64) {
+    chunks.push(compact.slice(index, index + 64));
+  }
+  return [`-----BEGIN ${label}-----`, ...chunks, `-----END ${label}-----`];
+}
+
+function buildClashEchOpts(config: any, client: any) {
+  const echState = resolveEchState(config, client);
+  const echConfig = resolveEchConfig(config, client);
+  if (!echState && !echConfig) return null;
+
+  const opts: Record<string, unknown> = { enable: true };
+  if (echConfig) {
+    opts.config = echConfig;
+  }
+  return opts;
+}
+
 function resolveVlessClientEncryption(config: any, client: any) {
   const encryption = ensureString(client?.encryption || config?.encryption, "").trim();
   return encryption || "none";
@@ -82,19 +134,19 @@ export function generateV2rayConfig(nodes, user) {
 
     switch (node.type) {
       case "v2ray":
-        links.push(generateVmessLink(nodeResolved, config, user));
+        links.push(generateVmessLink(nodeResolved, config, user, client));
         break;
       case "vless":
         links.push(generateVlessLink(nodeResolved, config, user, client));
         break;
       case "trojan":
-        links.push(generateTrojanLink(nodeResolved, config, user));
+        links.push(generateTrojanLink(nodeResolved, config, user, client));
         break;
       case "ss":
         links.push(generateShadowsocksLink(nodeResolved, config, user));
         break;
       case "hysteria":
-        links.push(generateHysteriaLink(nodeResolved, config, user));
+        links.push(generateHysteriaLink(nodeResolved, config, user, client));
         break;
     }
   }
@@ -105,7 +157,7 @@ export function generateV2rayConfig(nodes, user) {
 /**
  * 生成 VMess 链接
  */
-function generateVmessLink(node, config, user) {
+function generateVmessLink(node, config, user, client = {}) {
   const streamType = String(config.stream_type || "tcp").toLowerCase();
   const hostCandidate = ensureString(
     config.server || node.tls_host || config.host || config.sni || node.server,
@@ -114,7 +166,8 @@ function generateVmessLink(node, config, user) {
   const sni = ensureString(config.sni || node.tls_host || config.host || config.server || node.server, "");
   const needsHost = ["ws", "http", "h2"].includes(streamType);
   const host = needsHost ? hostCandidate : ensureString(config.server, "");
-  const vmessConfig = {
+  const tlsMode = config.tls_type === "reality" ? "reality" : config.tls_type === "tls" ? "tls" : "";
+  const vmessConfig: Record<string, unknown> = {
     v: "2",
     ps: node.name,
     add: node.server,
@@ -125,10 +178,28 @@ function generateVmessLink(node, config, user) {
     type: "none",
     host,
     path: config.path || "",
-    tls: config.tls_type === "tls" ? "tls" : "",
+    tls: tlsMode,
     sni,
     alpn: config.alpn || "",
   };
+
+  if (config.tls_type === "reality") {
+    vmessConfig.security = "reality";
+    vmessConfig.pbk = resolveRealityPublicKey(config, client);
+    vmessConfig.fp = config.fingerprint || "chrome";
+    const shortId = pickRandomShortId(config.short_ids);
+    if (shortId) {
+      vmessConfig.sid = shortId;
+    }
+  }
+
+  if (config.tls_type === "tls" || config.tls_type === "reality") {
+    const echConfig = resolveEchConfig(config, client);
+    if (echConfig) {
+      vmessConfig.ech = echConfig;
+      vmessConfig.echConfigList = echConfig;
+    }
+  }
 
   return `vmess://${btoa(JSON.stringify(vmessConfig))}`;
 }
@@ -160,6 +231,13 @@ function generateVlessLink(node, config, user, client) {
     const shortId = pickRandomShortId(config.short_ids);
     if (shortId) params.set("sid", shortId);
   }
+  if (config.tls_type === "tls" || config.tls_type === "reality") {
+    const echConfig = resolveEchConfig(config, client);
+    if (echConfig) {
+      params.set("ech", echConfig);
+      params.set("echConfigList", echConfig);
+    }
+  }
 
   if (config.flow) params.set("flow", config.flow);
   if (config.path) params.set("path", config.path);
@@ -177,7 +255,7 @@ function generateVlessLink(node, config, user, client) {
 /**
  * 生成 Trojan 链接
  */
-function generateTrojanLink(node, config, user) {
+function generateTrojanLink(node, config, user, client = {}) {
   const params = new URLSearchParams();
   const streamType = String(config.stream_type || "tcp").toLowerCase();
   const hostCandidate = ensureString(
@@ -186,8 +264,21 @@ function generateTrojanLink(node, config, user) {
   );
   const sni = ensureString(config.sni || node.tls_host || config.host || config.server || node.server, "");
 
+  const tlsMode = config.tls_type === "reality" ? "reality" : "tls";
+  params.set("security", tlsMode);
   if (sni) params.set("sni", sni);
   if (config.alpn) params.set("alpn", config.alpn);
+  if (config.tls_type === "reality") {
+    params.set("pbk", resolveRealityPublicKey(config, client));
+    params.set("fp", config.fingerprint || "chrome");
+    const shortId = pickRandomShortId(config.short_ids);
+    if (shortId) params.set("sid", shortId);
+  }
+  const echConfig = resolveEchConfig(config, client);
+  if (echConfig) {
+    params.set("ech", echConfig);
+    params.set("echConfigList", echConfig);
+  }
   if (config.path) params.set("path", config.path);
   if (config.server) {
     params.set("host", config.server);
@@ -282,7 +373,7 @@ function buildSS2022Password(config: any, userPassword: string) {
 /**
  * 生成 Hysteria 链接
  */
-function generateHysteriaLink(node, config, user) {
+function generateHysteriaLink(node, config, user, client = {}) {
   const params = new URLSearchParams();
 
   params.set("protocol", "udp");
@@ -295,6 +386,11 @@ function generateHysteriaLink(node, config, user) {
   if (config.obfs && config.obfs !== "plain") {
     params.set("obfs", config.obfs);
     if (config.obfs_password) params.set("obfsParam", config.obfs_password);
+  }
+  const echConfig = resolveEchConfig(config, client);
+  if (echConfig) {
+    params.set("ech", echConfig);
+    params.set("echConfigList", echConfig);
   }
 
   const host = formatHostForUrl(node.server);
@@ -325,18 +421,35 @@ export function generateClashConfig(nodes, user) {
           uuid: user.uuid,
           alterId: config.aid || 0,
           cipher: "auto",
-          tls: config.tls_type === "tls",
+          tls: config.tls_type === "tls" || config.tls_type === "reality",
           "skip-cert-verify": true,
           network: config.stream_type || "tcp",
         };
 
         // 添加 TLS 相关配置
-        if (config.tls_type === "tls") {
+        if (config.tls_type === "tls" || config.tls_type === "reality") {
           if (tlsHost || config.sni) {
             proxy.servername = tlsHost || config.sni;
           }
           if (config.alpn) {
             proxy.alpn = config.alpn.split(',');
+          }
+        }
+        if (config.tls_type === "reality") {
+          const realityOpts: Record<string, string> = {
+            "public-key": resolveRealityPublicKey(config, client)
+          };
+          const shortId = pickRandomShortId(config.short_ids);
+          if (shortId) {
+            realityOpts["short-id"] = shortId;
+          }
+          proxy["reality-opts"] = realityOpts;
+          proxy["client-fingerprint"] = config.fingerprint || "chrome";
+        }
+        if (config.tls_type === "tls" || config.tls_type === "reality") {
+          const echOpts = buildClashEchOpts(config, client);
+          if (echOpts) {
+            proxy["ech-opts"] = echOpts;
           }
         }
 
@@ -406,6 +519,12 @@ export function generateClashConfig(nodes, user) {
             proxy.servername = tlsHost;
           }
         }
+        if (config.tls_type === "tls" || config.tls_type === "reality") {
+          const echOpts = buildClashEchOpts(config, client);
+          if (echOpts) {
+            proxy["ech-opts"] = echOpts;
+          }
+        }
 
         if (config.flow) {
           proxy.flow = config.flow;
@@ -436,6 +555,23 @@ export function generateClashConfig(nodes, user) {
           "skip-cert-verify": true,
           sni: tlsHost || config.sni || server,
         };
+        if (config.tls_type === "reality") {
+          const realityOpts: Record<string, string> = {
+            "public-key": resolveRealityPublicKey(config, client)
+          };
+          const shortId = pickRandomShortId(config.short_ids);
+          if (shortId) {
+            realityOpts["short-id"] = shortId;
+          }
+          proxy["reality-opts"] = realityOpts;
+          proxy["client-fingerprint"] = config.fingerprint || "chrome";
+        }
+        {
+          const echOpts = buildClashEchOpts(config, client);
+          if (echOpts) {
+            proxy["ech-opts"] = echOpts;
+          }
+        }
 
         // 添加 WebSocket 支持
         if (config.stream_type === "ws") {
@@ -529,6 +665,10 @@ export function generateClashConfig(nodes, user) {
           else if (typeof alpnRaw === "string" && alpnRaw.trim()) {
             proxy.alpn = alpnRaw.split(",").map((v: string) => v.trim()).filter(Boolean);
           }
+          const echOpts = buildClashEchOpts(config, client);
+          if (echOpts) {
+            proxy["ech-opts"] = echOpts;
+          }
         }
         break;
 
@@ -566,6 +706,12 @@ export function generateClashConfig(nodes, user) {
         // 添加 ALPN 配置
         if (config.alpn) {
           proxy.alpn = config.alpn.split(',');
+        }
+        {
+          const echOpts = buildClashEchOpts(config, client);
+          if (echOpts) {
+            proxy["ech-opts"] = echOpts;
+          }
         }
         break;
     }
@@ -638,6 +784,21 @@ function resolveSni(config: any, tlsHost: string, server: string): string {
   return ensureString(config.sni || tlsHost || server, "");
 }
 
+function buildSingboxEch(config: any, client: any) {
+  const echState = resolveEchState(config, client);
+  const echConfig = resolveEchConfig(config, client);
+  if (!echState && !echConfig) return null;
+
+  const ech: Record<string, unknown> = { enabled: true };
+  if (echConfig) {
+    const pemLines = toSingboxPemLines("ECH CONFIGS", echConfig);
+    if (pemLines.length) {
+      ech.config = pemLines;
+    }
+  }
+  return ech;
+}
+
 function buildSingboxTls(config: any, tlsHost: string, server: string, mode: "none" | "tls" | "reality", client?: any) {
   if (mode === "none") return null;
   const tls: Record<string, unknown> = {
@@ -647,6 +808,8 @@ function buildSingboxTls(config: any, tlsHost: string, server: string, mode: "no
   };
   const alpn = normalizeAlpn(config.alpn);
   if (alpn?.length) tls.alpn = alpn;
+  const ech = buildSingboxEch(config, client);
+  if (ech) tls.ech = ech;
 
   if (mode === "reality") {
     const serverName = tlsHost || resolveFirstString(config.server_names) || server;
@@ -737,7 +900,7 @@ export function generateSingboxConfig(nodes, user): string {
           network: config.network || "tcp",
           tcp_fast_open: false
         };
-        const tlsMode = config.tls_type === "tls" ? "tls" : "none";
+        const tlsMode = config.tls_type === "reality" ? "reality" : config.tls_type === "tls" ? "tls" : "none";
         const tls = buildSingboxTls(config, tlsHost, server, tlsMode, client);
         if (tls) vmess.tls = tls;
         applySingboxTransport(vmess, config, server, tlsHost);
@@ -774,7 +937,8 @@ export function generateSingboxConfig(nodes, user): string {
           network: config.network || "tcp",
           tcp_fast_open: false
         };
-        const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
+        const tlsMode = config.tls_type === "reality" ? "reality" : "tls";
+        const tls = buildSingboxTls(config, tlsHost, server, tlsMode, client);
         if (tls) trojan.tls = tls;
         applySingboxTransport(trojan, config, server, tlsHost);
         outbound = trojan;
@@ -1063,19 +1227,19 @@ export function generateShadowrocketConfig(nodes, user) {
 
     switch (nodeResolved.type) {
       case "v2ray":
-        links.push(generateVmessLink(nodeResolved, config, user));
+        links.push(generateVmessLink(nodeResolved, config, user, client));
         break;
       case "vless":
         links.push(generateVlessLink(nodeResolved, config, user, client));
         break;
       case "trojan":
-        links.push(generateTrojanLink(nodeResolved, config, user));
+        links.push(generateTrojanLink(nodeResolved, config, user, client));
         break;
       case "ss":
         links.push(generateShadowsocksLink(nodeResolved, config, user));
         break;
       case "hysteria":
-        links.push(generateHysteriaLink(nodeResolved, config, user));
+        links.push(generateHysteriaLink(nodeResolved, config, user, client));
         break;
     }
   }
