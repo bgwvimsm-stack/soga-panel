@@ -178,6 +178,7 @@ const SMUX_KEYS: [&str; 1] = ["enabled"];
 static CLASH_RULES: OnceLock<Vec<Value>> = OnceLock::new();
 static CLASH_TEMPLATE: OnceLock<Value> = OnceLock::new();
 static SINGBOX_TEMPLATE: OnceLock<Value> = OnceLock::new();
+static SURGE_TEMPLATE: OnceLock<String> = OnceLock::new();
 
 fn load_clash_rules() -> &'static Vec<Value> {
     CLASH_RULES.get_or_init(|| {
@@ -198,6 +199,12 @@ fn clone_singbox_template() -> Value {
     let template = SINGBOX_TEMPLATE
         .get_or_init(|| serde_json::from_str::<Value>(raw).unwrap_or_else(|_| json!({})));
     template.clone()
+}
+
+fn clone_surge_template() -> String {
+    SURGE_TEMPLATE
+        .get_or_init(|| include_str!("templates/surgeTemplate.conf").to_string())
+        .clone()
 }
 
 fn b64encode_utf8(input: &str) -> String {
@@ -3030,6 +3037,31 @@ pub fn generate_surge_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 "{name} = hysteria2, {server}, {port}, password={}",
                 user.passwd.clone().unwrap_or_default()
             ),
+            "anytls" => {
+                let mut line = format!(
+                    "{name} = anytls, {server}, {port}, password={}",
+                    resolve_config_string_value(
+                        &config,
+                        &["password"],
+                        &user.passwd.clone().unwrap_or_default()
+                    )
+                );
+                if resolve_skip_cert_verify(&config, &client, false) {
+                    line.push_str(", skip-cert-verify=true");
+                }
+                let sni = resolve_config_string(&config, &["sni"]);
+                let sni = if !sni.is_empty() {
+                    sni
+                } else if !tls_host.is_empty() {
+                    tls_host.clone()
+                } else {
+                    String::new()
+                };
+                if !sni.is_empty() {
+                    line.push_str(&format!(", sni={sni}"));
+                }
+                line
+            }
             _ => String::new(),
         };
 
@@ -3379,73 +3411,10 @@ fn build_surge_template(proxies: &[String], proxy_names: &[String]) -> String {
         groups.push(format!("{tag} = select,{}", matched.join(",")));
     }
 
-    format!(
-    "#!MANAGED-CONFIG
-
-[General]
-loglevel = notify
-bypass-system = true
-skip-proxy = 127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,100.64.0.0/10,localhost,*.local,e.crashlytics.com,captive.apple.com,::ffff:0:0:0:0/1,::ffff:128:0:0:0/1
-#DNS设置或根据自己网络情况进行相应设置
-bypass-tun = 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12
-dns-server = 119.29.29.29,223.5.5.5,218.30.19.40,61.134.1.4
-external-controller-access = password@0.0.0.0:6170
-http-api = password@0.0.0.0:6171
-test-timeout = 5
-http-api-web-dashboard = true
-exclude-simple-hostnames = true
-allow-wifi-access = true
-http-listen = 0.0.0.0:6152
-socks5-listen = 0.0.0.0:6153
-wifi-access-http-port = 6152
-wifi-access-socks5-port = 6153
-
-[Script]
-http-request https?:\\/\\/.*\\.iqiyi\\.com\\/.*authcookie= script-path=https://raw.githubusercontent.com/NobyDa/Script/master/iQIYI-DailyBonus/iQIYI.js
-
-[Proxy]
-{proxy_section}
-
-[Proxy Group]
-{groups}
-
-[Rule]
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/LocalAreaNetwork.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/UnBan.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/BanAD.list,🛑 广告拦截,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/BanProgramAD.list,🍃 应用净化,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/GoogleFCM.list,📢 谷歌FCM,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/GoogleCN.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/SteamCN.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Bing.list,Ⓜ️ 微软Bing,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/OneDrive.list,Ⓜ️ 微软云盘,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Microsoft.list,Ⓜ️ 微软服务,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Apple.list,🍎 苹果服务,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Telegram.list,📲 电报消息,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/AI.list,💬 Ai平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list,💬 Ai平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/NetEaseMusic.list,🎶 网易音乐,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Epic.list,🎮 游戏平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Origin.list,🎮 游戏平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Sony.list,🎮 游戏平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Steam.list,🎮 游戏平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Nintendo.list,🎮 游戏平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/YouTube.list,📹 油管视频,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Netflix.list,🎥 奈飞视频,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Bahamut.list,📺 巴哈姆特,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/BilibiliHMT.list,📺 哔哩哔哩,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Bilibili.list,📺 哔哩哔哩,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ChinaMedia.list,🌏 国内媒体,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ProxyMedia.list,🌍 国外媒体,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ProxyGFWlist.list,🚀 节点选择,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ChinaDomain.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ChinaCompanyIp.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Download.list,🎯 全球直连,update-interval=86400
-GEOIP,CN,🎯 全球直连
-FINAL,🐟 漏网之鱼",
-    proxy_section = proxy_section,
-    groups = groups.join("\n")
-  )
+    let groups_section = groups.join("\n");
+    clone_surge_template()
+        .replace("{proxy_section}", &proxy_section)
+        .replace("{groups}", &groups_section)
 }
 
 pub fn subscription_expire_timestamp(expire_time: Option<NaiveDateTime>) -> i64 {

@@ -1361,6 +1361,14 @@ export function generateSurgeConfig(nodes, user) {
         }
         if (tlsHost || config.sni) proxy += `, sni=${tlsHost || config.sni}`;
         break;
+
+      case "anytls":
+        proxy = `${node.name} = anytls, ${server}, ${port}, password=${ensureString(user.passwd || config.password, "")}`;
+        if (resolveSkipCertVerify(config, client, false)) {
+          proxy += ", skip-cert-verify=true";
+        }
+        if (tlsHost || config.sni) proxy += `, sni=${tlsHost || config.sni}`;
+        break;
     }
 
     if (proxy) {
