@@ -176,6 +176,7 @@ const SS_OPTS_KEYS: [&str; 3] = ["enabled", "method", "password"];
 const SMUX_KEYS: [&str; 1] = ["enabled"];
 
 static CLASH_RULES: OnceLock<Vec<Value>> = OnceLock::new();
+static CLASH_TEMPLATE: OnceLock<Value> = OnceLock::new();
 static SINGBOX_TEMPLATE: OnceLock<Value> = OnceLock::new();
 
 fn load_clash_rules() -> &'static Vec<Value> {
@@ -183,6 +184,13 @@ fn load_clash_rules() -> &'static Vec<Value> {
         let raw = include_str!("templates/clashRules.json");
         serde_json::from_str::<Vec<Value>>(raw).unwrap_or_default()
     })
+}
+
+fn clone_clash_template() -> Value {
+    let raw = include_str!("templates/clashTemplate.json");
+    let template = CLASH_TEMPLATE
+        .get_or_init(|| serde_json::from_str::<Value>(raw).unwrap_or_else(|_| json!({})));
+    template.clone()
 }
 
 fn clone_singbox_template() -> Value {
@@ -2199,36 +2207,14 @@ fn build_clash_template(proxy_names: &[String], proxies: Vec<Value>) -> Value {
     }
 
     let rules = load_clash_rules().clone();
-    json!({
-      "mixed-port": 7890,
-      "socks-port": 7891,
-      "allow-lan": true,
-      "mode": "rule",
-      "log-level": "info",
-      "external-controller": "127.0.0.1:9090",
-      "dns": {
-        "enable": true,
-        "ipv6": false,
-        "default-nameserver": ["223.5.5.5", "119.29.29.29", "114.114.114.114"],
-        "enhanced-mode": "fake-ip",
-        "fake-ip-range": "198.18.0.1/16",
-        "use-hosts": true,
-        "respect-rules": true,
-        "proxy-server-nameserver": ["223.5.5.5", "119.29.29.29", "114.114.114.114"],
-        "nameserver": ["223.5.5.5", "119.29.29.29", "114.114.114.114"],
-        "fallback": ["1.1.1.1", "8.8.8.8"],
-        "fallback-filter": {
-          "geoip": true,
-          "geoip-code": "CN",
-          "geosite": ["gfw"],
-          "ipcidr": ["240.0.0.0/4"],
-          "domain": ["+.google.com", "+.facebook.com", "+.youtube.com"]
-        }
-      },
-      "proxies": proxies,
-      "proxy-groups": groups,
-      "rules": rules
-    })
+    let mut clash = match clone_clash_template() {
+        Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    clash.insert("proxies".to_string(), Value::Array(proxies));
+    clash.insert("proxy-groups".to_string(), Value::Array(groups));
+    clash.insert("rules".to_string(), Value::Array(rules));
+    Value::Object(clash)
 }
 
 fn resolve_outbound_tag(name: &str, used_tags: &mut HashSet<String>, fallback: &str) -> String {
@@ -2418,11 +2404,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                         &user.passwd.clone().unwrap_or_default()
                     )),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 outbound = Some(value);
             }
             "v2ray" => {
@@ -2443,11 +2424,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                     "security".to_string(),
                     json!(resolve_config_string_value(&config, &["security"], "auto")),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 let tls_type = ensure_string(config.get("tls_type"));
                 let tls_mode = if tls_type == "reality" {
                     "reality"
@@ -2473,11 +2449,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                     "uuid".to_string(),
                     json!(user.uuid.clone().unwrap_or_default()),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 let flow = resolve_config_string(&config, &["flow"]);
                 if !flow.is_empty() {
                     value.insert("flow".to_string(), json!(flow));
@@ -2507,11 +2478,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                     "password".to_string(),
                     json!(user.passwd.clone().unwrap_or_default()),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 let tls_mode = if ensure_string(config.get("tls_type")) == "reality" {
                     "reality"
                 } else {
@@ -2542,11 +2508,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                     "down_mbps".to_string(),
                     json!(ensure_f64(config.get("down_mbps"), 100.0)),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 if let Some(tls) = build_singbox_tls(&config, &tls_host, &server, "tls", &client) {
                     value.insert("tls".to_string(), tls);
                 }
@@ -2576,11 +2537,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                         &user.passwd.clone().unwrap_or_default()
                     )),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 if let Some(tls) = build_singbox_tls(&config, &tls_host, &server, "tls", &client) {
                     value.insert("tls".to_string(), tls);
                 }
@@ -2608,6 +2564,15 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
         .cloned()
         .collect();
     let mut group_overrides: HashMap<String, Option<Vec<String>>> = HashMap::new();
+    group_overrides.insert(
+        "🚀 节点选择".to_string(),
+        Some({
+            let mut list = vec!["🚀 手动切换".to_string()];
+            list.extend(available_region_tags.clone());
+            list.push("DIRECT".to_string());
+            unique_names(&list)
+        }),
+    );
     group_overrides.insert("🚀 手动切换".to_string(), Some(node_tags.clone()));
     group_overrides.insert(
         "GLOBAL".to_string(),
@@ -2643,6 +2608,7 @@ fn build_singbox_template(
     let mut template = clone_singbox_template();
     let mut base_outbounds: Vec<Value> = Vec::new();
     let mut selector_outbounds: Vec<Value> = Vec::new();
+    let mut existing_selector_tags: HashSet<String> = HashSet::new();
 
     let region_tag_set: HashSet<String> = region_tags.iter().cloned().collect();
     let available_region_set: HashSet<String> = available_region_tags.iter().cloned().collect();
@@ -2654,12 +2620,32 @@ fn build_singbox_template(
                     let outbound_type = ensure_string(map.get("type"));
                     if outbound_type == "selector" {
                         selector_outbounds.push(outbound.clone());
-                    } else if ["direct", "block", "dns"].contains(&outbound_type.as_str()) {
+                        let tag = ensure_string(map.get("tag"));
+                        if !tag.is_empty() {
+                            existing_selector_tags.insert(tag);
+                        }
+                    } else if ["direct", "block"].contains(&outbound_type.as_str()) {
                         base_outbounds.push(outbound.clone());
                     }
                 }
             }
         }
+    }
+
+    for tag in available_region_tags.iter() {
+        if existing_selector_tags.contains(tag) {
+            continue;
+        }
+        let outbounds = match group_overrides.get(tag) {
+            Some(Some(values)) if !values.is_empty() => unique_names(values),
+            _ => continue,
+        };
+        selector_outbounds.push(json!({
+            "type": "selector",
+            "tag": tag,
+            "outbounds": outbounds
+        }));
+        existing_selector_tags.insert(tag.clone());
     }
 
     let mut filtered_selectors: Vec<Value> = Vec::new();

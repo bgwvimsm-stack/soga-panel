@@ -948,9 +948,7 @@ export function generateSingboxConfig(nodes, user): string {
           server,
           server_port: port,
           method: config.cipher || "aes-128-gcm",
-          password: buildSS2022Password(config, user.passwd || config.password || ""),
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          password: buildSS2022Password(config, user.passwd || config.password || "")
         };
         break;
 
@@ -962,9 +960,7 @@ export function generateSingboxConfig(nodes, user): string {
           server_port: port,
           uuid: user.uuid,
           alter_id: config.aid || 0,
-          security: config.security || "auto",
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          security: config.security || "auto"
         };
         const tlsMode = config.tls_type === "reality" ? "reality" : config.tls_type === "tls" ? "tls" : "none";
         const tls = buildSingboxTls(config, tlsHost, server, tlsMode, client);
@@ -980,9 +976,7 @@ export function generateSingboxConfig(nodes, user): string {
           tag,
           server,
           server_port: port,
-          uuid: user.uuid,
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          uuid: user.uuid
         };
         if (config.flow) vless.flow = config.flow;
         const tlsMode = config.tls_type === "reality" ? "reality" : config.tls_type === "tls" ? "tls" : "none";
@@ -999,9 +993,7 @@ export function generateSingboxConfig(nodes, user): string {
           tag,
           server,
           server_port: port,
-          password: ensureString(user.passwd, ""),
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          password: ensureString(user.passwd, "")
         };
         const tlsMode = config.tls_type === "reality" ? "reality" : "tls";
         const tls = buildSingboxTls(config, tlsHost, server, tlsMode, client);
@@ -1019,9 +1011,7 @@ export function generateSingboxConfig(nodes, user): string {
           server_port: port,
           password: ensureString(user.passwd, ""),
           up_mbps: ensureNumber(config.up_mbps, 100),
-          down_mbps: ensureNumber(config.down_mbps, 100),
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          down_mbps: ensureNumber(config.down_mbps, 100)
         };
         const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
         if (tls) hysteria.tls = tls;
@@ -1040,9 +1030,7 @@ export function generateSingboxConfig(nodes, user): string {
           tag,
           server,
           server_port: port,
-          password: ensureString(user.passwd || config.password, ""),
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          password: ensureString(user.passwd || config.password, "")
         };
         const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
         if (tls) anytls.tls = tls;
@@ -1061,6 +1049,7 @@ export function generateSingboxConfig(nodes, user): string {
   const allRegionTags = SINGBOX_GROUP_MATCHERS.map((matcher) => matcher.tag);
   const availableRegionTags = allRegionTags.filter((tag) => (groupMatches[tag] || []).length > 0);
   const groupOverrides: Record<string, string[]> = {
+    "🚀 节点选择": ["🚀 手动切换", ...availableRegionTags, "DIRECT"],
     "🚀 手动切换": nodeTags,
     "GLOBAL": ["DIRECT", ...nodeTags]
   };
