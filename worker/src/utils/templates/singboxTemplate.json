@@ -1,80 +1,62 @@
 {
     "log": {
-        "disabled": false,
-        "level": "info",
-        "timestamp": true
+        "timestamp": true,
+        "level": "info"
     },
     "dns": {
         "servers": [
             {
+                "type": "tls",
                 "tag": "dns_proxy",
-                "address": "tls://1.1.1.1",
-                "address_resolver": "dns_resolver"
+                "detour": "🚀 节点选择",
+                "domain_resolver": "dns_resolver",
+                "server": "1.1.1.1"
             },
             {
+                "type": "h3",
                 "tag": "dns_direct",
-                "address": "h3://dns.alidns.com/dns-query",
-                "address_resolver": "dns_resolver",
-                "detour": "DIRECT"
+                "domain_resolver": "dns_resolver",
+                "server": "dns.alidns.com"
             },
             {
+                "type": "fakeip",
                 "tag": "dns_fakeip",
-                "address": "fakeip"
+                "inet4_range": "198.18.0.0/15",
+                "inet6_range": "fc00::/18"
             },
             {
+                "type": "udp",
                 "tag": "dns_resolver",
-                "address": "223.5.5.5",
-                "detour": "DIRECT"
-            },
-            {
-                "tag": "block",
-                "address": "rcode://success"
+                "server": "223.5.5.5"
             }
         ],
         "rules": [
             {
-                "outbound": [
-                    "any"
-                ],
-                "server": "dns_resolver"
+                "rule_set": "geosite-category-ads-all",
+                "action": "predefined",
+                "rcode": "NOERROR"
             },
             {
-                "geosite": [
-                    "category-ads-all"
-                ],
-                "server": "dns_block",
-                "disable_cache": true
-            },
-            {
-                "geosite": [
-                    "geolocation-!cn"
-                ],
                 "query_type": [
                     "A",
                     "AAAA"
                 ],
+                "rule_set": "geosite-geolocation-!cn",
                 "server": "dns_fakeip"
             },
             {
-                "geosite": [
-                    "geolocation-!cn"
-                ],
+                "rule_set": "geosite-geolocation-!cn",
                 "server": "dns_proxy"
             }
         ],
         "final": "dns_direct",
-        "independent_cache": true,
-        "fakeip": {
-            "enabled": true,
-            "inet4_range": "198.18.0.0/15"
-        }
+        "independent_cache": true
     },
     "ntp": {
         "enabled": true,
         "server": "time.apple.com",
         "server_port": 123,
-        "interval": "30m",
-        "detour": "DIRECT"
+        "interval": "30m"
     },
     "inbounds": [
         {
@@ -86,11 +68,13 @@
         {
             "type": "tun",
             "tag": "tun-in",
-            "inet4_address": "172.19.0.1/30",
+            "address": [
+                "172.19.0.1/30",
+                "fdfe:dcba:9876::1/126"
+            ],
             "auto_route": true,
             "strict_route": true,
-            "stack": "mixed",
-            "sniff": true
+            "stack": "mixed"
         }
     ],
     "outbounds": [
@@ -103,20 +87,10 @@
             "tag": "REJECT"
         },
         {
-            "type": "dns",
-            "tag": "dns-out"
-        },
-        {
             "type": "selector",
             "tag": "🚀 节点选择",
             "outbounds": [
                 "🚀 手动切换",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇸🇬 狮城节点",
-                "🇯🇵 日本节点",
-                "🇺🇲 美国节点",
-                "🇰🇷 韩国节点",
                 "DIRECT"
             ]
         },
@@ -130,12 +104,6 @@
             "tag": "📲 电报消息",
             "outbounds": [
                 "🚀 节点选择",
-                "🇸🇬 狮城节点",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇯🇵 日本节点",
-                "🇺🇲 美国节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换",
                 "DIRECT"
             ]
@@ -145,12 +113,6 @@
             "tag": "💬 Ai平台",
             "outbounds": [
                 "🚀 节点选择",
-                "🇸🇬 狮城节点",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇯🇵 日本节点",
-                "🇺🇲 美国节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换",
                 "DIRECT"
             ]
@@ -160,12 +122,6 @@
             "tag": "📹 油管视频",
             "outbounds": [
                 "🚀 节点选择",
-                "🇸🇬 狮城节点",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇯🇵 日本节点",
-                "🇺🇲 美国节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换",
                 "DIRECT"
             ]
@@ -174,14 +130,7 @@
             "type": "selector",
             "tag": "🎥 奈飞视频",
             "outbounds": [
-                "🎥 奈飞节点",
                 "🚀 节点选择",
-                "🇸🇬 狮城节点",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇯🇵 日本节点",
-                "🇺🇲 美国节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换",
                 "DIRECT"
             ]
@@ -190,7 +139,6 @@
             "type": "selector",
             "tag": "📺 巴哈姆特",
             "outbounds": [
-                "🇨🇳 台湾节点",
                 "🚀 节点选择",
                 "🚀 手动切换",
                 "DIRECT"
@@ -200,9 +148,7 @@
             "type": "selector",
             "tag": "📺 哔哩哔哩",
             "outbounds": [
-                "🎯 全球直连",
-                "🇨🇳 台湾节点",
-                "🇭🇰 香港节点"
+                "🎯 全球直连"
             ]
         },
         {
@@ -210,12 +156,6 @@
             "tag": "🌍 国外媒体",
             "outbounds": [
                 "🚀 节点选择",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇸🇬 狮城节点",
-                "🇯🇵 日本节点",
-                "🇺🇲 美国节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换",
                 "DIRECT"
             ]
@@ -225,10 +165,6 @@
             "tag": "🌏 国内媒体",
             "outbounds": [
                 "DIRECT",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇸🇬 狮城节点",
-                "🇯🇵 日本节点",
                 "🚀 手动切换"
             ]
         },
@@ -238,12 +174,6 @@
             "outbounds": [
                 "DIRECT",
                 "🚀 节点选择",
-                "🇺🇲 美国节点",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇸🇬 狮城节点",
-                "🇯🇵 日本节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换"
             ]
         },
@@ -253,12 +183,6 @@
             "outbounds": [
                 "DIRECT",
                 "🚀 节点选择",
-                "🇺🇲 美国节点",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇸🇬 狮城节点",
-                "🇯🇵 日本节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换"
             ]
         },
@@ -268,12 +192,6 @@
             "outbounds": [
                 "DIRECT",
                 "🚀 节点选择",
-                "🇺🇲 美国节点",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇸🇬 狮城节点",
-                "🇯🇵 日本节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换"
             ]
         },
@@ -283,12 +201,6 @@
             "outbounds": [
                 "DIRECT",
                 "🚀 节点选择",
-                "🇺🇲 美国节点",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇸🇬 狮城节点",
-                "🇯🇵 日本节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换"
             ]
         },
@@ -298,12 +210,6 @@
             "outbounds": [
                 "DIRECT",
                 "🚀 节点选择",
-                "🇺🇲 美国节点",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇸🇬 狮城节点",
-                "🇯🇵 日本节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换"
             ]
         },
@@ -313,12 +219,6 @@
             "outbounds": [
                 "DIRECT",
                 "🚀 节点选择",
-                "🇺🇲 美国节点",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇸🇬 狮城节点",
-                "🇯🇵 日本节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换"
             ]
         },
@@ -360,62 +260,7 @@
             "outbounds": [
                 "🚀 节点选择",
                 "DIRECT",
-                "🇭🇰 香港节点",
-                "🇨🇳 台湾节点",
-                "🇸🇬 狮城节点",
-                "🇯🇵 日本节点",
-                "🇺🇲 美国节点",
-                "🇰🇷 韩国节点",
                 "🚀 手动切换"
-            ]
-        },
-        {
-            "type": "selector",
-            "tag": "🇭🇰 香港节点",
-            "outbounds": [
-                "DIRECT"
-            ]
-        },
-        {
-            "type": "selector",
-            "tag": "🇯🇵 日本节点",
-            "outbounds": [
-                "DIRECT"
-            ]
-        },
-        {
-            "type": "selector",
-            "tag": "🇺🇲 美国节点",
-            "outbounds": [
-                "DIRECT"
-            ]
-        },
-        {
-            "type": "selector",
-            "tag": "🇸🇬 狮城节点",
-            "outbounds": [
-                "DIRECT"
-            ]
-        },
-        {
-            "type": "selector",
-            "tag": "🇨🇳 台湾节点",
-            "outbounds": [
-                "DIRECT"
-            ]
-        },
-        {
-            "type": "selector",
-            "tag": "🇰🇷 韩国节点",
-            "outbounds": [
-                "DIRECT"
-            ]
-        },
-        {
-            "type": "selector",
-            "tag": "🎥 奈飞节点",
-            "outbounds": [
-                "DIRECT"
             ]
         },
         {
@@ -427,6 +272,9 @@
         }
     ],
     "route": {
+        "default_domain_resolver": {
+            "server": "dns_resolver"
+        },
         "rules": [
             {
                 "clash_mode": "Global",
@@ -437,8 +285,11 @@
                 "outbound": "DIRECT"
             },
             {
+                "action": "sniff"
+            },
+            {
                 "protocol": "dns",
-                "outbound": "dns-out"
+                "action": "hijack-dns"
             },
             {
                 "domain_suffix": [
@@ -11067,8 +10918,31 @@
                 "outbound": "🎯 全球直连"
             },
             {
-                "geoip": "cn",
+                "rule_set": "geoip-cn",
                 "outbound": "🎯 全球直连"
+            }
+        ],
+        "rule_set": [
+            {
+                "tag": "geoip-cn",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+                "download_detour": "DIRECT"
+            },
+            {
+                "tag": "geosite-category-ads-all",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-category-ads-all.srs",
+                "download_detour": "DIRECT"
+            },
+            {
+                "tag": "geosite-geolocation-!cn",
+                "type": "remote",
+                "format": "binary",
+                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs",
+                "download_detour": "DIRECT"
             }
         ],
         "auto_detect_interface": true,

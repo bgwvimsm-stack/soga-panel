@@ -8,7 +8,7 @@ type BuildOptions = {
   availableRegionTags?: string[];
 };
 
-const CORE_OUTBOUND_TYPES = new Set(["direct", "block", "dns"]);
+const CORE_OUTBOUND_TYPES = new Set(["direct", "block"]);
 
 function cloneTemplate(): SingboxConfig {
   return JSON.parse(JSON.stringify(rawTemplate)) as SingboxConfig;
@@ -38,6 +38,7 @@ export function buildSingboxTemplate(
   const template = cloneTemplate() as any;
   const baseOutbounds: SingboxOutbound[] = [];
   const selectorOutbounds: SingboxOutbound[] = [];
+  const existingSelectorTags = new Set<string>();
 
   const regionTagSet = new Set(options.regionTags ?? []);
   const availableRegionSet = new Set(options.availableRegionTags ?? []);
@@ -48,9 +49,23 @@ export function buildSingboxTemplate(
     const type = String((outbound as any).type || "");
     if (type === "selector") {
       selectorOutbounds.push(outbound as SingboxOutbound);
+      const tag = String((outbound as any).tag || "");
+      if (tag) existingSelectorTags.add(tag);
     } else if (CORE_OUTBOUND_TYPES.has(type)) {
       baseOutbounds.push(outbound as SingboxOutbound);
     }
+  }
+
+  for (const tag of options.availableRegionTags ?? []) {
+    if (!tag || existingSelectorTags.has(tag)) continue;
+    const override = groupOverrides[tag];
+    if (!Array.isArray(override) || !override.length) continue;
+    selectorOutbounds.push({
+      type: "selector",
+      tag,
+      outbounds: uniqueTags(override)
+    });
+    existingSelectorTags.add(tag);
   }
 
   const filteredSelectors: SingboxOutbound[] = [];

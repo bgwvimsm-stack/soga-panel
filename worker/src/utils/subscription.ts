@@ -4,13 +4,39 @@ import { buildSingboxTemplate } from "./templates/singboxTemplate";
 import { buildSurgeTemplate } from "./templates/surgeTemplate";
 import { ensureNumber, ensureString } from "./d1";
 
+function isObjectRecord(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function decodeJsonValue(raw: unknown, maxDepth = 2): unknown {
+  let current = raw;
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    if (typeof current !== "string") break;
+    const text = current.trim();
+    if (!text) return {};
+    try {
+      current = JSON.parse(text);
+    } catch {
+      break;
+    }
+  }
+  return current;
+}
+
 function parseNodeConfig(node: any) {
   try {
-    const parsed = JSON.parse(node.node_config || "{}");
+    const parsedRaw = decodeJsonValue(node?.node_config ?? {});
+    const parsed = isObjectRecord(parsedRaw) ? parsedRaw : {};
+    const basicRaw = decodeJsonValue((parsed as any).basic);
+    const configRaw = decodeJsonValue((parsed as any).config);
+    const clientRaw = decodeJsonValue((parsed as any).client);
+    const basic = isObjectRecord(basicRaw) ? basicRaw : {};
+    const config = isObjectRecord(configRaw) ? configRaw : parsed;
+    const client = isObjectRecord(clientRaw) ? clientRaw : {};
     return {
-      basic: parsed.basic || {},
-      config: parsed.config || parsed || {},
-      client: parsed.client || {}
+      basic,
+      config,
+      client
     };
   } catch {
     return { basic: {}, config: {}, client: {} };
@@ -73,6 +99,38 @@ function resolveEchState(config: any, client: any): Record<string, unknown> | nu
   if (isRecord(client?.ech)) return client.ech as Record<string, unknown>;
   if (isRecord(config?.ech)) return config.ech as Record<string, unknown>;
   return null;
+}
+
+function parseBooleanFlag(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off", ""].includes(normalized)) return false;
+  }
+  return null;
+}
+
+function resolveSkipCertVerify(config: any, client: any, fallback = false): boolean {
+  const fromClient = parseBooleanFlag(
+    client?.["skip-cert-verify"]
+    ?? client?.skip_cert_verify
+    ?? client?.insecure
+    ?? client?.allow_insecure
+    ?? client?.allowInsecure
+  );
+  if (fromClient !== null) return fromClient;
+
+  const fromConfig = parseBooleanFlag(
+    config?.["skip-cert-verify"]
+    ?? config?.skip_cert_verify
+    ?? config?.insecure
+    ?? config?.allow_insecure
+    ?? config?.allowInsecure
+  );
+  if (fromConfig !== null) return fromConfig;
+  return fallback;
 }
 
 function splitPemLines(raw: string): string[] {
@@ -379,7 +437,9 @@ function generateHysteriaLink(node, config, user, client = {}) {
   params.set("protocol", "udp");
   params.set("auth", user.passwd);
   params.set("peer", node.tls_host || node.server);
-  params.set("insecure", "1");
+  if (resolveSkipCertVerify(config, client, false)) {
+    params.set("insecure", "1");
+  }
   params.set("upmbps", config.up_mbps || "100");
   params.set("downmbps", config.down_mbps || "100");
 
@@ -413,6 +473,7 @@ export function generateClashConfig(nodes, user) {
 
     switch (node.type) {
       case "v2ray":
+        const vmessTlsEnabled = config.tls_type === "tls" || config.tls_type === "reality";
         proxy = {
           name: node.name,
           type: "vmess",
@@ -421,10 +482,12 @@ export function generateClashConfig(nodes, user) {
           uuid: user.uuid,
           alterId: config.aid || 0,
           cipher: "auto",
-          tls: config.tls_type === "tls" || config.tls_type === "reality",
-          "skip-cert-verify": true,
+          tls: vmessTlsEnabled,
           network: config.stream_type || "tcp",
         };
+        if (vmessTlsEnabled) {
+          proxy["skip-cert-verify"] = resolveSkipCertVerify(config, client, false);
+        }
 
         // 添加 TLS 相关配置
         if (config.tls_type === "tls" || config.tls_type === "reality") {
@@ -482,6 +545,7 @@ export function generateClashConfig(nodes, user) {
         break;
 
       case "vless":
+        const vlessTlsEnabled = config.tls_type === "tls" || config.tls_type === "reality";
         proxy = {
           name: node.name,
           type: "vless",
@@ -489,10 +553,12 @@ export function generateClashConfig(nodes, user) {
           port,
           uuid: user.uuid,
           encryption: resolveVlessClientEncryption(config, client),
-          tls: config.tls_type === "tls" || config.tls_type === "reality",
-          "skip-cert-verify": true,
+          tls: vlessTlsEnabled,
           network: config.stream_type || "tcp",
         };
+        if (vlessTlsEnabled) {
+          proxy["skip-cert-verify"] = resolveSkipCertVerify(config, client, false);
+        }
 
         // TLS 配置
         if (config.tls_type === "tls") {
@@ -552,7 +618,7 @@ export function generateClashConfig(nodes, user) {
           server,
           port,
           password: user.passwd,
-          "skip-cert-verify": true,
+          "skip-cert-verify": resolveSkipCertVerify(config, client, false),
           sni: tlsHost || config.sni || server,
         };
         if (config.tls_type === "reality") {
@@ -655,7 +721,7 @@ export function generateClashConfig(nodes, user) {
           "idle-session-check-interval": config.idle_session_check_interval ?? 30,
           "idle-session-timeout": config.idle_session_timeout ?? 30,
           "min-idle-session": config.min_idle_session ?? 0,
-          "skip-cert-verify": true,
+          "skip-cert-verify": resolveSkipCertVerify(config, client, false),
         };
         {
           const sni = tlsHost || config.sni || config.server;
@@ -679,7 +745,7 @@ export function generateClashConfig(nodes, user) {
           server,
           port,
           password: user.passwd,
-          "skip-cert-verify": true,
+          "skip-cert-verify": resolveSkipCertVerify(config, client, false),
         };
 
         // 添加 SNI 配置
@@ -804,7 +870,7 @@ function buildSingboxTls(config: any, tlsHost: string, server: string, mode: "no
   const tls: Record<string, unknown> = {
     enabled: true,
     server_name: resolveSni(config, tlsHost, server),
-    insecure: false
+    insecure: resolveSkipCertVerify(config, client, false)
   };
   const alpn = normalizeAlpn(config.alpn);
   if (alpn?.length) tls.alpn = alpn;
@@ -882,9 +948,7 @@ export function generateSingboxConfig(nodes, user): string {
           server,
           server_port: port,
           method: config.cipher || "aes-128-gcm",
-          password: buildSS2022Password(config, user.passwd || config.password || ""),
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          password: buildSS2022Password(config, user.passwd || config.password || "")
         };
         break;
 
@@ -896,9 +960,7 @@ export function generateSingboxConfig(nodes, user): string {
           server_port: port,
           uuid: user.uuid,
           alter_id: config.aid || 0,
-          security: config.security || "auto",
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          security: config.security || "auto"
         };
         const tlsMode = config.tls_type === "reality" ? "reality" : config.tls_type === "tls" ? "tls" : "none";
         const tls = buildSingboxTls(config, tlsHost, server, tlsMode, client);
@@ -914,9 +976,7 @@ export function generateSingboxConfig(nodes, user): string {
           tag,
           server,
           server_port: port,
-          uuid: user.uuid,
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          uuid: user.uuid
         };
         if (config.flow) vless.flow = config.flow;
         const tlsMode = config.tls_type === "reality" ? "reality" : config.tls_type === "tls" ? "tls" : "none";
@@ -933,9 +993,7 @@ export function generateSingboxConfig(nodes, user): string {
           tag,
           server,
           server_port: port,
-          password: ensureString(user.passwd, ""),
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          password: ensureString(user.passwd, "")
         };
         const tlsMode = config.tls_type === "reality" ? "reality" : "tls";
         const tls = buildSingboxTls(config, tlsHost, server, tlsMode, client);
@@ -953,9 +1011,7 @@ export function generateSingboxConfig(nodes, user): string {
           server_port: port,
           password: ensureString(user.passwd, ""),
           up_mbps: ensureNumber(config.up_mbps, 100),
-          down_mbps: ensureNumber(config.down_mbps, 100),
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          down_mbps: ensureNumber(config.down_mbps, 100)
         };
         const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
         if (tls) hysteria.tls = tls;
@@ -974,9 +1030,7 @@ export function generateSingboxConfig(nodes, user): string {
           tag,
           server,
           server_port: port,
-          password: ensureString(user.passwd || config.password, ""),
-          network: config.network || "tcp",
-          tcp_fast_open: false
+          password: ensureString(user.passwd || config.password, "")
         };
         const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
         if (tls) anytls.tls = tls;
@@ -995,6 +1049,7 @@ export function generateSingboxConfig(nodes, user): string {
   const allRegionTags = SINGBOX_GROUP_MATCHERS.map((matcher) => matcher.tag);
   const availableRegionTags = allRegionTags.filter((tag) => (groupMatches[tag] || []).length > 0);
   const groupOverrides: Record<string, string[]> = {
+    "🚀 节点选择": ["🚀 手动切换", ...availableRegionTags, "DIRECT"],
     "🚀 手动切换": nodeTags,
     "GLOBAL": ["DIRECT", ...nodeTags]
   };
@@ -1267,8 +1322,11 @@ export function generateSurgeConfig(nodes, user) {
     switch (node.type) {
       case "v2ray":
         proxy = `${node.name} = vmess, ${server}, ${port}, username=${user.uuid}`;
-        if (config.tls_type === "tls") {
-          proxy += ", tls=true, skip-cert-verify=true";
+        if (config.tls_type === "tls" || config.tls_type === "reality") {
+          proxy += ", tls=true";
+          if (resolveSkipCertVerify(config, client, false)) {
+            proxy += ", skip-cert-verify=true";
+          }
           if (tlsHost || config.sni) proxy += `, sni=${tlsHost || config.sni}`;
         }
         if (config.stream_type === "ws") {
@@ -1279,7 +1337,10 @@ export function generateSurgeConfig(nodes, user) {
 
       case "trojan":
         proxy = `${node.name} = trojan, ${server}, ${port}, password=${user.passwd}`;
-        proxy += ", tls=true, skip-cert-verify=true";
+        proxy += ", tls=true";
+        if (resolveSkipCertVerify(config, client, false)) {
+          proxy += ", skip-cert-verify=true";
+        }
         if (tlsHost || config.sni) proxy += `, sni=${tlsHost || config.sni}`;
         break;
 
@@ -1295,7 +1356,17 @@ export function generateSurgeConfig(nodes, user) {
 
       case "hysteria":
         proxy = `${node.name} = hysteria2, ${server}, ${port}, password=${user.passwd}`;
-        proxy += ", skip-cert-verify=true";
+        if (resolveSkipCertVerify(config, client, false)) {
+          proxy += ", skip-cert-verify=true";
+        }
+        if (tlsHost || config.sni) proxy += `, sni=${tlsHost || config.sni}`;
+        break;
+
+      case "anytls":
+        proxy = `${node.name} = anytls, ${server}, ${port}, password=${ensureString(user.passwd || config.password, "")}`;
+        if (resolveSkipCertVerify(config, client, false)) {
+          proxy += ", skip-cert-verify=true";
+        }
         if (tlsHost || config.sni) proxy += `, sni=${tlsHost || config.sni}`;
         break;
     }
@@ -1321,39 +1392,62 @@ const yaml = {
 
     if (Array.isArray(obj)) {
       obj.forEach((item) => {
-        if (typeof item === "object") {
-          result += `${spaces}- ${this._stringifyInline(item)}\n`;
+        if (this._isObject(item)) {
+          const entries = Object.entries(item);
+          if (entries.length === 0) {
+            result += `${spaces}- {}\n`;
+            return;
+          }
+
+          entries.forEach(([key, value], index) => {
+            if (index === 0) {
+              if (Array.isArray(value) || this._isObject(value)) {
+                result += `${spaces}- ${key}:\n`;
+                result += this._stringify(value, indent + 2);
+              } else {
+                result += `${spaces}- ${key}: ${this._formatScalar(value)}\n`;
+              }
+            } else {
+              result += this._stringifyPair(key, value, indent + 1);
+            }
+          });
         } else {
-          result += `${spaces}- ${item}\n`;
+          result += `${spaces}- ${this._formatScalar(item)}\n`;
         }
       });
-    } else if (typeof obj === "object") {
+    } else if (this._isObject(obj)) {
       Object.entries(obj).forEach(([key, value]) => {
-        if (Array.isArray(value)) {
-          result += `${spaces}${key}:\n`;
-          result += this._stringify(value, indent + 1);
-        } else if (typeof value === "object") {
-          result += `${spaces}${key}:\n`;
-          result += this._stringify(value, indent + 1);
-        } else {
-          result += `${spaces}${key}: ${value}\n`;
-        }
+        result += this._stringifyPair(key, value, indent);
       });
     }
 
     return result;
   },
 
-  _stringifyInline: function (obj) {
-    if (typeof obj !== "object") return obj;
+  _stringifyPair: function (key, value, indent) {
+    const spaces = "  ".repeat(indent);
+    if (Array.isArray(value)) {
+      if (value.length === 0) return `${spaces}${key}: []\n`;
+      return `${spaces}${key}:\n${this._stringify(value, indent + 1)}`;
+    }
+    if (this._isObject(value)) {
+      if (Object.keys(value).length === 0) return `${spaces}${key}: {}\n`;
+      return `${spaces}${key}:\n${this._stringify(value, indent + 1)}`;
+    }
+    return `${spaces}${key}: ${this._formatScalar(value)}\n`;
+  },
 
-    const pairs = Object.entries(obj).map(([key, value]) => {
-      if (typeof value === "object") {
-        return `${key}: ${JSON.stringify(value)}`;
-      }
-      return `${key}: ${value}`;
-    });
+  _isObject: function (value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  },
 
-    return `{ ${pairs.join(", ")} }`;
+  _formatScalar: function (value) {
+    if (value === null || value === undefined) return "null";
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (typeof value !== "string") return JSON.stringify(value);
+
+    if (value === "") return "\"\"";
+    if (/^[\w\-./]+$/.test(value)) return value;
+    return JSON.stringify(value);
   },
 };

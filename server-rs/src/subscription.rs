@@ -176,7 +176,9 @@ const SS_OPTS_KEYS: [&str; 3] = ["enabled", "method", "password"];
 const SMUX_KEYS: [&str; 1] = ["enabled"];
 
 static CLASH_RULES: OnceLock<Vec<Value>> = OnceLock::new();
+static CLASH_TEMPLATE: OnceLock<Value> = OnceLock::new();
 static SINGBOX_TEMPLATE: OnceLock<Value> = OnceLock::new();
+static SURGE_TEMPLATE: OnceLock<String> = OnceLock::new();
 
 fn load_clash_rules() -> &'static Vec<Value> {
     CLASH_RULES.get_or_init(|| {
@@ -185,11 +187,24 @@ fn load_clash_rules() -> &'static Vec<Value> {
     })
 }
 
+fn clone_clash_template() -> Value {
+    let raw = include_str!("templates/clashTemplate.json");
+    let template = CLASH_TEMPLATE
+        .get_or_init(|| serde_json::from_str::<Value>(raw).unwrap_or_else(|_| json!({})));
+    template.clone()
+}
+
 fn clone_singbox_template() -> Value {
     let raw = include_str!("templates/singboxTemplate.json");
     let template = SINGBOX_TEMPLATE
         .get_or_init(|| serde_json::from_str::<Value>(raw).unwrap_or_else(|_| json!({})));
     template.clone()
+}
+
+fn clone_surge_template() -> String {
+    SURGE_TEMPLATE
+        .get_or_init(|| include_str!("templates/surgeTemplate.conf").to_string())
+        .clone()
 }
 
 fn b64encode_utf8(input: &str) -> String {
@@ -308,6 +323,52 @@ fn resolve_ech_state<'a>(config: &'a Value, client: &'a Value) -> Option<&'a Val
         }
     }
     None
+}
+
+fn parse_boolean_flag(value: Option<&Value>) -> Option<bool> {
+    match value {
+        Some(Value::Bool(value)) => Some(*value),
+        Some(Value::Number(value)) => value.as_i64().map(|v| v != 0),
+        Some(Value::String(value)) => {
+            let normalized = value.trim().to_lowercase();
+            if ["1", "true", "yes", "on"].contains(&normalized.as_str()) {
+                Some(true)
+            } else if ["0", "false", "no", "off", ""].contains(&normalized.as_str()) {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn resolve_skip_cert_verify(config: &Value, client: &Value, fallback: bool) -> bool {
+    let from_client = parse_boolean_flag(
+        client
+            .get("skip-cert-verify")
+            .or_else(|| client.get("skip_cert_verify"))
+            .or_else(|| client.get("insecure"))
+            .or_else(|| client.get("allow_insecure"))
+            .or_else(|| client.get("allowInsecure")),
+    );
+    if let Some(value) = from_client {
+        return value;
+    }
+
+    let from_config = parse_boolean_flag(
+        config
+            .get("skip-cert-verify")
+            .or_else(|| config.get("skip_cert_verify"))
+            .or_else(|| config.get("insecure"))
+            .or_else(|| config.get("allow_insecure"))
+            .or_else(|| config.get("allowInsecure")),
+    );
+    if let Some(value) = from_config {
+        return value;
+    }
+
+    fallback
 }
 
 fn resolve_ech_config(config: &Value, client: &Value) -> String {
@@ -749,14 +810,40 @@ fn value_to_yaml(value: &Value) -> String {
     }
 }
 
+fn decode_value_to_object(value: Value) -> Option<Value> {
+    let mut current = value;
+    for _ in 0..3 {
+        match current {
+            Value::String(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                current = serde_json::from_str::<Value>(trimmed).ok()?;
+            }
+            Value::Object(_) => return Some(current),
+            _ => return None,
+        }
+    }
+    if current.is_object() {
+        Some(current)
+    } else {
+        None
+    }
+}
+
 fn parse_node_config(node_config: &Value) -> (Value, Value, Value) {
-    if let Value::Object(map) = node_config {
-        let basic = map.get("basic").cloned().unwrap_or_else(|| json!({}));
-        let config = map
-            .get("config")
-            .cloned()
-            .unwrap_or_else(|| Value::Object(map.clone()));
-        let client = map.get("client").cloned().unwrap_or_else(|| json!({}));
+    let root = decode_value_to_object(node_config.clone());
+    if let Some(Value::Object(map)) = root {
+        let basic = decode_value_to_object(map.get("basic").cloned().unwrap_or_else(|| json!({})))
+            .unwrap_or_else(|| json!({}));
+        let config = if let Some(config_value) = map.get("config").cloned() {
+            decode_value_to_object(config_value).unwrap_or_else(|| json!({}))
+        } else {
+            Value::Object(map.clone())
+        };
+        let client = decode_value_to_object(map.get("client").cloned().unwrap_or_else(|| json!({})))
+            .unwrap_or_else(|| json!({}));
         (basic, config, client)
     } else {
         (json!({}), json!({}), json!({}))
@@ -1222,7 +1309,9 @@ fn generate_hysteria_link(
         server.to_string()
     };
     params.push(("peer".to_string(), peer));
-    params.push(("insecure".to_string(), "1".to_string()));
+    if resolve_skip_cert_verify(config, client, false) {
+        params.push(("insecure".to_string(), "1".to_string()));
+    }
     params.push((
         "upmbps".to_string(),
         resolve_config_string_value(config, &["up_mbps"], "100"),
@@ -1251,6 +1340,7 @@ fn generate_anytls_link(
     port: i64,
     tls_host: &str,
     config: &Value,
+    client: &Value,
     user: &SubscriptionUser,
 ) -> String {
     let host = format_host_for_url(server);
@@ -1264,11 +1354,10 @@ fn generate_anytls_link(
             server
         },
     );
-    let params = vec![
-        ("peer".to_string(), peer),
-        ("insecure".to_string(), "1".to_string()),
-        ("udp".to_string(), "1".to_string()),
-    ];
+    let mut params = vec![("peer".to_string(), peer), ("udp".to_string(), "1".to_string())];
+    if resolve_skip_cert_verify(config, client, false) {
+        params.push(("insecure".to_string(), "1".to_string()));
+    }
     let query = build_query_string(params);
     format!(
         "anytls://{}@{}:{}?{}#{}",
@@ -1317,11 +1406,17 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 );
                 value.insert("cipher".to_string(), json!("auto"));
                 let tls_mode = ensure_string(config.get("tls_type"));
+                let tls_enabled = tls_mode == "tls" || tls_mode == "reality";
                 value.insert(
                     "tls".to_string(),
-                    json!(tls_mode == "tls" || tls_mode == "reality"),
+                    json!(tls_enabled),
                 );
-                value.insert("skip-cert-verify".to_string(), json!(true));
+                if tls_enabled {
+                    value.insert(
+                        "skip-cert-verify".to_string(),
+                        json!(resolve_skip_cert_verify(&config, &client, false)),
+                    );
+                }
                 value.insert(
                     "network".to_string(),
                     json!(resolve_config_string_value(
@@ -1404,11 +1499,17 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                     json!(resolve_vless_client_encryption(&config, &client)),
                 );
                 let tls_mode = ensure_string(config.get("tls_type"));
+                let tls_enabled = tls_mode == "tls" || tls_mode == "reality";
                 value.insert(
                     "tls".to_string(),
-                    json!(tls_mode == "tls" || tls_mode == "reality"),
+                    json!(tls_enabled),
                 );
-                value.insert("skip-cert-verify".to_string(), json!(true));
+                if tls_enabled {
+                    value.insert(
+                        "skip-cert-verify".to_string(),
+                        json!(resolve_skip_cert_verify(&config, &client, false)),
+                    );
+                }
                 value.insert(
                     "network".to_string(),
                     json!(resolve_config_string_value(
@@ -1493,7 +1594,10 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                     "password".to_string(),
                     json!(user.passwd.clone().unwrap_or_default()),
                 );
-                value.insert("skip-cert-verify".to_string(), json!(true));
+                value.insert(
+                    "skip-cert-verify".to_string(),
+                    json!(resolve_skip_cert_verify(&config, &client, false)),
+                );
                 let sni = resolve_config_string_value(
                     &config,
                     &["sni"],
@@ -1688,7 +1792,10 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                     "min-idle-session".to_string(),
                     json!(ensure_i64(config.get("min_idle_session"), 0)),
                 );
-                value.insert("skip-cert-verify".to_string(), json!(true));
+                value.insert(
+                    "skip-cert-verify".to_string(),
+                    json!(resolve_skip_cert_verify(&config, &client, false)),
+                );
                 let sni = resolve_config_string_value(&config, &["sni"], &tls_host);
                 if !sni.is_empty() {
                     value.insert("sni".to_string(), json!(sni));
@@ -1711,7 +1818,10 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                     "password".to_string(),
                     json!(user.passwd.clone().unwrap_or_default()),
                 );
-                value.insert("skip-cert-verify".to_string(), json!(true));
+                value.insert(
+                    "skip-cert-verify".to_string(),
+                    json!(resolve_skip_cert_verify(&config, &client, false)),
+                );
                 let sni = resolve_config_string_value(&config, &["sni"], &tls_host);
                 if !sni.is_empty() {
                     value.insert("sni".to_string(), json!(sni));
@@ -2104,36 +2214,14 @@ fn build_clash_template(proxy_names: &[String], proxies: Vec<Value>) -> Value {
     }
 
     let rules = load_clash_rules().clone();
-    json!({
-      "mixed-port": 7890,
-      "socks-port": 7891,
-      "allow-lan": true,
-      "mode": "rule",
-      "log-level": "info",
-      "external-controller": "127.0.0.1:9090",
-      "dns": {
-        "enable": true,
-        "ipv6": false,
-        "default-nameserver": ["223.5.5.5", "119.29.29.29", "114.114.114.114"],
-        "enhanced-mode": "fake-ip",
-        "fake-ip-range": "198.18.0.1/16",
-        "use-hosts": true,
-        "respect-rules": true,
-        "proxy-server-nameserver": ["223.5.5.5", "119.29.29.29", "114.114.114.114"],
-        "nameserver": ["223.5.5.5", "119.29.29.29", "114.114.114.114"],
-        "fallback": ["1.1.1.1", "8.8.8.8"],
-        "fallback-filter": {
-          "geoip": true,
-          "geoip-code": "CN",
-          "geosite": ["gfw"],
-          "ipcidr": ["240.0.0.0/4"],
-          "domain": ["+.google.com", "+.facebook.com", "+.youtube.com"]
-        }
-      },
-      "proxies": proxies,
-      "proxy-groups": groups,
-      "rules": rules
-    })
+    let mut clash = match clone_clash_template() {
+        Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    clash.insert("proxies".to_string(), Value::Array(proxies));
+    clash.insert("proxy-groups".to_string(), Value::Array(groups));
+    clash.insert("rules".to_string(), Value::Array(rules));
+    Value::Object(clash)
 }
 
 fn resolve_outbound_tag(name: &str, used_tags: &mut HashSet<String>, fallback: &str) -> String {
@@ -2181,7 +2269,10 @@ fn build_singbox_tls(
         "server_name".to_string(),
         json!(resolve_sni(config, tls_host, server)),
     );
-    tls.insert("insecure".to_string(), json!(false));
+    tls.insert(
+        "insecure".to_string(),
+        json!(resolve_skip_cert_verify(config, client, false)),
+    );
     if let Some(alpn) = normalize_alpn(config.get("alpn")) {
         tls.insert("alpn".to_string(), json!(alpn));
     }
@@ -2320,11 +2411,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                         &user.passwd.clone().unwrap_or_default()
                     )),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 outbound = Some(value);
             }
             "v2ray" => {
@@ -2345,11 +2431,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                     "security".to_string(),
                     json!(resolve_config_string_value(&config, &["security"], "auto")),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 let tls_type = ensure_string(config.get("tls_type"));
                 let tls_mode = if tls_type == "reality" {
                     "reality"
@@ -2375,11 +2456,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                     "uuid".to_string(),
                     json!(user.uuid.clone().unwrap_or_default()),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 let flow = resolve_config_string(&config, &["flow"]);
                 if !flow.is_empty() {
                     value.insert("flow".to_string(), json!(flow));
@@ -2409,11 +2485,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                     "password".to_string(),
                     json!(user.passwd.clone().unwrap_or_default()),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 let tls_mode = if ensure_string(config.get("tls_type")) == "reality" {
                     "reality"
                 } else {
@@ -2444,11 +2515,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                     "down_mbps".to_string(),
                     json!(ensure_f64(config.get("down_mbps"), 100.0)),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 if let Some(tls) = build_singbox_tls(&config, &tls_host, &server, "tls", &client) {
                     value.insert("tls".to_string(), tls);
                 }
@@ -2478,11 +2544,6 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                         &user.passwd.clone().unwrap_or_default()
                     )),
                 );
-                value.insert(
-                    "network".to_string(),
-                    json!(resolve_config_string_value(&config, &["network"], "tcp")),
-                );
-                value.insert("tcp_fast_open".to_string(), json!(false));
                 if let Some(tls) = build_singbox_tls(&config, &tls_host, &server, "tls", &client) {
                     value.insert("tls".to_string(), tls);
                 }
@@ -2510,6 +2571,15 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
         .cloned()
         .collect();
     let mut group_overrides: HashMap<String, Option<Vec<String>>> = HashMap::new();
+    group_overrides.insert(
+        "🚀 节点选择".to_string(),
+        Some({
+            let mut list = vec!["🚀 手动切换".to_string()];
+            list.extend(available_region_tags.clone());
+            list.push("DIRECT".to_string());
+            unique_names(&list)
+        }),
+    );
     group_overrides.insert("🚀 手动切换".to_string(), Some(node_tags.clone()));
     group_overrides.insert(
         "GLOBAL".to_string(),
@@ -2545,6 +2615,7 @@ fn build_singbox_template(
     let mut template = clone_singbox_template();
     let mut base_outbounds: Vec<Value> = Vec::new();
     let mut selector_outbounds: Vec<Value> = Vec::new();
+    let mut existing_selector_tags: HashSet<String> = HashSet::new();
 
     let region_tag_set: HashSet<String> = region_tags.iter().cloned().collect();
     let available_region_set: HashSet<String> = available_region_tags.iter().cloned().collect();
@@ -2556,12 +2627,32 @@ fn build_singbox_template(
                     let outbound_type = ensure_string(map.get("type"));
                     if outbound_type == "selector" {
                         selector_outbounds.push(outbound.clone());
-                    } else if ["direct", "block", "dns"].contains(&outbound_type.as_str()) {
+                        let tag = ensure_string(map.get("tag"));
+                        if !tag.is_empty() {
+                            existing_selector_tags.insert(tag);
+                        }
+                    } else if ["direct", "block"].contains(&outbound_type.as_str()) {
                         base_outbounds.push(outbound.clone());
                     }
                 }
             }
         }
+    }
+
+    for tag in available_region_tags.iter() {
+        if existing_selector_tags.contains(tag) {
+            continue;
+        }
+        let outbounds = match group_overrides.get(tag) {
+            Some(Some(values)) if !values.is_empty() => unique_names(values),
+            _ => continue,
+        };
+        selector_outbounds.push(json!({
+            "type": "selector",
+            "tag": tag,
+            "outbounds": outbounds
+        }));
+        existing_selector_tags.insert(tag.clone());
     }
 
     let mut filtered_selectors: Vec<Value> = Vec::new();
@@ -2891,7 +2982,9 @@ pub fn generate_shadowrocket_config(nodes: &[SubscriptionNode], user: &Subscript
             "hysteria" => {
                 generate_hysteria_link(&name, &server, port, &tls_host, &config, &client, user)
             }
-            "anytls" => generate_anytls_link(&name, &server, port, &tls_host, &config, user),
+            "anytls" => {
+                generate_anytls_link(&name, &server, port, &tls_host, &config, &client, user)
+            }
             _ => String::new(),
         };
         if !line.is_empty() {
@@ -2944,6 +3037,31 @@ pub fn generate_surge_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 "{name} = hysteria2, {server}, {port}, password={}",
                 user.passwd.clone().unwrap_or_default()
             ),
+            "anytls" => {
+                let mut line = format!(
+                    "{name} = anytls, {server}, {port}, password={}",
+                    resolve_config_string_value(
+                        &config,
+                        &["password"],
+                        &user.passwd.clone().unwrap_or_default()
+                    )
+                );
+                if resolve_skip_cert_verify(&config, &client, false) {
+                    line.push_str(", skip-cert-verify=true");
+                }
+                let sni = resolve_config_string(&config, &["sni"]);
+                let sni = if !sni.is_empty() {
+                    sni
+                } else if !tls_host.is_empty() {
+                    tls_host.clone()
+                } else {
+                    String::new()
+                };
+                if !sni.is_empty() {
+                    line.push_str(&format!(", sni={sni}"));
+                }
+                line
+            }
             _ => String::new(),
         };
 
@@ -3293,73 +3411,10 @@ fn build_surge_template(proxies: &[String], proxy_names: &[String]) -> String {
         groups.push(format!("{tag} = select,{}", matched.join(",")));
     }
 
-    format!(
-    "#!MANAGED-CONFIG
-
-[General]
-loglevel = notify
-bypass-system = true
-skip-proxy = 127.0.0.1,192.168.0.0/16,10.0.0.0/8,172.16.0.0/12,100.64.0.0/10,localhost,*.local,e.crashlytics.com,captive.apple.com,::ffff:0:0:0:0/1,::ffff:128:0:0:0/1
-#DNS设置或根据自己网络情况进行相应设置
-bypass-tun = 192.168.0.0/16,10.0.0.0/8,172.16.0.0/12
-dns-server = 119.29.29.29,223.5.5.5,218.30.19.40,61.134.1.4
-external-controller-access = password@0.0.0.0:6170
-http-api = password@0.0.0.0:6171
-test-timeout = 5
-http-api-web-dashboard = true
-exclude-simple-hostnames = true
-allow-wifi-access = true
-http-listen = 0.0.0.0:6152
-socks5-listen = 0.0.0.0:6153
-wifi-access-http-port = 6152
-wifi-access-socks5-port = 6153
-
-[Script]
-http-request https?:\\/\\/.*\\.iqiyi\\.com\\/.*authcookie= script-path=https://raw.githubusercontent.com/NobyDa/Script/master/iQIYI-DailyBonus/iQIYI.js
-
-[Proxy]
-{proxy_section}
-
-[Proxy Group]
-{groups}
-
-[Rule]
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/LocalAreaNetwork.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/UnBan.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/BanAD.list,🛑 广告拦截,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/BanProgramAD.list,🍃 应用净化,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/GoogleFCM.list,📢 谷歌FCM,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/GoogleCN.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/SteamCN.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Bing.list,Ⓜ️ 微软Bing,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/OneDrive.list,Ⓜ️ 微软云盘,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Microsoft.list,Ⓜ️ 微软服务,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Apple.list,🍎 苹果服务,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Telegram.list,📲 电报消息,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/AI.list,💬 Ai平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/OpenAi.list,💬 Ai平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/NetEaseMusic.list,🎶 网易音乐,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Epic.list,🎮 游戏平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Origin.list,🎮 游戏平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Sony.list,🎮 游戏平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Steam.list,🎮 游戏平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Nintendo.list,🎮 游戏平台,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/YouTube.list,📹 油管视频,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Netflix.list,🎥 奈飞视频,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Bahamut.list,📺 巴哈姆特,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/BilibiliHMT.list,📺 哔哩哔哩,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Ruleset/Bilibili.list,📺 哔哩哔哩,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ChinaMedia.list,🌏 国内媒体,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ProxyMedia.list,🌍 国外媒体,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ProxyGFWlist.list,🚀 节点选择,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ChinaDomain.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/ChinaCompanyIp.list,🎯 全球直连,update-interval=86400
-RULE-SET,https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Download.list,🎯 全球直连,update-interval=86400
-GEOIP,CN,🎯 全球直连
-FINAL,🐟 漏网之鱼",
-    proxy_section = proxy_section,
-    groups = groups.join("\n")
-  )
+    let groups_section = groups.join("\n");
+    clone_surge_template()
+        .replace("{proxy_section}", &proxy_section)
+        .replace("{groups}", &groups_section)
 }
 
 pub fn subscription_expire_timestamp(expire_time: Option<NaiveDateTime>) -> i64 {

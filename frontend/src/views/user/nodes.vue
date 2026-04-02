@@ -541,6 +541,45 @@ const resolveConnectionInfo = (node: any) => {
   return { basic, config, client, server, port, tlsHost };
 };
 
+const resolveEchConfig = (config: any, client: any): string => {
+  const fromClient = typeof client?.ech?.config === 'string' ? client.ech.config.trim() : '';
+  if (fromClient) return fromClient;
+  const fromConfig = typeof config?.ech?.config === 'string' ? config.ech.config.trim() : '';
+  if (fromConfig) return fromConfig;
+  return '';
+};
+
+const parseBooleanFlag = (value: unknown): boolean | null => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off', ''].includes(normalized)) return false;
+  }
+  return null;
+};
+
+const resolveSkipCertVerify = (config: any, client: any, fallback = false): boolean => {
+  const fromClient = parseBooleanFlag(
+    client?.["skip-cert-verify"]
+    ?? client?.skip_cert_verify
+    ?? client?.insecure
+    ?? client?.allow_insecure
+    ?? client?.allowInsecure
+  );
+  if (fromClient !== null) return fromClient;
+  const fromConfig = parseBooleanFlag(
+    config?.["skip-cert-verify"]
+    ?? config?.skip_cert_verify
+    ?? config?.insecure
+    ?? config?.allow_insecure
+    ?? config?.allowInsecure
+  );
+  if (fromConfig !== null) return fromConfig;
+  return fallback;
+};
+
 const formatNodeAddress = (node: any): string => {
   if (!node) return '';
   const { server, port } = resolveConnectionInfo(node);
@@ -561,7 +600,7 @@ const connectionUrl = computed(() => {
   if (!selectedNode.value) return '';
 
   try {
-    const { config: nodeConfig, server, port, tlsHost } = resolveConnectionInfo(selectedNode.value);
+    const { config: nodeConfig, client, server, port, tlsHost } = resolveConnectionInfo(selectedNode.value);
     if (!server) return '';
     const finalPort = port || 443;
     const nodeForUrl = { ...selectedNode.value, server, server_port: finalPort, tls_host: tlsHost };
@@ -581,7 +620,9 @@ const connectionUrl = computed(() => {
         return generateTrojanUrl(nodeForUrl, nodeConfig);
       case 'hysteria':
       case 'hysteria2':
-        return generateHysteriaUrl(nodeForUrl, nodeConfig);
+        return generateHysteriaUrl(nodeForUrl, nodeConfig, client);
+      case 'anytls':
+        return generateAnyTLSUrl(nodeForUrl, nodeConfig, client);
       default:
         return `${selectedNode.value.type}://${wrapIPv6Host(server)}:${finalPort}`;
     }
@@ -652,6 +693,7 @@ const nodeConfigJson = computed(() => {
         return JSON.stringify(ssrConfig, null, 2);
 
       case 'v2ray':
+        const vmessTlsEnabled = nodeConfig.tls_type === "tls" || nodeConfig.tls_type === "reality";
         const vmessConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "vmess",
@@ -660,10 +702,12 @@ const nodeConfigJson = computed(() => {
           uuid: userStore.user?.uuid || '',
           alterId: nodeConfig.aid || 0,
           cipher: "auto",
-          tls: nodeConfig.tls_type === "tls",
-          "skip-cert-verify": true,
+          tls: vmessTlsEnabled,
           network: nodeConfig.stream_type || "tcp"
         };
+        if (vmessTlsEnabled) {
+          vmessConfig["skip-cert-verify"] = resolveSkipCertVerify(nodeConfig, client, false);
+        }
 
         // 添加 TLS 配置
         if (nodeConfig.tls_type === "tls") {
@@ -702,16 +746,19 @@ const nodeConfigJson = computed(() => {
         return JSON.stringify(vmessConfig, null, 2);
 
       case 'vless':
+        const vlessTlsEnabled = nodeConfig.tls_type === "tls" || nodeConfig.tls_type === "reality";
         const vlessConfig: Record<string, any> = {
           name: selectedNode.value.name,
           type: "vless",
           server,
           port: finalPort,
           uuid: userStore.user?.uuid || '',
-          tls: nodeConfig.tls_type === "tls" || nodeConfig.tls_type === "reality",
-          "skip-cert-verify": true,
+          tls: vlessTlsEnabled,
           network: nodeConfig.stream_type || "tcp"
         };
+        if (vlessTlsEnabled) {
+          vlessConfig["skip-cert-verify"] = resolveSkipCertVerify(nodeConfig, client, false);
+        }
 
         // TLS 配置
         if (nodeConfig.tls_type === "tls") {
@@ -760,7 +807,7 @@ const nodeConfigJson = computed(() => {
           server,
           port: finalPort,
           password: userStore.user?.passwd || '',
-          "skip-cert-verify": true,
+          "skip-cert-verify": resolveSkipCertVerify(nodeConfig, client, false),
           sni: tlsHost || server
         };
 
@@ -792,7 +839,7 @@ const nodeConfigJson = computed(() => {
           server,
           port: finalPort,
           password: userStore.user?.passwd || '',
-          "skip-cert-verify": true
+          "skip-cert-verify": resolveSkipCertVerify(nodeConfig, client, false)
         };
 
         // 添加 SNI 配置
@@ -817,6 +864,39 @@ const nodeConfigJson = computed(() => {
         }
 
         return JSON.stringify(hysteriaConfig, null, 2);
+
+      case 'anytls':
+        const anytlsConfig: Record<string, any> = {
+          name: selectedNode.value.name,
+          type: "anytls",
+          server,
+          port: finalPort,
+          password: String(userStore.user?.passwd || nodeConfig.password || ''),
+          "client-fingerprint": nodeConfig.fingerprint || "chrome",
+          udp: true,
+          "idle-session-check-interval": Number(nodeConfig.idle_session_check_interval ?? 30),
+          "idle-session-timeout": Number(nodeConfig.idle_session_timeout ?? 30),
+          "min-idle-session": Number(nodeConfig.min_idle_session ?? 0),
+          "skip-cert-verify": resolveSkipCertVerify(nodeConfig, client, false)
+        };
+        {
+          const sni = tlsHost || nodeConfig.sni || nodeConfig.server;
+          if (sni) anytlsConfig.sni = sni;
+          const alpnRaw = nodeConfig.alpn;
+          if (Array.isArray(alpnRaw) && alpnRaw.length) {
+            anytlsConfig.alpn = alpnRaw;
+          } else if (typeof alpnRaw === 'string' && alpnRaw.trim()) {
+            anytlsConfig.alpn = alpnRaw.split(',').map((v: string) => v.trim()).filter(Boolean);
+          }
+          const echConfig = resolveEchConfig(nodeConfig, client);
+          if (echConfig) {
+            anytlsConfig["ech-opts"] = {
+              enable: true,
+              config: echConfig
+            };
+          }
+        }
+        return JSON.stringify(anytlsConfig, null, 2);
 
       default:
         return JSON.stringify({
@@ -942,14 +1022,44 @@ const generateShadowsocksRUrl = (node: any, config: any): string => {
   return `ssr://${encodeBase64(full)}`;
 };
 
-const generateHysteriaUrl = (node: any, config: any): string => {
+const generateHysteriaUrl = (node: any, config: any, client: any = {}): string => {
   const password = userStore.user?.passwd || '';
   const host = node.tls_host || node.server;
   const serverHost = wrapIPv6Host(node.server);
   const port = node.server_port;
   const nodeName = encodeURIComponent(node.name);
+  const params = new URLSearchParams();
+  params.set('sni', host);
+  if (resolveSkipCertVerify(config, client, false)) {
+    params.set('insecure', '1');
+  }
+  return `hysteria2://${password}@${serverHost}:${port}/?${params.toString()}#${nodeName}`;
+};
 
-  return `hysteria2://${password}@${serverHost}:${port}/?sni=${host}#${nodeName}`;
+const generateAnyTLSUrl = (node: any, config: any, client: any = {}): string => {
+  const password = encodeURIComponent(String(userStore.user?.passwd || config.password || ''));
+  const host = wrapIPv6Host(node.server);
+  const numericPort = Number(node.server_port);
+  const hasPort = Number.isFinite(numericPort) && numericPort > 0 && numericPort !== 443;
+  const endpoint = hasPort ? `${host}:${numericPort}` : host;
+  const nodeName = encodeURIComponent(node.name || '');
+  const params = new URLSearchParams();
+  const sni = (config?.sni || node.tls_host || '').toString().trim();
+  if (sni) {
+    params.set('sni', sni);
+  }
+  const insecure = resolveSkipCertVerify(config, client, false);
+  if (insecure) {
+    params.set('insecure', '1');
+  }
+  const echConfig = resolveEchConfig(config, client);
+  if (echConfig) {
+    params.set('ech', echConfig);
+  }
+  const query = params.toString();
+  return query
+    ? `anytls://${password}@${endpoint}/?${query}#${nodeName}`
+    : `anytls://${password}@${endpoint}/#${nodeName}`;
 };
 
 const loadNodes = async () => {
