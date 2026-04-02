@@ -7,11 +7,11 @@ use axum::{Json, Router};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use chrono::{Duration, Utc};
-use redis::AsyncCommands;
 use serde_json::{json, Value};
 use sqlx::Row;
 use std::collections::HashSet;
 
+use crate::cache::{cache_get, cache_set};
 use crate::etag::{generate_etag, is_etag_match, json_with_etag, not_modified};
 use crate::response::error;
 use crate::state::AppState;
@@ -933,22 +933,4 @@ fn value_to_f64(value: Option<&Value>) -> Option<f64> {
         return text.trim().parse::<f64>().ok();
     }
     None
-}
-
-async fn cache_get(state: &AppState, key: &str) -> Option<String> {
-    let redis = state.redis.clone()?;
-    let mut conn = redis;
-    let result: redis::RedisResult<Option<String>> = conn.get(key).await;
-    result.ok().flatten()
-}
-
-async fn cache_set(state: &AppState, key: &str, value: &str, ttl: u64) -> Result<(), String> {
-    let redis = match state.redis.clone() {
-        Some(conn) => conn,
-        None => return Ok(()),
-    };
-    let mut conn = redis;
-    conn.set_ex::<_, _, ()>(key, value, ttl)
-        .await
-        .map_err(|err| err.to_string())
 }
