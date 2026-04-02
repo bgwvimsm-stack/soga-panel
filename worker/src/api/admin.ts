@@ -1842,6 +1842,8 @@ export class AdminAPI {
     };
     const config: Record<string, any> = { ...configInput };
     const client: Record<string, any> = { ...clientInput };
+    const tlsType = ensureString((config as any)?.tls_type, "").trim().toLowerCase();
+    const echAllowed = !tlsType || tlsType === "tls";
 
     const resolvedServer = ensureString(client.server || config.server || config.host || fallback.server, "");
     if (resolvedServer) {
@@ -1864,18 +1866,23 @@ export class AdminAPI {
       client.tls_host = resolvedTlsHost;
     }
 
-    const echKey = ensureString((config as any)?.ech?.key || fallback.echKey, "");
-    if (echKey) {
-      const ech = this.isRecord(config.ech) ? { ...config.ech } : {};
-      ech.key = echKey;
-      config.ech = ech;
-    }
+    if (echAllowed) {
+      const echKey = ensureString((config as any)?.ech?.key || fallback.echKey, "");
+      if (echKey) {
+        const ech = this.isRecord(config.ech) ? { ...config.ech } : {};
+        ech.key = echKey;
+        config.ech = ech;
+      }
 
-    const echConfig = ensureString((client as any)?.ech?.config || fallback.echConfig, "");
-    if (echConfig) {
-      const ech = this.isRecord(client.ech) ? { ...client.ech } : {};
-      ech.config = echConfig;
-      client.ech = ech;
+      const echConfig = ensureString((client as any)?.ech?.config || fallback.echConfig, "");
+      if (echConfig) {
+        const ech = this.isRecord(client.ech) ? { ...client.ech } : {};
+        ech.config = echConfig;
+        client.ech = ech;
+      }
+    } else {
+      delete config.ech;
+      delete client.ech;
     }
 
     return JSON.stringify({ basic, config, client });

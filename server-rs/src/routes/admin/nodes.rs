@@ -597,13 +597,57 @@ fn normalize_multiplier(value: Option<f64>) -> f64 {
     }
 }
 
+fn ech_allowed_by_tls_type(config: &serde_json::Map<String, Value>) -> bool {
+    match config.get("tls_type").and_then(|value| value.as_str()) {
+        Some(tls_type) if !tls_type.trim().is_empty() => tls_type.trim().eq_ignore_ascii_case("tls"),
+        _ => true,
+    }
+}
+
+fn strip_ech_when_not_tls(value: &mut Value) {
+    let Some(root) = value.as_object_mut() else {
+        return;
+    };
+
+    let has_structured = root.get("basic").and_then(Value::as_object).is_some()
+        || root.get("config").and_then(Value::as_object).is_some()
+        || root.get("client").and_then(Value::as_object).is_some();
+
+    if has_structured {
+        let ech_allowed = root
+            .get("config")
+            .and_then(Value::as_object)
+            .map(ech_allowed_by_tls_type)
+            .unwrap_or(true);
+        if !ech_allowed {
+            if let Some(config) = root.get_mut("config").and_then(Value::as_object_mut) {
+                config.remove("ech");
+            }
+            if let Some(client) = root.get_mut("client").and_then(Value::as_object_mut) {
+                client.remove("ech");
+            }
+        }
+        return;
+    }
+
+    if !ech_allowed_by_tls_type(root) {
+        root.remove("ech");
+    }
+}
+
 fn normalize_node_config(value: Value) -> String {
     match value {
         Value::String(raw) => match serde_json::from_str::<Value>(&raw) {
-            Ok(parsed) => parsed.to_string(),
+            Ok(mut parsed) => {
+                strip_ech_when_not_tls(&mut parsed);
+                parsed.to_string()
+            }
             Err(_) => raw,
         },
-        other => other.to_string(),
+        mut other => {
+            strip_ech_when_not_tls(&mut other);
+            other.to_string()
+        }
     }
 }
 

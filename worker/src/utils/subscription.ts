@@ -251,7 +251,7 @@ function generateVmessLink(node, config, user, client = {}) {
     }
   }
 
-  if (config.tls_type === "tls" || config.tls_type === "reality") {
+  if (config.tls_type === "tls") {
     const echConfig = resolveEchConfig(config, client);
     if (echConfig) {
       vmessConfig.ech = echConfig;
@@ -289,7 +289,7 @@ function generateVlessLink(node, config, user, client) {
     const shortId = pickRandomShortId(config.short_ids);
     if (shortId) params.set("sid", shortId);
   }
-  if (config.tls_type === "tls" || config.tls_type === "reality") {
+  if (config.tls_type === "tls") {
     const echConfig = resolveEchConfig(config, client);
     if (echConfig) {
       params.set("ech", echConfig);
@@ -332,10 +332,12 @@ function generateTrojanLink(node, config, user, client = {}) {
     const shortId = pickRandomShortId(config.short_ids);
     if (shortId) params.set("sid", shortId);
   }
-  const echConfig = resolveEchConfig(config, client);
-  if (echConfig) {
-    params.set("ech", echConfig);
-    params.set("echConfigList", echConfig);
+  if (config.tls_type !== "reality") {
+    const echConfig = resolveEchConfig(config, client);
+    if (echConfig) {
+      params.set("ech", echConfig);
+      params.set("echConfigList", echConfig);
+    }
   }
   if (config.path) params.set("path", config.path);
   if (config.server) {
@@ -509,7 +511,7 @@ export function generateClashConfig(nodes, user) {
           proxy["reality-opts"] = realityOpts;
           proxy["client-fingerprint"] = config.fingerprint || "chrome";
         }
-        if (config.tls_type === "tls" || config.tls_type === "reality") {
+        if (config.tls_type === "tls") {
           const echOpts = buildClashEchOpts(config, client);
           if (echOpts) {
             proxy["ech-opts"] = echOpts;
@@ -585,7 +587,7 @@ export function generateClashConfig(nodes, user) {
             proxy.servername = tlsHost;
           }
         }
-        if (config.tls_type === "tls" || config.tls_type === "reality") {
+        if (config.tls_type === "tls") {
           const echOpts = buildClashEchOpts(config, client);
           if (echOpts) {
             proxy["ech-opts"] = echOpts;
@@ -632,7 +634,7 @@ export function generateClashConfig(nodes, user) {
           proxy["reality-opts"] = realityOpts;
           proxy["client-fingerprint"] = config.fingerprint || "chrome";
         }
-        {
+        if (config.tls_type !== "reality") {
           const echOpts = buildClashEchOpts(config, client);
           if (echOpts) {
             proxy["ech-opts"] = echOpts;
@@ -874,8 +876,10 @@ function buildSingboxTls(config: any, tlsHost: string, server: string, mode: "no
   };
   const alpn = normalizeAlpn(config.alpn);
   if (alpn?.length) tls.alpn = alpn;
-  const ech = buildSingboxEch(config, client);
-  if (ech) tls.ech = ech;
+  if (mode === "tls") {
+    const ech = buildSingboxEch(config, client);
+    if (ech) tls.ech = ech;
+  }
 
   if (mode === "reality") {
     const serverName = tlsHost || resolveFirstString(config.server_names) || server;

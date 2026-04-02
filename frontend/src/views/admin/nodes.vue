@@ -1918,6 +1918,12 @@ const applyConfigToState = (config: any) => {
     nodeForm.config_stream_type = nodeConfigState.config.stream_type || 'tcp';
     nodeForm.config_tls_type = nodeConfigState.config.tls_type
       || ((nodeForm.type === 'vless' || nodeForm.type === 'trojan') ? 'tls' : 'none');
+    if (
+      (nodeForm.type === 'v2ray' || nodeForm.type === 'vless' || nodeForm.type === 'trojan')
+      && nodeForm.config_tls_type !== 'tls'
+    ) {
+      nodeForm.config_ech_enabled = false;
+    }
     nodeForm.config_path = nodeConfigState.config.path || '';
     nodeForm.config_service_name = nodeConfigState.config.service_name || '';
     nodeForm.config_flow = nodeConfigState.config.flow || '';
@@ -1953,7 +1959,7 @@ const isSS2022 = computed(() => nodeForm.type === 'ss' && ss2022Ciphers.includes
 const isVlessEncryptionEnabled = computed(() => nodeForm.config_vlessenc_auth !== 'none');
 const echTlsEnabled = computed(() => {
   if (nodeForm.type === 'v2ray' || nodeForm.type === 'vless' || nodeForm.type === 'trojan') {
-    return nodeForm.config_tls_type === 'tls' || nodeForm.config_tls_type === 'reality';
+    return nodeForm.config_tls_type === 'tls';
   }
   if (nodeForm.type === 'hysteria' || nodeForm.type === 'anytls') return true;
   return false;
@@ -2019,7 +2025,7 @@ watch(() => nodeForm.config_tls_type, (val, oldVal) => {
   if (!requiresTlsType) return;
   if (val !== oldVal) {
     ensureRealityDefaults();
-    if (val !== 'tls' && val !== 'reality') {
+    if (val !== 'tls') {
       nodeForm.config_ech_enabled = false;
     }
   }
