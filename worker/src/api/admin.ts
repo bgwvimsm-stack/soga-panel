@@ -2289,7 +2289,6 @@ export class AdminAPI {
       // 清除节点缓存
       await this.cache.deleteByPrefix("node_config_");
       await this.cache.deleteByPrefix("xray_rules_");
-      await this.cache.deleteByPrefix("dns_rules_");
       
       // 强制更新所有节点的时间戳以确保ETAG更新
       await this.db.db.prepare(`
@@ -2385,7 +2384,6 @@ export class AdminAPI {
       // 清除节点缓存
       await this.cache.delete(`node_config_${nodeId}`);
       await this.cache.deleteByPrefix("xray_rules_");
-      await this.cache.deleteByPrefix("dns_rules_");
       
       // 强制更新所有节点的时间戳以确保其他节点的ETAG也更新
       await this.db.db.prepare(`
@@ -2434,7 +2432,6 @@ export class AdminAPI {
       // 清除节点缓存
       await this.cache.delete(`node_config_${nodeId}`);
       await this.cache.deleteByPrefix("xray_rules_");
-      await this.cache.deleteByPrefix("dns_rules_");
       
       // 强制更新其他节点的时间戳以确保ETAG更新
       await this.db.db.prepare(`
@@ -2494,7 +2491,6 @@ export class AdminAPI {
             await this.cache.delete(`node_config_${nodeId}`);
           }
           await this.cache.deleteByPrefix("xray_rules_");
-          await this.cache.deleteByPrefix("dns_rules_");
           break;
       }
 
@@ -4298,7 +4294,6 @@ export class AdminAPI {
 
       await this.syncXrayRuleBindings(ruleId, nodeIdList);
       await this.cache.deleteByPrefix("xray_rules_");
-      await this.cache.deleteByPrefix("dns_rules_");
 
       const newRule = await this.db.db
         .prepare(
@@ -4398,7 +4393,6 @@ export class AdminAPI {
       }
 
       await this.cache.deleteByPrefix("xray_rules_");
-      await this.cache.deleteByPrefix("dns_rules_");
 
       const updatedRule = await this.db.db
         .prepare(
@@ -4452,7 +4446,6 @@ export class AdminAPI {
         .run();
 
       await this.cache.deleteByPrefix("xray_rules_");
-      await this.cache.deleteByPrefix("dns_rules_");
       return successResponse({ message: "Xray规则删除成功" });
     } catch (error) {
       console.error("删除Xray规则失败:", error);

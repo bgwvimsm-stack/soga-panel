@@ -9,7 +9,6 @@ export class DatabaseService {
   private registerIpColumnExists = false;
   private xraySchemaChecked = false;
   private xraySchemaReady = false;
-  private xrayDataMigrated = false;
 
   constructor(db: D1Database) {
     this.db = db;
@@ -87,87 +86,6 @@ export class DatabaseService {
     return Array.from(unique);
   }
 
-  private async migrateDnsRulesToXrayRules() {
-    if (this.xrayDataMigrated) {
-      return;
-    }
-
-    const dnsTable = await this.db
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dns_rules'")
-      .first<{ name?: string }>();
-    if (!dnsTable?.name) {
-      this.xrayDataMigrated = true;
-      return;
-    }
-
-    const xrayCountRow = await this.db
-      .prepare("SELECT COUNT(*) as total FROM xray_rules")
-      .first<{ total?: number }>();
-    const xrayCount = ensureNumber(xrayCountRow?.total);
-
-    if (xrayCount === 0) {
-      await this.db
-        .prepare(
-          `
-          INSERT INTO xray_rules (
-            id, name, description, rule_type, rule_format, rule_content, rule_json, enabled, created_at, updated_at
-          )
-          SELECT
-            id, name, description, 'dns', 'json', rule_json, rule_json, enabled, created_at, updated_at
-          FROM dns_rules
-        `
-        )
-        .run();
-    }
-
-    const dnsRules = await this.db
-      .prepare("SELECT id, node_ids FROM dns_rules")
-      .all<{ id?: number; node_ids?: string }>();
-
-    const ruleMap = new Map<number, Set<number>>();
-    for (const row of dnsRules.results ?? []) {
-      const ruleId = ensureNumber(row?.id);
-      if (ruleId <= 0) continue;
-      const nodeIds = this.normalizeIdList(row?.node_ids ?? "[]");
-      for (const nodeId of nodeIds) {
-        if (!ruleMap.has(nodeId)) {
-          ruleMap.set(nodeId, new Set<number>());
-        }
-        ruleMap.get(nodeId)?.add(ruleId);
-      }
-    }
-
-    if (ruleMap.size > 0) {
-      const nodeIds = Array.from(ruleMap.keys());
-      const placeholders = nodeIds.map(() => "?").join(", ");
-      const nodes = await this.db
-        .prepare(`SELECT id, xray_rule_ids FROM nodes WHERE id IN (${placeholders})`)
-        .bind(...nodeIds)
-        .all<{ id?: number; xray_rule_ids?: string }>();
-
-      for (const node of nodes.results ?? []) {
-        const nodeId = ensureNumber(node?.id);
-        if (nodeId <= 0) continue;
-        const merged = new Set<number>(this.normalizeIdList(node?.xray_rule_ids ?? "[]"));
-        for (const ruleId of ruleMap.get(nodeId) ?? []) {
-          merged.add(ruleId);
-        }
-        await this.db
-          .prepare(
-            `
-            UPDATE nodes
-            SET xray_rule_ids = ?, updated_at = datetime('now', '+8 hours')
-            WHERE id = ?
-          `
-          )
-          .bind(JSON.stringify(Array.from(merged)), nodeId)
-          .run();
-      }
-    }
-
-    this.xrayDataMigrated = true;
-  }
-
   async ensureXrayRuleSchema() {
     if (this.xraySchemaChecked && this.xraySchemaReady) {
       return true;
@@ -223,8 +141,6 @@ export class DatabaseService {
         )
         .run();
 
-      await this.migrateDnsRulesToXrayRules();
-
       this.xraySchemaReady = true;
       this.xraySchemaChecked = true;
     } catch (error) {
@@ -255,18 +171,6 @@ export class DatabaseService {
     const stmt = this.db.prepare("SELECT * FROM audit_rules WHERE enabled = 1");
     const result = await stmt.all();
     return result.results || [];
-  }
-
-  // 获取 DNS 规则（按节点）
-  async getDnsRulesByNodeId(nodeId) {
-    const rows = await this.getXrayRulesByNodeId(nodeId);
-    return rows
-      .filter((row) => row.rule_type === "dns")
-      .slice(0, 2)
-      .map((row) => ({
-        id: ensureNumber((row as any).id),
-        rule_json: (row as any).rule_json ?? null,
-      }));
   }
 
   // 获取 Xray 规则（按节点）
