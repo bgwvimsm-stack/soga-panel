@@ -102,6 +102,7 @@ CREATE TABLE
 -- traffic_multiplier: 节点流量倍率（扣费时使用，默认 1）
 -- bandwidthlimit_resetday: 节点流量重置日期（每月几号重置）
 -- node_config: 节点配置JSON（包含协议相关配置）
+-- xray_rule_ids: 绑定的Xray规则ID列表（JSON数组字符串）
 -- status: 节点状态（0-禁用，1-启用）
 -- created_at: 创建时间（UTC+8时区）
 -- updated_at: 更新时间（UTC+8时区）
@@ -116,6 +117,7 @@ CREATE TABLE
         traffic_multiplier REAL DEFAULT 1,
         bandwidthlimit_resetday INTEGER DEFAULT 1,
         node_config TEXT NOT NULL DEFAULT '{}',
+        xray_rule_ids TEXT NOT NULL DEFAULT '[]',
         status INTEGER DEFAULT 1,
         created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
         updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
@@ -141,24 +143,28 @@ CREATE TABLE
         updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
     );
 
--- DNS 规则表
+-- Xray 路由规则表（新）
 -- 字段说明：
--- id: DNS 规则唯一标识ID（主键）
+-- id: 规则唯一标识ID（主键）
 -- name: 规则名称（不能为空）
 -- description: 规则描述
--- rule_json: 规则 JSON 内容
+-- rule_type: 规则类型（dns/routing/outbounds）
+-- rule_format: 规则格式（json/yaml）
+-- rule_content: 规则原始内容（文本）
+-- rule_json: 规则标准化 JSON 内容（用于节点下发）
 -- enabled: 规则启用状态（0-禁用，1-启用）
--- node_ids: 绑定节点ID列表（JSON 数组）
 -- created_at: 创建时间（UTC+8时区）
 -- updated_at: 更新时间（UTC+8时区）
 CREATE TABLE
-    IF NOT EXISTS dns_rules (
+    IF NOT EXISTS xray_rules (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         description TEXT,
+        rule_type TEXT NOT NULL CHECK (rule_type IN ('dns', 'routing', 'outbounds')),
+        rule_format TEXT NOT NULL CHECK (rule_format IN ('json', 'yaml')),
+        rule_content TEXT NOT NULL,
         rule_json TEXT NOT NULL,
         enabled INTEGER DEFAULT 1,
-        node_ids TEXT NOT NULL,
         created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
         updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
     );

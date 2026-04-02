@@ -64,6 +64,19 @@
               x{{ Number(row.traffic_multiplier || 1).toFixed(2) }}
             </el-tag>
           </template>
+          <template #xray_rules="{ row }">
+            <div class="rule-tags">
+              <el-tag
+                v-for="item in getNodeRuleTags(row)"
+                :key="`${row.id}-${item.id}`"
+                size="small"
+                :type="item.type"
+              >
+                {{ item.label }}
+              </el-tag>
+              <span v-if="getNodeRuleTags(row).length === 0">-</span>
+            </div>
+          </template>
           <template #bandwidth_limit="{ row }">
             <span v-if="row.node_bandwidth_limit > 0">{{ formatTraffic(row.node_bandwidth_limit) }}</span>
             <span v-else>无限制</span>
@@ -219,6 +232,77 @@
                 </el-form-item>
               </el-col>
             </el-row>
+          </el-card>
+
+          <el-card shadow="never" class="section-card">
+            <div class="section-header">
+              <div>
+                <span class="section-title">路由规则绑定</span>
+                <span class="section-sub">每种类型最多绑定一条</span>
+              </div>
+            </div>
+            <el-row :gutter="16">
+              <el-col :span="8">
+                <el-form-item label="DNS 规则">
+                  <el-select
+                    v-model="nodeForm.xray_rule_dns_id"
+                    clearable
+                    filterable
+                    :loading="xrayRulesLoading"
+                    placeholder="不绑定"
+                  >
+                    <el-option
+                      v-for="item in dnsRuleOptions"
+                      :key="item.id"
+                      :label="formatRuleOption(item)"
+                      :value="item.id"
+                      :disabled="item.enabled !== 1"
+                    />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :span="8">
+                <el-form-item label="Routing 规则">
+                  <el-select
+                    v-model="nodeForm.xray_rule_routing_id"
+                    clearable
+                    filterable
+                    :loading="xrayRulesLoading"
+                    placeholder="不绑定"
+                  >
+                    <el-option
+                      v-for="item in routingRuleOptions"
+                      :key="item.id"
+                      :label="formatRuleOption(item)"
+                      :value="item.id"
+                      :disabled="item.enabled !== 1"
+                    />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :span="8">
+                <el-form-item label="Outbounds 规则">
+                  <el-select
+                    v-model="nodeForm.xray_rule_outbounds_id"
+                    clearable
+                    filterable
+                    :loading="xrayRulesLoading"
+                    placeholder="不绑定"
+                  >
+                    <el-option
+                      v-for="item in outboundsRuleOptions"
+                      :key="item.id"
+                      :label="formatRuleOption(item)"
+                      :value="item.id"
+                      :disabled="item.enabled !== 1"
+                    />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <div class="form-hint">
+              节点侧维护绑定关系，规则页仅管理规则内容。已禁用规则不可选择，保存时会自动忽略。
+            </div>
           </el-card>
 
           <template v-if="!advancedView">
@@ -880,6 +964,7 @@ import { Plus, Search, CircleCheck, CircleClose, EditPen, SwitchButton, ArrowDow
 import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 import { VxeTableBar } from '@/components/ReVxeTableBar';
 import { getNodes, createNode, updateNode, deleteNode as deleteNodeAPI, batchUpdateNodes, type Node } from '@/api/admin';
+import http from '@/api/http';
 
 const vxeTableRef = ref();
 const loading = ref(false);
@@ -963,7 +1048,18 @@ const vlessEncryptionAuthOptions = [
 const VLESS_ENCRYPTION_PROTOCOL = 'mlkem768x25519plus';
 const hysteriaObfsOptions = ['plain', 'salamander'];
 const echForceQueryOptions = ['none', 'half', 'full'];
+type XrayRuleType = 'dns' | 'routing' | 'outbounds';
+type XrayRuleOption = {
+  id: number;
+  name: string;
+  rule_type: XrayRuleType;
+  rule_format?: string;
+  enabled: number;
+};
 const nodes = ref<Node[]>([]);
+const xrayRules = ref<XrayRuleOption[]>([]);
+const xrayRulesLoading = ref(false);
+const hasLoadedXrayRules = ref(false);
 const selectedNodes = ref<Node[]>([]);
 const pagerConfig = reactive<VxePagerConfig>({
   total: 0,
@@ -990,6 +1086,7 @@ const columns: VxeTableBarColumns = [
   { field: 'id', title: 'ID', width: 80, visible: true },
   { field: 'name', title: '节点名称', minWidth: 150, visible: true, slots: { default: 'name' } },
   { field: 'type', title: '类型', width: 130, visible: true, slots: { default: 'type' } },
+  { field: 'xray_rules', title: '路由规则', minWidth: 240, visible: true, slots: { default: 'xray_rules' } },
   { field: 'server', title: '地址', minWidth: 180, visible: true, slots: { default: 'server' } },
   { field: 'server_port', title: '端口', width: 100, visible: true, slots: { default: 'server_port' } },
   { field: 'node_class', title: '等级', width: 100, visible: true, slots: { default: 'node_class' } },
@@ -1010,6 +1107,9 @@ const nodeForm = reactive({
   traffic_multiplier: 1,
   node_bandwidth: 0,
   bandwidthlimit_resetday: 1,
+  xray_rule_dns_id: null as number | null,
+  xray_rule_routing_id: null as number | null,
+  xray_rule_outbounds_id: null as number | null,
   client_server: '',
   client_port: null as number | null,
   service_port: null as number | null,
@@ -1738,6 +1838,117 @@ const formatDateTime = (dateStr: string): string => {
   }
 };
 
+const normalizeIdList = (value: unknown): number[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => Number(item))
+      .filter((item) => Number.isFinite(item) && item > 0)
+      .filter((item, index, list) => list.indexOf(item) === index);
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      return normalizeIdList(parsed);
+    } catch {
+      return trimmed
+        .split(',')
+        .map((item) => Number(item.trim()))
+        .filter((item) => Number.isFinite(item) && item > 0)
+        .filter((item, index, list) => list.indexOf(item) === index);
+    }
+  }
+
+  return [];
+};
+
+const getRuleTypeLabel = (value: string): string => {
+  if (value === 'dns') return 'DNS';
+  if (value === 'routing') return 'Routing';
+  if (value === 'outbounds') return 'Outbounds';
+  return value || '-';
+};
+
+const normalizeRuleType = (value: unknown): XrayRuleType | null => {
+  const type = String(value || '').toLowerCase();
+  if (type === 'dns' || type === 'routing' || type === 'outbounds') {
+    return type;
+  }
+  return null;
+};
+
+const getRuleTagType = (value: string): 'success' | 'warning' | 'info' => {
+  if (value === 'dns') return 'success';
+  if (value === 'routing') return 'warning';
+  return 'info';
+};
+
+const xrayRuleMap = computed(() => {
+  const map = new Map<number, XrayRuleOption>();
+  for (const item of xrayRules.value) {
+    map.set(item.id, item);
+  }
+  return map;
+});
+
+const dnsRuleOptions = computed(() => xrayRules.value.filter((item) => item.rule_type === 'dns'));
+const routingRuleOptions = computed(() => xrayRules.value.filter((item) => item.rule_type === 'routing'));
+const outboundsRuleOptions = computed(() => xrayRules.value.filter((item) => item.rule_type === 'outbounds'));
+
+const formatRuleOption = (item: XrayRuleOption): string => {
+  const disabledText = item.enabled === 1 ? '' : '（已禁用）';
+  return `${item.name} #${item.id} [${getRuleTypeLabel(item.rule_type)}]${disabledText}`;
+};
+
+const getNodeRuleTags = (row: Node): Array<{ id: number; label: string; type: 'success' | 'warning' | 'info' }> => {
+  const ids = normalizeIdList((row as any).xray_rule_ids);
+  return ids.map((id) => {
+    const rule = xrayRuleMap.value.get(id);
+    if (!rule) {
+      return { id, label: `规则#${id}`, type: 'info' };
+    }
+    return {
+      id,
+      label: `${getRuleTypeLabel(rule.rule_type)}: ${rule.name}`,
+      type: getRuleTagType(rule.rule_type)
+    };
+  });
+};
+
+const applyNodeRuleBindings = (value: unknown) => {
+  const ids = normalizeIdList(value);
+  const byType = new Map<XrayRuleType, number>();
+  for (const id of ids) {
+    const rule = xrayRuleMap.value.get(id);
+    if (!rule) continue;
+    if (!byType.has(rule.rule_type)) {
+      byType.set(rule.rule_type, rule.id);
+    }
+  }
+
+  nodeForm.xray_rule_dns_id = byType.get('dns') ?? null;
+  nodeForm.xray_rule_routing_id = byType.get('routing') ?? null;
+  nodeForm.xray_rule_outbounds_id = byType.get('outbounds') ?? null;
+};
+
+const collectNodeRuleBindingIds = (): number[] => {
+  const enabledRuleIdSet = new Set(
+    xrayRules.value
+      .filter((item) => item.enabled === 1)
+      .map((item) => item.id)
+  );
+  const ids = [
+    nodeForm.xray_rule_dns_id,
+    nodeForm.xray_rule_routing_id,
+    nodeForm.xray_rule_outbounds_id
+  ]
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item) && item > 0 && enabledRuleIdSet.has(item));
+  return Array.from(new Set(ids));
+};
+
 type NodeConfigState = {
   basic: {
     pull_interval: number;
@@ -2290,6 +2501,58 @@ const handleViewToggle = (val: boolean) => {
   }
 };
 
+const loadXrayRules = async () => {
+  xrayRulesLoading.value = true;
+  try {
+    const response: any = await http.get('/admin/xray-rules', { params: { page: 1, limit: 2000 } });
+    const payload: any = response?.data ?? response ?? {};
+    const list = Array.isArray(payload.data)
+      ? payload.data
+      : Array.isArray(payload.rules)
+        ? payload.rules
+        : Array.isArray(payload.records)
+          ? payload.records
+          : [];
+
+    xrayRules.value = list
+      .map((item: any) => {
+        const ruleType = normalizeRuleType(item.rule_type);
+        if (!ruleType) return null;
+        return {
+          id: Number(item.id),
+          name: String(item.name || ''),
+          rule_type: ruleType,
+          rule_format: String(item.rule_format || 'json').toLowerCase(),
+          enabled: Number(item.enabled ?? item.status ?? 1) === 1 ? 1 : 0
+        };
+      })
+      .filter((item): item is XrayRuleOption => Boolean(item && item.id > 0));
+    hasLoadedXrayRules.value = true;
+  } catch (error) {
+    console.error('加载路由规则失败:', error);
+    xrayRules.value = [];
+    hasLoadedXrayRules.value = false;
+  } finally {
+    xrayRulesLoading.value = false;
+  }
+};
+
+const ensureXrayRulesLoaded = async () => {
+  if (hasLoadedXrayRules.value) return;
+  if (xrayRulesLoading.value) {
+    await new Promise<void>((resolve) => {
+      const timer = window.setInterval(() => {
+        if (!xrayRulesLoading.value) {
+          window.clearInterval(timer);
+          resolve();
+        }
+      }, 60);
+    });
+    return;
+  }
+  await loadXrayRules();
+};
+
 const loadNodes = async () => {
   loading.value = true;
   try {
@@ -2351,7 +2614,8 @@ const handleTypeChange = (value: string) => {
   ensureRealityDefaults();
 };
 
-const editNode = (node: Node) => {
+const editNode = async (node: Node) => {
+  await ensureXrayRulesLoaded();
   editingNode.value = node;
   nodeForm.name = node.name;
   nodeForm.type = node.type;
@@ -2375,11 +2639,13 @@ const editNode = (node: Node) => {
     applyConfigToState(createDefaultNodeConfig(node.type));
   }
   advancedView.value = false;
+  applyNodeRuleBindings((node as any).xray_rule_ids);
 
   showCreateDialog.value = true;
 };
 
-const copyNode = (node: Node) => {
+const copyNode = async (node: Node) => {
+  await ensureXrayRulesLoaded();
   editingNode.value = null;
   nodeForm.name = `${node.name} - 副本`;
   nodeForm.type = node.type;
@@ -2404,6 +2670,7 @@ const copyNode = (node: Node) => {
   }
 
   advancedView.value = false;
+  applyNodeRuleBindings((node as any).xray_rule_ids);
   showCreateDialog.value = true;
 };
 
@@ -2504,7 +2771,8 @@ const saveNode = async () => {
       node_bandwidth: nodeForm.node_bandwidth,
       traffic_multiplier: nodeForm.traffic_multiplier > 0 ? nodeForm.traffic_multiplier : 1,
       bandwidthlimit_resetday: nodeForm.bandwidthlimit_resetday,
-      node_config: JSON.stringify(finalConfig)
+      node_config: JSON.stringify(finalConfig),
+      xray_rule_ids: collectNodeRuleBindingIds()
     };
 
     if (editingNode.value) {
@@ -2535,6 +2803,9 @@ const resetForm = () => {
   nodeForm.node_bandwidth = 0;
   nodeForm.traffic_multiplier = 1;
   nodeForm.bandwidthlimit_resetday = 1;
+  nodeForm.xray_rule_dns_id = null;
+  nodeForm.xray_rule_routing_id = null;
+  nodeForm.xray_rule_outbounds_id = null;
   nodeForm.client_server = '';
   nodeForm.client_port = null;
   nodeForm.client_tls_host = '';
@@ -2623,6 +2894,7 @@ const batchOfflineNodes = async () => {
 
 onMounted(() => {
   loadNodes();
+  loadXrayRules();
 });
 </script>
 
@@ -2702,5 +2974,17 @@ onMounted(() => {
 .mode-toggle .hint {
   color: #909399;
   font-size: 12px;
+}
+
+.rule-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.form-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
 }
 </style>

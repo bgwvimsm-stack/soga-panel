@@ -334,6 +334,7 @@ export interface Node {
   traffic_multiplier?: number;
   bandwidthlimit_resetday?: number;
   node_config: string;
+  xray_rule_ids?: number[];
   status: number;
   user_count?: number;
   is_online?: boolean;
@@ -391,6 +392,7 @@ export interface CreateNodeRequest {
   traffic_multiplier?: number;
   node_config?: string;
   bandwidthlimit_resetday?: number;
+  xray_rule_ids?: number[];
 }
 
 export const getNodes = (params?: PaginationParams): Promise<ApiResponse<PaginationResponse<Node>>> => {

@@ -842,8 +842,9 @@ fn parse_node_config(node_config: &Value) -> (Value, Value, Value) {
         } else {
             Value::Object(map.clone())
         };
-        let client = decode_value_to_object(map.get("client").cloned().unwrap_or_else(|| json!({})))
-            .unwrap_or_else(|| json!({}));
+        let client =
+            decode_value_to_object(map.get("client").cloned().unwrap_or_else(|| json!({})))
+                .unwrap_or_else(|| json!({}));
         (basic, config, client)
     } else {
         (json!({}), json!({}), json!({}))
@@ -1356,7 +1357,10 @@ fn generate_anytls_link(
             server
         },
     );
-    let mut params = vec![("peer".to_string(), peer), ("udp".to_string(), "1".to_string())];
+    let mut params = vec![
+        ("peer".to_string(), peer),
+        ("udp".to_string(), "1".to_string()),
+    ];
     if resolve_skip_cert_verify(config, client, false) {
         params.push(("insecure".to_string(), "1".to_string()));
     }
@@ -1409,10 +1413,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 value.insert("cipher".to_string(), json!("auto"));
                 let tls_mode = ensure_string(config.get("tls_type"));
                 let tls_enabled = tls_mode == "tls" || tls_mode == "reality";
-                value.insert(
-                    "tls".to_string(),
-                    json!(tls_enabled),
-                );
+                value.insert("tls".to_string(), json!(tls_enabled));
                 if tls_enabled {
                     value.insert(
                         "skip-cert-verify".to_string(),
@@ -1502,10 +1503,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 );
                 let tls_mode = ensure_string(config.get("tls_type"));
                 let tls_enabled = tls_mode == "tls" || tls_mode == "reality";
-                value.insert(
-                    "tls".to_string(),
-                    json!(tls_enabled),
-                );
+                value.insert("tls".to_string(), json!(tls_enabled));
                 if tls_enabled {
                     value.insert(
                         "skip-cert-verify".to_string(),

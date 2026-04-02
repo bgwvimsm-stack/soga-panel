@@ -10,6 +10,7 @@ use chrono::{Duration, Utc};
 use redis::AsyncCommands;
 use serde_json::{json, Value};
 use sqlx::Row;
+use std::collections::HashSet;
 
 use crate::etag::{generate_etag, is_etag_match, json_with_etag, not_modified};
 use crate::response::error;
@@ -20,7 +21,7 @@ pub fn router() -> Router<AppState> {
         .route("/node", get(get_node))
         .route("/users", get(get_users))
         .route("/audit_rules", get(get_audit_rules))
-        .route("/dns_rules", get(get_dns_rules))
+        .route("/xray_rules", get(get_xray_rules))
         .route("/white_list", get(get_white_list))
         .route("/traffic", post(post_traffic))
         .route("/alive_ip", post(post_alive_ip))
@@ -234,63 +235,182 @@ async fn get_audit_rules(State(state): State<AppState>, headers: HeaderMap) -> R
     json_with_etag(&payload, &etag)
 }
 
-async fn get_dns_rules(State(state): State<AppState>, headers: HeaderMap) -> Response {
+fn parse_id_list(raw: &str) -> Vec<i64> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    let parsed = serde_json::from_str::<Value>(trimmed);
+    let Ok(value) = parsed else {
+        return trimmed
+            .split(',')
+            .filter_map(|item| item.trim().parse::<i64>().ok())
+            .filter(|id| *id > 0)
+            .collect();
+    };
+
+    match value {
+        Value::Array(items) => items
+            .into_iter()
+            .filter_map(|item| match item {
+                Value::Number(num) => num.as_i64(),
+                Value::String(text) => text.trim().parse::<i64>().ok(),
+                _ => None,
+            })
+            .filter(|id| *id > 0)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+async fn build_xray_rules_payload(state: &AppState, node_id: i64) -> Result<Value, Response> {
+    let node_row =
+        sqlx::query("SELECT CAST(xray_rule_ids AS CHAR) AS xray_rule_ids FROM nodes WHERE id = ?")
+            .bind(node_id)
+            .fetch_optional(&state.db)
+            .await;
+
+    let node_row = match node_row {
+        Ok(Some(value)) => value,
+        Ok(None) => return Err(error(StatusCode::NOT_FOUND, "节点不存在", None)),
+        Err(err) => {
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &err.to_string(),
+                None,
+            ))
+        }
+    };
+
+    let raw_ids = node_row
+        .try_get::<Option<String>, _>("xray_rule_ids")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "[]".to_string());
+    let rule_ids = parse_id_list(&raw_ids);
+    if rule_ids.is_empty() {
+        return Err(error(StatusCode::NOT_FOUND, "Xray规则不存在", None));
+    }
+
+    let placeholders = rule_ids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<&str>>()
+        .join(",");
+    let sql = format!(
+        "SELECT id, rule_type, CAST(rule_json AS CHAR) AS rule_json FROM xray_rules WHERE enabled = 1 AND id IN ({placeholders}) ORDER BY id ASC"
+    );
+    let mut query = sqlx::query(&sql);
+    for id in &rule_ids {
+        query = query.bind(id);
+    }
+    let rows = match query.fetch_all(&state.db).await {
+        Ok(records) => records,
+        Err(err) => {
+            return Err(error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &err.to_string(),
+                None,
+            ))
+        }
+    };
+    if rows.is_empty() {
+        return Err(error(StatusCode::NOT_FOUND, "Xray规则不存在", None));
+    }
+
+    let mut payload = json!({
+      "dns": {},
+      "routing": {},
+      "outbounds": []
+    });
+    let mut type_set: HashSet<String> = HashSet::new();
+
+    for row in rows {
+        let rule_type = row
+            .try_get::<Option<String>, _>("rule_type")
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+            .to_lowercase();
+        if rule_type != "dns" && rule_type != "routing" && rule_type != "outbounds" {
+            continue;
+        }
+        if type_set.contains(&rule_type) {
+            return Err(error(
+                StatusCode::CONFLICT,
+                &format!("节点已绑定多条{rule_type}规则"),
+                None,
+            ));
+        }
+        type_set.insert(rule_type.clone());
+
+        let raw = row
+            .try_get::<Option<String>, _>("rule_json")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let parsed = match serde_json::from_str::<Value>(&raw) {
+            Ok(value) => value,
+            Err(_) => {
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Xray规则JSON无效",
+                    None,
+                ))
+            }
+        };
+
+        if rule_type == "outbounds" {
+            if parsed.is_array() {
+                payload["outbounds"] = parsed;
+            } else {
+                payload["outbounds"] = Value::Array(vec![parsed]);
+            }
+        } else if rule_type == "dns" {
+            payload["dns"] = parsed;
+        } else if rule_type == "routing" {
+            payload["routing"] = parsed;
+        }
+    }
+
+    if type_set.is_empty() {
+        return Err(error(StatusCode::NOT_FOUND, "Xray规则不存在", None));
+    }
+
+    Ok(payload)
+}
+
+async fn load_xray_rules_payload(state: &AppState, node_id: i64) -> Result<Value, Response> {
+    let cache_key = format!("xray_rules_{node_id}");
+    let cached = cache_get(state, &cache_key).await;
+    if let Some(json_str) = cached {
+        if let Ok(parsed) = serde_json::from_str::<Value>(&json_str) {
+            return Ok(parsed);
+        }
+    }
+
+    let payload = build_xray_rules_payload(state, node_id).await?;
+    let _ = cache_set(
+        state,
+        &cache_key,
+        &serde_json::to_string(&payload).unwrap_or_default(),
+        86400,
+    )
+    .await;
+    Ok(payload)
+}
+
+async fn get_xray_rules(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let auth = match validate_soga_auth(&headers, state.env.node_api_key.as_deref()) {
         Ok(auth) => auth,
         Err(resp) => return resp,
     };
 
-    let cache_key = format!("dns_rules_{}", auth.node_id);
-    let cached = cache_get(&state, &cache_key).await;
-    let mut rule_value: Option<Value> = None;
+    let payload = match load_xray_rules_payload(&state, auth.node_id).await {
+        Ok(value) => value,
+        Err(resp) => return resp,
+    };
 
-    if let Some(json_str) = cached {
-        if let Ok(parsed) = serde_json::from_str::<Value>(&json_str) {
-            rule_value = Some(parsed);
-        }
-    }
-
-    if rule_value.is_none() {
-        let rows = sqlx::query(
-      "SELECT id, CAST(rule_json AS CHAR) AS rule_json FROM dns_rules WHERE enabled = 1 AND JSON_CONTAINS(node_ids, JSON_ARRAY(?)) ORDER BY id ASC LIMIT 2"
-    )
-      .bind(auth.node_id)
-      .fetch_all(&state.db)
-      .await;
-
-        match rows {
-            Ok(records) => {
-                if records.is_empty() {
-                    return error(StatusCode::NOT_FOUND, "DNS规则不存在", None);
-                }
-                if records.len() > 1 {
-                    return error(StatusCode::CONFLICT, "节点已绑定多条DNS规则", None);
-                }
-
-                let raw = records[0]
-                    .try_get::<Option<String>, _>("rule_json")
-                    .unwrap_or(None)
-                    .unwrap_or_else(|| "{}".to_string());
-                let parsed = match serde_json::from_str::<Value>(&raw) {
-                    Ok(value) => value,
-                    Err(_) => {
-                        return error(StatusCode::INTERNAL_SERVER_ERROR, "DNS规则JSON无效", None)
-                    }
-                };
-                rule_value = Some(parsed);
-                let _ = cache_set(
-                    &state,
-                    &cache_key,
-                    &serde_json::to_string(rule_value.as_ref().unwrap()).unwrap_or_default(),
-                    86400,
-                )
-                .await;
-            }
-            Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None),
-        }
-    }
-
-    let payload = rule_value.unwrap_or_else(|| json!({}));
     let etag = generate_etag(&payload);
     if is_etag_match(&headers, &etag) {
         return not_modified(&etag);

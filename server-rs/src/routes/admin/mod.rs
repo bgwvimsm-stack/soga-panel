@@ -2,7 +2,6 @@ mod announcements;
 mod audit;
 mod cache;
 mod coupons;
-mod dns_rules;
 mod gift_card_batches;
 mod gift_cards;
 mod login_logs;
@@ -21,6 +20,7 @@ mod tickets;
 mod traffic;
 mod users;
 mod whitelist;
+mod xray_rules;
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -59,7 +59,7 @@ pub fn router() -> Router<AppState> {
         .nest("/login-logs", login_logs::router())
         .nest("/subscription-logs", subscription_logs::router())
         .merge(audit::router())
-        .merge(dns_rules::router())
+        .merge(xray_rules::router())
         .merge(whitelist::router())
         .merge(online_ips::router())
         .merge(cache::router())

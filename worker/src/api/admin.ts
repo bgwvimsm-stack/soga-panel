@@ -483,49 +483,294 @@ export class AdminAPI {
     return Array.from(unique);
   }
 
-  private normalizeRuleJson(value: unknown): { success: boolean; value?: string; message?: string } {
-    if (value === null || value === undefined || value === "") {
-      return { success: false, message: "缺少规则JSON" };
-    }
+  private normalizeRuleIds(value: unknown): number[] {
+    return this.normalizeNodeIds(value);
+  }
 
+  private normalizeXrayRuleType(value: unknown): "dns" | "routing" | "outbounds" | null {
+    const ruleType = ensureString(value, "").trim().toLowerCase();
+    if (ruleType === "dns" || ruleType === "routing" || ruleType === "outbounds") {
+      return ruleType;
+    }
+    return null;
+  }
+
+  private normalizeXrayRuleFormat(value: unknown): "json" | "yaml" | null {
+    const ruleFormat = ensureString(value, "").trim().toLowerCase();
+    if (ruleFormat === "json" || ruleFormat === "yaml") {
+      return ruleFormat;
+    }
+    return null;
+  }
+
+  private parseJsonValue(value: unknown): { success: boolean; parsed?: unknown; message?: string } {
+    if (value === null || value === undefined || value === "") {
+      return { success: false, message: "规则内容不能为空" };
+    }
     if (typeof value === "string") {
       const trimmed = value.trim();
       if (!trimmed) {
-        return { success: false, message: "缺少规则JSON" };
+        return { success: false, message: "规则内容不能为空" };
       }
       try {
-        const parsed = JSON.parse(trimmed);
-        return { success: true, value: JSON.stringify(parsed) };
+        return { success: true, parsed: JSON.parse(trimmed) };
       } catch {
-        return { success: false, message: "DNS规则JSON无效" };
+        return { success: false, message: "规则JSON无效" };
+      }
+    }
+    return { success: true, parsed: value };
+  }
+
+  private normalizeXrayRulePayload(
+    ruleTypeValue: unknown,
+    ruleFormatValue: unknown,
+    ruleContentValue: unknown,
+    ruleJsonValue: unknown
+  ): {
+    success: boolean;
+    value?: {
+      rule_type: "dns" | "routing" | "outbounds";
+      rule_format: "json" | "yaml";
+      rule_content: string;
+      rule_json: string;
+    };
+    message?: string;
+  } {
+    const ruleType = this.normalizeXrayRuleType(ruleTypeValue);
+    if (!ruleType) {
+      return { success: false, message: "规则类型无效" };
+    }
+
+    const ruleFormat = this.normalizeXrayRuleFormat(ruleFormatValue);
+    if (!ruleFormat) {
+      return { success: false, message: "规则格式无效" };
+    }
+
+    let ruleContent = "";
+    if (typeof ruleContentValue === "string") {
+      ruleContent = ruleContentValue.trim();
+    } else if (ruleContentValue !== null && ruleContentValue !== undefined) {
+      ruleContent = JSON.stringify(ruleContentValue);
+    }
+    if (!ruleContent) {
+      return { success: false, message: "规则内容不能为空" };
+    }
+
+    if (ruleFormat === "json") {
+      const parsed = this.parseJsonValue(ruleContent);
+      if (!parsed.success) {
+        return { success: false, message: parsed.message || "规则JSON无效" };
+      }
+      return {
+        success: true,
+        value: {
+          rule_type: ruleType,
+          rule_format: ruleFormat,
+          rule_content: ruleContent,
+          rule_json: JSON.stringify(parsed.parsed)
+        }
+      };
+    }
+
+    // yaml 模式：优先使用前端已解析后的 rule_json
+    const yamlParsed = this.parseJsonValue(ruleJsonValue);
+    if (!yamlParsed.success) {
+      return { success: false, message: "YAML规则解析失败，请检查内容并重试" };
+    }
+    return {
+      success: true,
+      value: {
+        rule_type: ruleType,
+        rule_format: ruleFormat,
+        rule_content: ruleContent,
+        rule_json: JSON.stringify(yamlParsed.parsed)
+      }
+    };
+  }
+
+  private async findXrayRulesByIds(ruleIds: number[]) {
+    if (ruleIds.length === 0) {
+      return [] as Array<{
+        id: number;
+        name: string;
+        rule_type: string;
+        enabled: number;
+      }>;
+    }
+
+    const placeholders = ruleIds.map(() => "?").join(", ");
+    const rows = await this.db.db
+      .prepare(
+        `
+        SELECT id, name, rule_type, enabled
+        FROM xray_rules
+        WHERE id IN (${placeholders})
+      `
+      )
+      .bind(...ruleIds)
+      .all<Record<string, unknown>>();
+    return (rows.results ?? []).map((row) => ({
+      id: ensureNumber(row.id),
+      name: ensureString(row.name),
+      rule_type: ensureString(row.rule_type).toLowerCase(),
+      enabled: ensureNumber(row.enabled, 1)
+    }));
+  }
+
+  private async validateNodeXrayRuleIds(ruleIds: number[]): Promise<{ success: boolean; message?: string }> {
+    if (ruleIds.length === 0) {
+      return { success: true };
+    }
+
+    const normalized = Array.from(new Set(ruleIds.map((id) => ensureNumber(id)).filter((id) => id > 0)));
+    if (normalized.length !== ruleIds.length) {
+      return { success: false, message: "规则ID列表包含无效值" };
+    }
+
+    const rules = await this.findXrayRulesByIds(normalized);
+    if (rules.length !== normalized.length) {
+      return { success: false, message: "存在不存在的路由规则" };
+    }
+
+    const disabledRules = rules.filter((rule) => rule.enabled !== 1);
+    if (disabledRules.length > 0) {
+      return { success: false, message: "存在已禁用的路由规则，无法绑定" };
+    }
+
+    const typeSet = new Set<string>();
+    for (const rule of rules) {
+      if (typeSet.has(rule.rule_type)) {
+        return { success: false, message: "同一节点不能绑定多个同类型规则" };
+      }
+      typeSet.add(rule.rule_type);
+    }
+
+    return { success: true };
+  }
+
+  private async findXrayRuleTypeConflicts(
+    nodeIds: number[],
+    ruleType: "dns" | "routing" | "outbounds",
+    excludeRuleId?: number
+  ) {
+    if (nodeIds.length === 0) {
+      return [];
+    }
+
+    const placeholders = nodeIds.map(() => "?").join(", ");
+    const nodes = await this.db.db
+      .prepare(`SELECT id, xray_rule_ids FROM nodes WHERE id IN (${placeholders})`)
+      .bind(...nodeIds)
+      .all<Record<string, unknown>>();
+
+    const existingIds = new Set<number>();
+    const nodeRuleMap = new Map<number, number[]>();
+    for (const row of nodes.results ?? []) {
+      const nodeId = ensureNumber(row.id);
+      const ids = this.normalizeRuleIds(row.xray_rule_ids);
+      nodeRuleMap.set(nodeId, ids);
+      for (const id of ids) {
+        if (!excludeRuleId || id !== excludeRuleId) {
+          existingIds.add(id);
+        }
       }
     }
 
-    try {
-      return { success: true, value: JSON.stringify(value) };
-    } catch {
-      return { success: false, message: "DNS规则JSON无效" };
+    if (existingIds.size === 0) {
+      return [];
+    }
+
+    const allRules = await this.findXrayRulesByIds(Array.from(existingIds));
+    const ruleMap = new Map<number, { id: number; name: string; rule_type: string }>();
+    for (const rule of allRules) {
+      ruleMap.set(rule.id, { id: rule.id, name: rule.name, rule_type: rule.rule_type });
+    }
+
+    const conflicts: Array<{ node_id: number; conflicts: Array<{ id: number; name: string; rule_type: string }> }> = [];
+    for (const nodeId of nodeIds) {
+      const ids = nodeRuleMap.get(nodeId) ?? [];
+      const sameType = ids
+        .filter((id) => !excludeRuleId || id !== excludeRuleId)
+        .map((id) => ruleMap.get(id))
+        .filter((rule) => rule && rule.rule_type === ruleType) as Array<{ id: number; name: string; rule_type: string }>;
+      if (sameType.length > 0) {
+        conflicts.push({ node_id: nodeId, conflicts: sameType });
+      }
+    }
+
+    return conflicts;
+  }
+
+  private async syncXrayRuleBindings(ruleId: number, targetNodeIds: number[]) {
+    const nodeIdSet = new Set<number>(targetNodeIds);
+    const nodes = await this.db.db
+      .prepare("SELECT id, xray_rule_ids FROM nodes")
+      .all<Record<string, unknown>>();
+
+    for (const row of nodes.results ?? []) {
+      const nodeId = ensureNumber(row.id);
+      if (nodeId <= 0) continue;
+
+      const current = this.normalizeRuleIds(row.xray_rule_ids);
+      const currentSet = new Set<number>(current);
+      const shouldBind = nodeIdSet.has(nodeId);
+      const hasRule = currentSet.has(ruleId);
+
+      let changed = false;
+      if (shouldBind && !hasRule) {
+        currentSet.add(ruleId);
+        changed = true;
+      }
+      if (!shouldBind && hasRule) {
+        currentSet.delete(ruleId);
+        changed = true;
+      }
+
+      if (!changed) continue;
+
+      const next = Array.from(currentSet).sort((a, b) => a - b);
+      await this.db.db
+        .prepare(
+          `
+          UPDATE nodes
+          SET xray_rule_ids = ?, updated_at = datetime('now', '+8 hours')
+          WHERE id = ?
+        `
+        )
+        .bind(JSON.stringify(next), nodeId)
+        .run();
     }
   }
 
-  private async findDnsRuleConflicts(nodeIds: number[], excludeId?: number) {
-    if (nodeIds.length === 0) return [];
-    const placeholders = nodeIds.map(() => "?").join(", ");
-    let sql = `
-      SELECT id, name, node_ids
-      FROM dns_rules
-      WHERE EXISTS (
-        SELECT 1 FROM json_each(dns_rules.node_ids) WHERE json_each.value IN (${placeholders})
-      )
-    `;
-    const params: unknown[] = [...nodeIds];
-    if (excludeId && Number.isFinite(excludeId)) {
-      sql += " AND id != ?";
-      params.push(excludeId);
+  private async removeXrayRuleBindings(ruleId: number) {
+    await this.syncXrayRuleBindings(ruleId, []);
+  }
+
+  private async collectRuleNodeIdsMap(ruleIds: number[]) {
+    const result = new Map<number, number[]>();
+    const idSet = new Set<number>(ruleIds);
+    if (idSet.size === 0) {
+      return result;
     }
 
-    const result = await this.db.db.prepare(sql).bind(...params).all();
-    return result.results ?? [];
+    const nodes = await this.db.db
+      .prepare("SELECT id, xray_rule_ids FROM nodes WHERE xray_rule_ids IS NOT NULL")
+      .all<Record<string, unknown>>();
+
+    for (const row of nodes.results ?? []) {
+      const nodeId = ensureNumber(row.id);
+      if (nodeId <= 0) continue;
+      const ids = this.normalizeRuleIds(row.xray_rule_ids);
+      for (const ruleId of ids) {
+        if (!idSet.has(ruleId)) continue;
+        if (!result.has(ruleId)) {
+          result.set(ruleId, []);
+        }
+        result.get(ruleId)?.push(nodeId);
+      }
+    }
+
+    return result;
   }
 
   private normalizeTimestampValue(value: unknown, field: string): number {
@@ -1499,6 +1744,7 @@ export class AdminAPI {
       if (!adminCheck.success) {
         return errorResponse(adminCheck.message, 401);
       }
+      await this.db.ensureXrayRuleSchema();
 
       const url = new URL(request.url);
       const pageParam = parseInt(url.searchParams.get("page") || "1", 10);
@@ -1548,6 +1794,7 @@ export class AdminAPI {
           traffic_multiplier,
           bandwidthlimit_resetday,
           node_config,
+          xray_rule_ids,
           status,
           created_at,
           updated_at
@@ -1575,6 +1822,7 @@ export class AdminAPI {
           node_bandwidth_limit: ensureNumber(node.node_bandwidth_limit),
           traffic_multiplier: ensureNumber(node.traffic_multiplier, 1),
           bandwidthlimit_resetday: ensureNumber(node.bandwidthlimit_resetday, 1),
+          xray_rule_ids: this.normalizeRuleIds(node.xray_rule_ids),
           status: ensureNumber(node.status),
         };
       });
@@ -1628,6 +1876,7 @@ export class AdminAPI {
       if (!adminCheck.success) {
         return errorResponse(adminCheck.message, 401);
       }
+      await this.db.ensureXrayRuleSchema();
 
       const url = new URL(request.url);
       const pageParam = parseInt(url.searchParams.get("page") || "1", 10);
@@ -1701,6 +1950,7 @@ export class AdminAPI {
             n.node_class,
             n.status,
             n.node_config,
+            n.xray_rule_ids,
             n.created_at,
             n.updated_at,
             ns.cpu_usage,
@@ -1743,6 +1993,7 @@ export class AdminAPI {
           type: ensureString(node.type),
           node_class: ensureNumber(node.node_class),
           status: ensureNumber(node.status),
+          xray_rule_ids: this.normalizeRuleIds(node.xray_rule_ids),
           server: ensureString(client.server || ""),
           server_port: ensureNumber(client.port || cfg.port || 443),
           tls_host: ensureString(client.tls_host || cfg.host || ""),
@@ -1988,6 +2239,7 @@ export class AdminAPI {
       if (!adminCheck.success) {
         return errorResponse(adminCheck.message, 401);
       }
+      await this.db.ensureXrayRuleSchema();
 
       const nodeData = await request.json();
 
@@ -1996,12 +2248,18 @@ export class AdminAPI {
         return errorResponse("Name and type are required", 400);
       }
 
+      const xrayRuleIds = this.normalizeRuleIds(nodeData.xray_rule_ids);
+      const xrayRuleValidation = await this.validateNodeXrayRuleIds(xrayRuleIds);
+      if (!xrayRuleValidation.success) {
+        return errorResponse(xrayRuleValidation.message || "路由规则绑定无效", 409);
+      }
+
       const stmt = this.db.db.prepare(`
         INSERT INTO nodes (
           name, type, node_class, 
           node_bandwidth_limit, traffic_multiplier, bandwidthlimit_resetday,
-          node_config, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          node_config, xray_rule_ids, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const configValue = this.normalizeNodeConfigForStorage(nodeData.node_config, {
@@ -2023,12 +2281,15 @@ export class AdminAPI {
             : 1,
           nodeData.bandwidthlimit_resetday || 1,
           configValue,
+          JSON.stringify(xrayRuleIds),
           nodeData.status || 1
         )
         .run();
 
       // 清除节点缓存
       await this.cache.deleteByPrefix("node_config_");
+      await this.cache.deleteByPrefix("xray_rules_");
+      await this.cache.deleteByPrefix("dns_rules_");
       
       // 强制更新所有节点的时间戳以确保ETAG更新
       await this.db.db.prepare(`
@@ -2053,6 +2314,7 @@ export class AdminAPI {
       if (!adminCheck.success) {
         return errorResponse(adminCheck.message, 401);
       }
+      await this.db.ensureXrayRuleSchema();
 
       const url = new URL(request.url);
       const nodeId = parseInt(url.pathname.split("/").pop());
@@ -2084,6 +2346,16 @@ export class AdminAPI {
         }
       }
 
+      if (updateData.xray_rule_ids !== undefined) {
+        const xrayRuleIds = this.normalizeRuleIds(updateData.xray_rule_ids);
+        const xrayRuleValidation = await this.validateNodeXrayRuleIds(xrayRuleIds);
+        if (!xrayRuleValidation.success) {
+          return errorResponse(xrayRuleValidation.message || "路由规则绑定无效", 409);
+        }
+        updates.push("xray_rule_ids = ?");
+        values.push(JSON.stringify(xrayRuleIds));
+      }
+
       // 处理节点配置
       if (updateData.node_config !== undefined && updateData.node_config !== null) {
         updates.push("node_config = ?");
@@ -2112,6 +2384,8 @@ export class AdminAPI {
 
       // 清除节点缓存
       await this.cache.delete(`node_config_${nodeId}`);
+      await this.cache.deleteByPrefix("xray_rules_");
+      await this.cache.deleteByPrefix("dns_rules_");
       
       // 强制更新所有节点的时间戳以确保其他节点的ETAG也更新
       await this.db.db.prepare(`
@@ -2132,7 +2406,8 @@ export class AdminAPI {
         ...updatedNode,
         server: client.server || "",
         server_port: client.port || cfg.port || 443,
-        tls_host: client.tls_host || cfg.host || ""
+        tls_host: client.tls_host || cfg.host || "",
+        xray_rule_ids: this.normalizeRuleIds(updatedNode?.xray_rule_ids)
       });
     } catch (error) {
       return errorResponse(error.message, 500);
@@ -2146,6 +2421,7 @@ export class AdminAPI {
       if (!adminCheck.success) {
         return errorResponse(adminCheck.message, 401);
       }
+      await this.db.ensureXrayRuleSchema();
 
       const url = new URL(request.url);
       const nodeId = parseInt(url.pathname.split("/").pop());
@@ -2157,6 +2433,8 @@ export class AdminAPI {
 
       // 清除节点缓存
       await this.cache.delete(`node_config_${nodeId}`);
+      await this.cache.deleteByPrefix("xray_rules_");
+      await this.cache.deleteByPrefix("dns_rules_");
       
       // 强制更新其他节点的时间戳以确保ETAG更新
       await this.db.db.prepare(`
@@ -2215,6 +2493,8 @@ export class AdminAPI {
           for (const nodeId of node_ids) {
             await this.cache.delete(`node_config_${nodeId}`);
           }
+          await this.cache.deleteByPrefix("xray_rules_");
+          await this.cache.deleteByPrefix("dns_rules_");
           break;
       }
 
@@ -3847,32 +4127,48 @@ export class AdminAPI {
     }
   }
 
-  // ===== DNS 规则管理 =====
+  // ===== Xray 规则管理 =====
 
   /**
-   * 获取 DNS 规则
-   * GET /api/admin/dns-rules
+   * 获取 Xray 规则
+   * GET /api/admin/xray-rules
    */
-  async getDnsRules(request) {
+  async getXrayRules(request) {
     try {
       const adminCheck = await this.validateAdmin(request);
       if (!adminCheck.success) {
         return errorResponse(adminCheck.message, 401);
       }
+      await this.db.ensureXrayRuleSchema();
 
       const url = new URL(request.url);
       const page = parseInt(url.searchParams.get("page")) || 1;
       const limitParam = parseInt(url.searchParams.get("limit")) || 20;
       const safeLimit = limitParam > 0 ? limitParam : 20;
-      const search = url.searchParams.get("search");
+      const search = ensureString(url.searchParams.get("search")).trim();
+      const ruleType = this.normalizeXrayRuleType(url.searchParams.get("rule_type"));
+      const ruleFormat = this.normalizeXrayRuleFormat(url.searchParams.get("rule_format"));
+      const enabledParam = url.searchParams.get("enabled");
       const offset = (page - 1) * safeLimit;
 
-      let whereConditions = [];
-      let params = [];
+      const whereConditions: string[] = [];
+      const params: Array<string | number> = [];
 
       if (search) {
         whereConditions.push("(name LIKE ? OR description LIKE ?)");
         params.push(`%${search}%`, `%${search}%`);
+      }
+      if (ruleType) {
+        whereConditions.push("rule_type = ?");
+        params.push(ruleType);
+      }
+      if (ruleFormat) {
+        whereConditions.push("rule_format = ?");
+        params.push(ruleFormat);
+      }
+      if (enabledParam !== null && enabledParam !== undefined && enabledParam !== "") {
+        whereConditions.push("enabled = ?");
+        params.push(ensureNumber(enabledParam) === 1 ? 1 : 0);
       }
 
       const whereClause = whereConditions.length > 0
@@ -3880,22 +4176,47 @@ export class AdminAPI {
         : "";
 
       const totalRow = await this.db.db
-        .prepare(`SELECT COUNT(*) as total FROM dns_rules${whereClause}`)
+        .prepare(`SELECT COUNT(*) as total FROM xray_rules${whereClause}`)
         .bind(...params)
         .first<CountRow>();
       const totalCount = ensureNumber(totalRow?.total);
 
       const rulesResult = await this.db.db
-        .prepare(`SELECT 
-          id, name, description, rule_json, node_ids, enabled, created_at, updated_at
-         FROM dns_rules${whereClause}
-         ORDER BY id ASC
-         LIMIT ? OFFSET ?`)
+        .prepare(
+          `
+          SELECT
+            id, name, description, rule_type, rule_format, rule_content, rule_json,
+            enabled, created_at, updated_at
+          FROM xray_rules${whereClause}
+          ORDER BY id ASC
+          LIMIT ? OFFSET ?
+        `
+        )
         .bind(...params, safeLimit, offset)
-        .all();
+        .all<Record<string, unknown>>();
+
+      const rows = rulesResult.results ?? [];
+      const ruleIds = rows.map((item) => ensureNumber(item.id)).filter((id) => id > 0);
+      const nodeIdsMap = await this.collectRuleNodeIdsMap(ruleIds);
+      const data = rows.map((item) => {
+        const id = ensureNumber(item.id);
+        return {
+          id,
+          name: ensureString(item.name),
+          description: ensureString(item.description),
+          rule_type: ensureString(item.rule_type).toLowerCase(),
+          rule_format: ensureString(item.rule_format).toLowerCase(),
+          rule_content: ensureString(item.rule_content),
+          rule_json: ensureString(item.rule_json),
+          node_ids: nodeIdsMap.get(id) ?? [],
+          enabled: ensureNumber(item.enabled, 1),
+          created_at: item.created_at ?? null,
+          updated_at: item.updated_at ?? null
+        };
+      });
 
       return successResponse({
-        data: rulesResult.results ?? [],
+        data,
         total: totalCount,
         pagination: {
           total: totalCount,
@@ -3906,82 +4227,120 @@ export class AdminAPI {
       });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      console.error("获取DNS规则失败:", err);
+      console.error("获取Xray规则失败:", err);
       return errorResponse(err.message, 500);
     }
   }
 
   /**
-   * 创建 DNS 规则
-   * POST /api/admin/dns-rules
+   * 创建 Xray 规则
+   * POST /api/admin/xray-rules
    */
-  async createDnsRule(request) {
+  async createXrayRule(request) {
     try {
       const adminCheck = await this.validateAdmin(request);
       if (!adminCheck.success) {
         return errorResponse(adminCheck.message, 401);
       }
+      await this.db.ensureXrayRuleSchema();
 
       const data = await request.json();
-      const { name, description, rule_json, node_ids, enabled } = data || {};
-
+      const name = ensureString(data?.name).trim();
+      const description = ensureString(data?.description);
+      const enabled = ensureNumber(data?.enabled, 1) === 1 ? 1 : 0;
+      const nodeIdList = this.normalizeNodeIds(data?.node_ids);
       if (!name) {
         return errorResponse("缺少规则名称", 400);
       }
 
-      const parsedRuleJson = this.normalizeRuleJson(rule_json);
-      if (!parsedRuleJson.success) {
-        return errorResponse(parsedRuleJson.message, 400);
+      const normalizedRulePayload = this.normalizeXrayRulePayload(
+        data?.rule_type ?? "dns",
+        data?.rule_format ?? "json",
+        data?.rule_content ?? data?.rule_json,
+        data?.rule_json
+      );
+      if (!normalizedRulePayload.success || !normalizedRulePayload.value) {
+        return errorResponse(normalizedRulePayload.message || "规则内容无效", 400);
       }
 
-      const nodeIdList = this.normalizeNodeIds(node_ids);
-      if (nodeIdList.length === 0) {
-        return errorResponse("请绑定至少一个节点", 400);
+      const typeConflicts = await this.findXrayRuleTypeConflicts(
+        nodeIdList,
+        normalizedRulePayload.value.rule_type
+      );
+      if (typeConflicts.length > 0) {
+        return errorResponse("同一节点不能绑定多个同类型规则", 409, { conflicts: typeConflicts });
       }
 
-      const conflict = await this.findDnsRuleConflicts(nodeIdList);
-      if (conflict.length > 0) {
-        return errorResponse("节点已被其他DNS规则绑定", 409, { conflicts: conflict });
+      const result = await this.db.db
+        .prepare(
+          `
+          INSERT INTO xray_rules (
+            name, description, rule_type, rule_format, rule_content, rule_json, enabled, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'))
+        `
+        )
+        .bind(
+          name,
+          description,
+          normalizedRulePayload.value.rule_type,
+          normalizedRulePayload.value.rule_format,
+          normalizedRulePayload.value.rule_content,
+          normalizedRulePayload.value.rule_json,
+          enabled
+        )
+        .run();
+
+      const ruleId = getLastRowId(result);
+      if (ruleId <= 0) {
+        return errorResponse("创建规则失败", 500);
       }
 
-      const result = await this.db.db.prepare(`
-        INSERT INTO dns_rules (name, description, rule_json, node_ids, enabled, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now', '+8 hours'), datetime('now', '+8 hours'))
-      `).bind(
-        name,
-        description || '',
-        parsedRuleJson.value,
-        JSON.stringify(nodeIdList),
-        enabled !== undefined ? enabled : 1
-      ).run();
-
-      const newRule = await this.db.db.prepare(
-        "SELECT * FROM dns_rules WHERE id = ?"
-      ).bind(result.meta.last_row_id).first();
-
+      await this.syncXrayRuleBindings(ruleId, nodeIdList);
+      await this.cache.deleteByPrefix("xray_rules_");
       await this.cache.deleteByPrefix("dns_rules_");
-      return successResponse(newRule);
+
+      const newRule = await this.db.db
+        .prepare(
+          `
+          SELECT
+            id, name, description, rule_type, rule_format, rule_content, rule_json,
+            enabled, created_at, updated_at
+          FROM xray_rules
+          WHERE id = ?
+        `
+        )
+        .bind(ruleId)
+        .first<Record<string, unknown>>();
+
+      return successResponse({
+        ...newRule,
+        node_ids: nodeIdList
+      });
     } catch (error) {
-      console.error("创建DNS规则失败:", error);
+      console.error("创建Xray规则失败:", error);
       return errorResponse(error.message, 500);
     }
   }
 
   /**
-   * 更新 DNS 规则
-   * PUT /api/admin/dns-rules/:id
+   * 更新 Xray 规则
+   * PUT /api/admin/xray-rules/:id
    */
-  async updateDnsRule(request) {
+  async updateXrayRule(request) {
     try {
       const adminCheck = await this.validateAdmin(request);
       if (!adminCheck.success) {
         return errorResponse(adminCheck.message, 401);
       }
+      await this.db.ensureXrayRuleSchema();
 
       const url = new URL(request.url);
-      const ruleId = url.pathname.split('/').pop();
+      const ruleId = ensureNumber(url.pathname.split('/').pop());
       const data = await request.json();
-      const { name, description, rule_json, node_ids, enabled } = data || {};
+      const name = ensureString(data?.name).trim();
+      const description = ensureString(data?.description);
+      const enabled = ensureNumber(data?.enabled, 1) === 1 ? 1 : 0;
 
       if (!ruleId) {
         return errorResponse("ID 无效", 400);
@@ -3990,69 +4349,113 @@ export class AdminAPI {
         return errorResponse("缺少规则名称", 400);
       }
 
-      const parsedRuleJson = this.normalizeRuleJson(rule_json);
-      if (!parsedRuleJson.success) {
-        return errorResponse(parsedRuleJson.message, 400);
+      const normalizedRulePayload = this.normalizeXrayRulePayload(
+        data?.rule_type ?? "dns",
+        data?.rule_format ?? "json",
+        data?.rule_content ?? data?.rule_json,
+        data?.rule_json
+      );
+      if (!normalizedRulePayload.success || !normalizedRulePayload.value) {
+        return errorResponse(normalizedRulePayload.message || "规则内容无效", 400);
       }
 
-      const nodeIdList = this.normalizeNodeIds(node_ids);
-      if (nodeIdList.length === 0) {
-        return errorResponse("请绑定至少一个节点", 400);
+      const hasNodeBindingInput = data?.node_ids !== undefined;
+      const nodeIdList = hasNodeBindingInput ? this.normalizeNodeIds(data?.node_ids) : null;
+      if (nodeIdList) {
+        const typeConflicts = await this.findXrayRuleTypeConflicts(
+          nodeIdList,
+          normalizedRulePayload.value.rule_type,
+          ruleId
+        );
+        if (typeConflicts.length > 0) {
+          return errorResponse("同一节点不能绑定多个同类型规则", 409, { conflicts: typeConflicts });
+        }
       }
 
-      const conflict = await this.findDnsRuleConflicts(nodeIdList, Number(ruleId));
-      if (conflict.length > 0) {
-        return errorResponse("节点已被其他DNS规则绑定", 409, { conflicts: conflict });
+      await this.db.db
+        .prepare(
+          `
+          UPDATE xray_rules
+          SET name = ?, description = ?, rule_type = ?, rule_format = ?, rule_content = ?, rule_json = ?, enabled = ?,
+              updated_at = datetime('now', '+8 hours')
+          WHERE id = ?
+        `
+        )
+        .bind(
+          name,
+          description,
+          normalizedRulePayload.value.rule_type,
+          normalizedRulePayload.value.rule_format,
+          normalizedRulePayload.value.rule_content,
+          normalizedRulePayload.value.rule_json,
+          enabled,
+          ruleId
+        )
+        .run();
+
+      if (nodeIdList) {
+        await this.syncXrayRuleBindings(ruleId, nodeIdList);
       }
 
-      await this.db.db.prepare(`
-        UPDATE dns_rules 
-        SET name = ?, description = ?, rule_json = ?, node_ids = ?, enabled = ?, 
-            updated_at = datetime('now', '+8 hours')
-        WHERE id = ?
-      `).bind(
-        name,
-        description || '',
-        parsedRuleJson.value,
-        JSON.stringify(nodeIdList),
-        enabled !== undefined ? enabled : 1,
-        ruleId
-      ).run();
-
-      const updatedRule = await this.db.db.prepare(
-        "SELECT * FROM dns_rules WHERE id = ?"
-      ).bind(ruleId).first();
-
+      await this.cache.deleteByPrefix("xray_rules_");
       await this.cache.deleteByPrefix("dns_rules_");
-      return successResponse(updatedRule);
+
+      const updatedRule = await this.db.db
+        .prepare(
+          `
+          SELECT
+            id, name, description, rule_type, rule_format, rule_content, rule_json,
+            enabled, created_at, updated_at
+          FROM xray_rules
+          WHERE id = ?
+        `
+        )
+        .bind(ruleId)
+        .first<Record<string, unknown>>();
+      if (!updatedRule) {
+        return errorResponse("规则不存在", 404);
+      }
+
+      const nodeIdsMap = await this.collectRuleNodeIdsMap([ruleId]);
+      return successResponse({
+        ...updatedRule,
+        node_ids: nodeIdsMap.get(ruleId) ?? []
+      });
     } catch (error) {
-      console.error("更新DNS规则失败:", error);
+      console.error("更新Xray规则失败:", error);
       return errorResponse(error.message, 500);
     }
   }
 
   /**
-   * 删除 DNS 规则
-   * DELETE /api/admin/dns-rules/:id
+   * 删除 Xray 规则
+   * DELETE /api/admin/xray-rules/:id
    */
-  async deleteDnsRule(request) {
+  async deleteXrayRule(request) {
     try {
       const adminCheck = await this.validateAdmin(request);
       if (!adminCheck.success) {
         return errorResponse(adminCheck.message, 401);
       }
+      await this.db.ensureXrayRuleSchema();
 
       const url = new URL(request.url);
-      const ruleId = url.pathname.split('/').pop();
+      const ruleId = ensureNumber(url.pathname.split('/').pop());
+      if (!ruleId) {
+        return errorResponse("ID 无效", 400);
+      }
 
-      await this.db.db.prepare(
-        "DELETE FROM dns_rules WHERE id = ?"
-      ).bind(ruleId).run();
+      await this.removeXrayRuleBindings(ruleId);
+      await this.db.db
+        .prepare("DELETE FROM xray_rules WHERE id = ?")
+        .bind(ruleId)
+        .run();
 
+      await this.cache.deleteByPrefix("xray_rules_");
       await this.cache.deleteByPrefix("dns_rules_");
-      return successResponse({ message: "DNS规则删除成功" });
+      return successResponse({ message: "Xray规则删除成功" });
     } catch (error) {
-      console.error("删除DNS规则失败:", error);
+      console.error("删除Xray规则失败:", error);
       return errorResponse(error.message, 500);
     }
   }

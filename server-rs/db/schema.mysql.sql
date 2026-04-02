@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS nodes (
   traffic_multiplier DECIMAL(10,4) DEFAULT 1 COMMENT '流量倍率（扣费时的倍数）',
   bandwidthlimit_resetday INT DEFAULT 1 COMMENT '每月流量重置日（1-31）',
   node_config JSON NOT NULL COMMENT '节点配置 JSON',
+  xray_rule_ids JSON NULL COMMENT '绑定路由规则 ID 列表',
   status TINYINT DEFAULT 1 COMMENT '节点状态（0 禁用，1 启用）',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
@@ -77,15 +78,18 @@ CREATE TABLE IF NOT EXISTS audit_rules (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS dns_rules (
-  id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT 'DNS 规则 ID',
+CREATE TABLE IF NOT EXISTS xray_rules (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT 'Xray 规则 ID',
   name VARCHAR(255) NOT NULL COMMENT '规则名称',
   description TEXT COMMENT '规则描述',
-  rule_json JSON NOT NULL COMMENT '规则 JSON',
+  rule_type VARCHAR(32) NOT NULL COMMENT '规则类型（dns/routing/outbounds）',
+  rule_format VARCHAR(16) NOT NULL COMMENT '规则格式（json/yaml）',
+  rule_content LONGTEXT NOT NULL COMMENT '规则原始内容',
+  rule_json JSON NOT NULL COMMENT '规则标准化 JSON',
   enabled TINYINT DEFAULT 1 COMMENT '是否启用（1 启用）',
-  node_ids JSON NOT NULL COMMENT '绑定节点 ID 列表',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  INDEX idx_xray_rules_type_enabled (rule_type, enabled)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS white_list (

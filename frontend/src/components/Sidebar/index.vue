@@ -161,7 +161,7 @@ const adminRoutes: MenuRoute[] = [
     title: '路由系统',
     children: [
       { path: '/admin/audit-rules', name: 'admin-audit-rules', icon: 'admin-audit-rules', title: '审计规则' },
-      { path: '/admin/dns-rules', name: 'admin-dns-rules', icon: 'admin-dns-rules', title: 'DNS规则' },
+      { path: '/admin/xray-rules', name: 'admin-xray-rules', icon: 'admin-xray-rules', title: '路由管理' },
       { path: '/admin/whitelist', name: 'admin-whitelist', icon: 'admin-whitelist', title: '审计白名单' },
       { path: '/admin/audit-logs', name: 'admin-audit-logs', icon: 'admin-audit-logs', title: '审计记录' }
     ]

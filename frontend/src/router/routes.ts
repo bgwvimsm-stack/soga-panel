@@ -301,11 +301,11 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
-        path: "dns-rules",
-        name: "AdminDnsRules",
-        component: () => import("@/views/admin/dns-rules.vue"),
+        path: "xray-rules",
+        name: "AdminXrayRules",
+        component: () => import("@/views/admin/xray-rules.vue"),
         meta: {
-          title: "DNS规则",
+          title: "路由管理",
           requiresAuth: true,
           requiresAdmin: true
         }
