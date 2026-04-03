@@ -40,6 +40,7 @@ struct CreateNodeRequest {
     tls_host: Option<String>,
     ech_key: Option<String>,
     ech_config: Option<String>,
+    xray_rule_ids: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -53,6 +54,7 @@ struct UpdateNodeRequest {
     bandwidthlimit_resetday: Option<i64>,
     node_config: Option<Value>,
     status: Option<i64>,
+    xray_rule_ids: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -128,6 +130,7 @@ async fn get_nodes(
       CAST(traffic_multiplier AS DOUBLE) AS traffic_multiplier,
       bandwidthlimit_resetday,
       CAST(node_config AS CHAR) AS node_config,
+      CAST(xray_rule_ids AS CHAR) AS xray_rule_ids,
       status,
       created_at,
       updated_at
@@ -201,13 +204,22 @@ async fn post_node(
     let bandwidth_limit = body.node_bandwidth_limit.unwrap_or(0);
     let reset_day = body.bandwidthlimit_resetday.unwrap_or(1);
     let multiplier = normalize_multiplier(body.traffic_multiplier);
+    let xray_rule_ids = match normalize_rule_ids(body.xray_rule_ids) {
+        Ok(value) => value,
+        Err(message) => return error(StatusCode::BAD_REQUEST, &message, None),
+    };
+    if let Err(message) = validate_node_xray_rule_ids(&state, &xray_rule_ids).await {
+        return error(StatusCode::CONFLICT, &message, None);
+    }
+    let xray_rule_ids_json =
+        serde_json::to_string(&xray_rule_ids).unwrap_or_else(|_| "[]".to_string());
 
     let result = sqlx::query(
     r#"
     INSERT INTO nodes
-      (name, type, node_class, node_bandwidth_limit, traffic_multiplier, bandwidthlimit_resetday, node_config, status)
+      (name, type, node_class, node_bandwidth_limit, traffic_multiplier, bandwidthlimit_resetday, node_config, xray_rule_ids, status)
     VALUES
-      (?, ?, ?, ?, ?, ?, ?, ?)
+      (?, ?, ?, ?, ?, ?, ?, ?, ?)
     "#
   )
   .bind(body.name.trim())
@@ -217,6 +229,7 @@ async fn post_node(
   .bind(multiplier)
   .bind(reset_day)
   .bind(node_config)
+  .bind(xray_rule_ids_json)
   .bind(status)
   .execute(&state.db)
   .await;
@@ -224,6 +237,9 @@ async fn post_node(
     if let Err(err) = result {
         return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
     }
+
+    cache_delete_by_prefix(&state, "node_config_").await;
+    cache_delete_by_prefix(&state, "xray_rules_").await;
 
     success(Value::Null, "节点已创建").into_response()
 }
@@ -276,6 +292,19 @@ async fn put_node(
         updates.push("node_config = ?".to_string());
         params.push(SqlParam::String(normalize_node_config(value)));
     }
+    if body.xray_rule_ids.is_some() {
+        let xray_rule_ids = match normalize_rule_ids(body.xray_rule_ids) {
+            Ok(value) => value,
+            Err(message) => return error(StatusCode::BAD_REQUEST, &message, None),
+        };
+        if let Err(message) = validate_node_xray_rule_ids(&state, &xray_rule_ids).await {
+            return error(StatusCode::CONFLICT, &message, None);
+        }
+        updates.push("xray_rule_ids = ?".to_string());
+        params.push(SqlParam::String(
+            serde_json::to_string(&xray_rule_ids).unwrap_or_else(|_| "[]".to_string()),
+        ));
+    }
 
     if updates.is_empty() {
         return error(StatusCode::BAD_REQUEST, "没有需要更新的字段", None);
@@ -296,6 +325,9 @@ async fn put_node(
         }
         Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None),
     }
+
+    cache_delete_by_prefix(&state, "node_config_").await;
+    cache_delete_by_prefix(&state, "xray_rules_").await;
 
     success(Value::Null, "节点已更新").into_response()
 }
@@ -491,6 +523,9 @@ async fn delete_node(
         Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None),
     }
 
+    cache_delete_by_prefix(&state, "node_config_").await;
+    cache_delete_by_prefix(&state, "xray_rules_").await;
+
     success(Value::Null, "节点已删除").into_response()
 }
 
@@ -597,13 +632,192 @@ fn normalize_multiplier(value: Option<f64>) -> f64 {
     }
 }
 
+fn normalize_rule_ids(value: Option<Value>) -> Result<Vec<i64>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+
+    let raw_list: Vec<i64> = match value {
+        Value::Array(items) => items
+            .into_iter()
+            .filter_map(|item| match item {
+                Value::Number(num) => num.as_i64(),
+                Value::String(text) => text.trim().parse::<i64>().ok(),
+                _ => None,
+            })
+            .collect(),
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                Vec::new()
+            } else if let Ok(parsed) = serde_json::from_str::<Value>(trimmed) {
+                match parsed {
+                    Value::Array(items) => items
+                        .into_iter()
+                        .filter_map(|item| match item {
+                            Value::Number(num) => num.as_i64(),
+                            Value::String(text) => text.trim().parse::<i64>().ok(),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                }
+            } else {
+                trimmed
+                    .split(',')
+                    .filter_map(|item| item.trim().parse::<i64>().ok())
+                    .collect()
+            }
+        }
+        Value::Null => Vec::new(),
+        _ => return Err("xray_rule_ids 格式无效".to_string()),
+    };
+
+    let mut unique = Vec::new();
+    for item in raw_list {
+        if item > 0 && !unique.contains(&item) {
+            unique.push(item);
+        }
+    }
+    Ok(unique)
+}
+
+fn parse_rule_ids(raw: Option<&str>) -> Vec<i64> {
+    let raw = raw.unwrap_or("[]");
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    if let Ok(Value::Array(items)) = serde_json::from_str::<Value>(trimmed) {
+        let mut ids: Vec<i64> = items
+            .into_iter()
+            .filter_map(|item| match item {
+                Value::Number(num) => num.as_i64(),
+                Value::String(text) => text.trim().parse::<i64>().ok(),
+                _ => None,
+            })
+            .filter(|id| *id > 0)
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        return ids;
+    }
+
+    let mut ids: Vec<i64> = trimmed
+        .split(',')
+        .filter_map(|item| item.trim().parse::<i64>().ok())
+        .filter(|id| *id > 0)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+async fn validate_node_xray_rule_ids(state: &AppState, rule_ids: &[i64]) -> Result<(), String> {
+    if rule_ids.is_empty() {
+        return Ok(());
+    }
+
+    let placeholders = rule_ids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<&str>>()
+        .join(",");
+    let sql = format!("SELECT id, rule_type, enabled FROM xray_rules WHERE id IN ({placeholders})");
+    let mut query = sqlx::query(&sql);
+    for id in rule_ids {
+        query = query.bind(id);
+    }
+    let rows = query
+        .fetch_all(&state.db)
+        .await
+        .map_err(|err| err.to_string())?;
+    if rows.len() != rule_ids.len() {
+        return Err("存在不存在的路由规则".to_string());
+    }
+
+    let mut type_set = std::collections::HashSet::<String>::new();
+    for row in rows {
+        let enabled = row
+            .try_get::<Option<i64>, _>("enabled")
+            .unwrap_or(Some(1))
+            .unwrap_or(1);
+        if enabled != 1 {
+            return Err("存在已禁用的路由规则，无法绑定".to_string());
+        }
+
+        let rule_type = row
+            .try_get::<Option<String>, _>("rule_type")
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+            .to_lowercase();
+        if rule_type != "dns" && rule_type != "routing" && rule_type != "outbounds" {
+            return Err("存在无效的路由规则类型".to_string());
+        }
+        if type_set.contains(&rule_type) {
+            return Err("同一节点不能绑定多个同类型规则".to_string());
+        }
+        type_set.insert(rule_type);
+    }
+
+    Ok(())
+}
+
+fn ech_allowed_by_tls_type(config: &serde_json::Map<String, Value>) -> bool {
+    match config.get("tls_type").and_then(|value| value.as_str()) {
+        Some(tls_type) if !tls_type.trim().is_empty() => {
+            tls_type.trim().eq_ignore_ascii_case("tls")
+        }
+        _ => true,
+    }
+}
+
+fn strip_ech_when_not_tls(value: &mut Value) {
+    let Some(root) = value.as_object_mut() else {
+        return;
+    };
+
+    let has_structured = root.get("basic").and_then(Value::as_object).is_some()
+        || root.get("config").and_then(Value::as_object).is_some()
+        || root.get("client").and_then(Value::as_object).is_some();
+
+    if has_structured {
+        let ech_allowed = root
+            .get("config")
+            .and_then(Value::as_object)
+            .map(ech_allowed_by_tls_type)
+            .unwrap_or(true);
+        if !ech_allowed {
+            if let Some(config) = root.get_mut("config").and_then(Value::as_object_mut) {
+                config.remove("ech");
+            }
+            if let Some(client) = root.get_mut("client").and_then(Value::as_object_mut) {
+                client.remove("ech");
+            }
+        }
+        return;
+    }
+
+    if !ech_allowed_by_tls_type(root) {
+        root.remove("ech");
+    }
+}
+
 fn normalize_node_config(value: Value) -> String {
     match value {
         Value::String(raw) => match serde_json::from_str::<Value>(&raw) {
-            Ok(parsed) => parsed.to_string(),
+            Ok(mut parsed) => {
+                strip_ech_when_not_tls(&mut parsed);
+                parsed.to_string()
+            }
             Err(_) => raw,
         },
-        other => other.to_string(),
+        mut other => {
+            strip_ech_when_not_tls(&mut other);
+            other.to_string()
+        }
     }
 }
 
@@ -695,6 +909,10 @@ fn map_node_row(row: sqlx::mysql::MySqlRow) -> Value {
         .try_get::<Option<String>, _>("node_config")
         .ok()
         .flatten();
+    let raw_rule_ids = row
+        .try_get::<Option<String>, _>("xray_rule_ids")
+        .ok()
+        .flatten();
     let (client, config) = parse_node_config(raw_config.as_deref());
     let mut server = read_string(&client, "server");
     if server.is_empty() {
@@ -763,6 +981,7 @@ fn map_node_row(row: sqlx::mysql::MySqlRow) -> Value {
       "traffic_multiplier": row.try_get::<Option<f64>, _>("traffic_multiplier").unwrap_or(Some(1.0)).unwrap_or(1.0),
       "bandwidthlimit_resetday": row.try_get::<Option<i64>, _>("bandwidthlimit_resetday").unwrap_or(Some(1)).unwrap_or(1),
       "node_config": normalized_config,
+      "xray_rule_ids": parse_rule_ids(raw_rule_ids.as_deref()),
       "status": row.try_get::<Option<i64>, _>("status").unwrap_or(Some(0)).unwrap_or(0),
       "created_at": row.try_get::<Option<chrono::NaiveDateTime>, _>("created_at").ok().flatten().map(format_datetime),
       "updated_at": row.try_get::<Option<chrono::NaiveDateTime>, _>("updated_at").ok().flatten().map(format_datetime)

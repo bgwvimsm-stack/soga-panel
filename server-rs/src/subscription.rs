@@ -842,8 +842,9 @@ fn parse_node_config(node_config: &Value) -> (Value, Value, Value) {
         } else {
             Value::Object(map.clone())
         };
-        let client = decode_value_to_object(map.get("client").cloned().unwrap_or_else(|| json!({})))
-            .unwrap_or_else(|| json!({}));
+        let client =
+            decode_value_to_object(map.get("client").cloned().unwrap_or_else(|| json!({})))
+                .unwrap_or_else(|| json!({}));
         (basic, config, client)
     } else {
         (json!({}), json!({}), json!({}))
@@ -1052,7 +1053,7 @@ fn generate_vmess_link(
             vmess.insert("sid".to_string(), json!(short_id));
         }
     }
-    if tls_type == "tls" || tls_type == "reality" {
+    if tls_type == "tls" {
         let ech_config = resolve_ech_config(config, client);
         if !ech_config.is_empty() {
             vmess.insert("ech".to_string(), json!(ech_config));
@@ -1130,7 +1131,7 @@ fn generate_vless_link(
         let short_id = pick_random_short_id(config.get("short_ids"));
         apply_query_param(&mut params, "sid", &short_id);
     }
-    if tls_type == "tls" || tls_type == "reality" {
+    if tls_type == "tls" {
         let ech_config = resolve_ech_config(config, client);
         apply_query_param(&mut params, "ech", &ech_config);
         apply_query_param(&mut params, "echConfigList", &ech_config);
@@ -1224,9 +1225,11 @@ fn generate_trojan_link(
         let short_id = pick_random_short_id(config.get("short_ids"));
         apply_query_param(&mut params, "sid", &short_id);
     }
-    let ech_config = resolve_ech_config(config, client);
-    apply_query_param(&mut params, "ech", &ech_config);
-    apply_query_param(&mut params, "echConfigList", &ech_config);
+    if tls_type != "reality" {
+        let ech_config = resolve_ech_config(config, client);
+        apply_query_param(&mut params, "ech", &ech_config);
+        apply_query_param(&mut params, "echConfigList", &ech_config);
+    }
     apply_query_param(
         &mut params,
         "path",
@@ -1354,7 +1357,10 @@ fn generate_anytls_link(
             server
         },
     );
-    let mut params = vec![("peer".to_string(), peer), ("udp".to_string(), "1".to_string())];
+    let mut params = vec![
+        ("peer".to_string(), peer),
+        ("udp".to_string(), "1".to_string()),
+    ];
     if resolve_skip_cert_verify(config, client, false) {
         params.push(("insecure".to_string(), "1".to_string()));
     }
@@ -1407,10 +1413,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 value.insert("cipher".to_string(), json!("auto"));
                 let tls_mode = ensure_string(config.get("tls_type"));
                 let tls_enabled = tls_mode == "tls" || tls_mode == "reality";
-                value.insert(
-                    "tls".to_string(),
-                    json!(tls_enabled),
-                );
+                value.insert("tls".to_string(), json!(tls_enabled));
                 if tls_enabled {
                     value.insert(
                         "skip-cert-verify".to_string(),
@@ -1458,7 +1461,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                         )),
                     );
                 }
-                if tls_mode == "tls" || tls_mode == "reality" {
+                if tls_mode == "tls" {
                     if let Some(ech_opts) = build_clash_ech_opts(&config, &client) {
                         value.insert("ech-opts".to_string(), ech_opts);
                     }
@@ -1500,10 +1503,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 );
                 let tls_mode = ensure_string(config.get("tls_type"));
                 let tls_enabled = tls_mode == "tls" || tls_mode == "reality";
-                value.insert(
-                    "tls".to_string(),
-                    json!(tls_enabled),
-                );
+                value.insert("tls".to_string(), json!(tls_enabled));
                 if tls_enabled {
                     value.insert(
                         "skip-cert-verify".to_string(),
@@ -1554,7 +1554,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                         value.insert("servername".to_string(), json!(tls_host));
                     }
                 }
-                if tls_mode == "tls" || tls_mode == "reality" {
+                if tls_mode == "tls" {
                     if let Some(ech_opts) = build_clash_ech_opts(&config, &client) {
                         value.insert("ech-opts".to_string(), ech_opts);
                     }
@@ -1628,8 +1628,10 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                         )),
                     );
                 }
-                if let Some(ech_opts) = build_clash_ech_opts(&config, &client) {
-                    value.insert("ech-opts".to_string(), ech_opts);
+                if ensure_string(config.get("tls_type")) != "reality" {
+                    if let Some(ech_opts) = build_clash_ech_opts(&config, &client) {
+                        value.insert("ech-opts".to_string(), ech_opts);
+                    }
                 }
                 if ensure_string(config.get("stream_type")) == "ws" {
                     value.insert("network".to_string(), json!("ws"));
@@ -2276,8 +2278,10 @@ fn build_singbox_tls(
     if let Some(alpn) = normalize_alpn(config.get("alpn")) {
         tls.insert("alpn".to_string(), json!(alpn));
     }
-    if let Some(ech) = build_singbox_ech(config, client) {
-        tls.insert("ech".to_string(), ech);
+    if mode == "tls" {
+        if let Some(ech) = build_singbox_ech(config, client) {
+            tls.insert("ech".to_string(), ech);
+        }
     }
 
     if mode == "reality" {

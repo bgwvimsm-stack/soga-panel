@@ -192,7 +192,7 @@ const getPageTitle = () => {
     '/admin/login-logs': '登录记录',
     '/admin/online-ips': '在线IP',
     '/admin/audit-rules': '审计规则',
-    '/admin/dns-rules': 'DNS规则',
+    '/admin/xray-rules': '路由管理',
     '/admin/audit-logs': '审计记录',
     '/admin/whitelist': '审计白名单',
     '/admin/statistics': '系统统计',

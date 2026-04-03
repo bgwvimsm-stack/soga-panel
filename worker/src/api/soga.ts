@@ -21,8 +21,12 @@ type AuditRuleRow = {
   rule: string | null;
 };
 
-type DnsRuleRow = {
+type XrayRuleRow = {
   id: number;
+  name?: string | null;
+  rule_type: string | null;
+  rule_format: string | null;
+  rule_content: string | null;
   rule_json: string | null;
 };
 
@@ -39,6 +43,99 @@ export class SogaAPI {
     this.db = new DatabaseService(env.DB);
     this.cache = new CacheService(env.DB);
     this.env = env;
+  }
+
+  private parseXrayRuleValue(row: XrayRuleRow): { success: boolean; value?: unknown; message?: string } {
+    const rawRuleJson = ensureString(row.rule_json, "");
+    if (rawRuleJson) {
+      try {
+        return { success: true, value: JSON.parse(rawRuleJson) };
+      } catch {
+        // 继续走 fallback
+      }
+    }
+
+    const format = ensureString(row.rule_format, "").toLowerCase();
+    if (format === "yaml") {
+      const raw = ensureString(row.rule_content, "");
+      if (raw) {
+        // 兼容历史数据：若未保存解析后的 JSON，则回退返回 YAML 原文字符串
+        return { success: true, value: raw };
+      }
+    }
+
+    return { success: false, message: "Xray规则内容无效" };
+  }
+
+  private buildXrayRulesPayload(rows: XrayRuleRow[]): { success: boolean; payload?: Record<string, unknown>; status?: number; message?: string } {
+    if (!rows.length) {
+      return { success: false, status: 404, message: "Xray规则不存在" };
+    }
+
+    const payload: Record<string, unknown> = {
+      dns: {},
+      routing: {},
+      outbounds: []
+    };
+    const typeOwner = new Map<string, number>();
+
+    for (const row of rows) {
+      const ruleType = ensureString(row.rule_type, "").toLowerCase();
+      if (!["dns", "routing", "outbounds"].includes(ruleType)) {
+        continue;
+      }
+
+      if (typeOwner.has(ruleType)) {
+        return { success: false, status: 409, message: `节点已绑定多条${ruleType}规则` };
+      }
+      typeOwner.set(ruleType, ensureNumber(row.id));
+
+      const parsed = this.parseXrayRuleValue(row);
+      if (!parsed.success) {
+        return { success: false, status: 500, message: parsed.message || "Xray规则内容无效" };
+      }
+
+      if (ruleType === "outbounds") {
+        if (Array.isArray(parsed.value)) {
+          payload.outbounds = parsed.value;
+        } else {
+          // 兼容配置：允许对象自动包装为数组
+          payload.outbounds = [parsed.value];
+        }
+      } else if (ruleType === "dns") {
+        payload.dns = parsed.value;
+      } else if (ruleType === "routing") {
+        payload.routing = parsed.value;
+      }
+    }
+
+    if (!typeOwner.size) {
+      return { success: false, status: 404, message: "Xray规则不存在" };
+    }
+
+    return { success: true, payload };
+  }
+
+  private async loadXrayRulesPayload(nodeId: number): Promise<{ success: boolean; payload?: Record<string, unknown>; status?: number; message?: string }> {
+    const cacheKey = `xray_rules_${nodeId}`;
+    const cachedData = await this.cache.get(cacheKey);
+    if (typeof cachedData === "string") {
+      try {
+        const payload = JSON.parse(cachedData) as Record<string, unknown>;
+        return { success: true, payload };
+      } catch {
+        // ignore invalid cache
+      }
+    }
+
+    const rules = (await this.db.getXrayRulesByNodeId(nodeId)) as XrayRuleRow[];
+    const built = this.buildXrayRulesPayload(rules);
+    if (!built.success || !built.payload) {
+      return built;
+    }
+
+    await this.cache.set(cacheKey, JSON.stringify(built.payload), 86400);
+    return { success: true, payload: built.payload };
   }
 
   // 获取节点信息
@@ -278,8 +375,8 @@ export class SogaAPI {
     }
   }
 
-  // 获取 DNS 规则
-  async getDnsRules(request) {
+  // 获取 Xray 规则
+  async getXrayRules(request) {
     try {
       const authResult = await validateSogaAuth(request, this.env);
       if (!authResult.success) {
@@ -287,47 +384,18 @@ export class SogaAPI {
       }
 
       const nodeId = authResult.nodeId;
-      const cacheKey = `dns_rules_${nodeId}`;
-      let ruleValue: unknown | null = null;
 
-      const cachedData = await this.cache.get(cacheKey);
-      if (typeof cachedData === "string") {
-        try {
-          ruleValue = JSON.parse(cachedData);
-        } catch {
-          ruleValue = null;
-        }
+      const loaded = await this.loadXrayRulesPayload(nodeId);
+      if (!loaded.success || !loaded.payload) {
+        return errorResponse(loaded.message || "Xray规则加载失败", loaded.status || 500);
       }
 
-      if (ruleValue === null) {
-        const rules = (await this.db.getDnsRulesByNodeId(nodeId)) as DnsRuleRow[];
-        if (!rules.length) {
-          return errorResponse("DNS规则不存在", 404);
-        }
-        if (rules.length > 1) {
-          return errorResponse("节点已绑定多条DNS规则", 409);
-        }
-
-        const raw = ensureString(rules[0]?.rule_json, "");
-        if (!raw) {
-          return errorResponse("DNS规则JSON无效", 500);
-        }
-
-        try {
-          ruleValue = JSON.parse(raw);
-        } catch {
-          return errorResponse("DNS规则JSON无效", 500);
-        }
-
-        await this.cache.set(cacheKey, JSON.stringify(ruleValue), 86400);
-      }
-
-      const etag = generateETag(ruleValue);
+      const etag = generateETag(loaded.payload);
       if (isETagMatch(request, etag)) {
         return createNotModifiedResponse(etag);
       }
 
-      return createETagResponse(ruleValue, etag);
+      return createETagResponse(loaded.payload, etag);
     } catch (error) {
       return new Response(
         JSON.stringify({

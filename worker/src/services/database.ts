@@ -7,6 +7,8 @@ export class DatabaseService {
   public readonly db: D1Database;
   private registerIpColumnChecked = false;
   private registerIpColumnExists = false;
+  private xraySchemaChecked = false;
+  private xraySchemaReady = false;
 
   constructor(db: D1Database) {
     this.db = db;
@@ -52,6 +54,112 @@ export class DatabaseService {
     return this.registerIpColumnExists;
   }
 
+  private normalizeIdList(value: unknown): number[] {
+    let list: number[] = [];
+
+    if (Array.isArray(value)) {
+      list = value.map((item) => Number(item));
+    } else if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return [];
+      }
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          list = parsed.map((item) => Number(item));
+        } else {
+          list = trimmed.split(",").map((item) => Number(item.trim()));
+        }
+      } catch {
+        list = trimmed.split(",").map((item) => Number(item.trim()));
+      }
+    }
+
+    const unique = new Set<number>();
+    for (const item of list) {
+      const id = Number(item);
+      if (Number.isFinite(id) && id > 0) {
+        unique.add(id);
+      }
+    }
+    return Array.from(unique);
+  }
+
+  async ensureXrayRuleSchema() {
+    if (this.xraySchemaChecked && this.xraySchemaReady) {
+      return true;
+    }
+
+    try {
+      await this.db
+        .prepare(
+          `
+          CREATE TABLE IF NOT EXISTS xray_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            description TEXT,
+            rule_type TEXT NOT NULL CHECK (rule_type IN ('dns', 'routing', 'outbounds')),
+            rule_format TEXT NOT NULL CHECK (rule_format IN ('json', 'yaml')),
+            rule_content TEXT NOT NULL,
+            rule_json TEXT NOT NULL,
+            enabled INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+            updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
+          )
+        `
+        )
+        .run();
+
+      const info = await this.db
+        .prepare("PRAGMA table_info(nodes)")
+        .all<{ name?: string }>();
+      const hasXrayRuleIds =
+        info.results?.some((col) => {
+          const name =
+            typeof col?.name === "string"
+              ? col.name
+              : col?.name !== undefined && col?.name !== null
+              ? String(col.name)
+              : "";
+          return name === "xray_rule_ids";
+        }) ?? false;
+
+      if (!hasXrayRuleIds) {
+        await this.db
+          .prepare("ALTER TABLE nodes ADD COLUMN xray_rule_ids TEXT NOT NULL DEFAULT '[]'")
+          .run();
+      }
+
+      await this.db
+        .prepare(
+          `
+          UPDATE nodes
+          SET xray_rule_ids = '[]'
+          WHERE xray_rule_ids IS NULL OR TRIM(xray_rule_ids) = ''
+        `
+        )
+        .run();
+
+      this.xraySchemaReady = true;
+      this.xraySchemaChecked = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.includes("duplicate column name") ||
+        message.includes("already exists")
+      ) {
+        this.xraySchemaReady = true;
+        this.xraySchemaChecked = true;
+      } else {
+        console.error("ensureXrayRuleSchema error:", error);
+        this.xraySchemaReady = false;
+      }
+    }
+
+    return this.xraySchemaReady;
+  }
+
   // 获取节点信息
   async getNode(nodeId) {
     const stmt = this.db.prepare("SELECT * FROM nodes WHERE id = ?");
@@ -65,19 +173,29 @@ export class DatabaseService {
     return result.results || [];
   }
 
-  // 获取 DNS 规则（按节点）
-  async getDnsRulesByNodeId(nodeId) {
-    const stmt = this.db.prepare(`
-      SELECT id, rule_json
-      FROM dns_rules
-      WHERE enabled = 1
-        AND EXISTS (
-          SELECT 1 FROM json_each(dns_rules.node_ids) WHERE json_each.value = ?
-        )
+  // 获取 Xray 规则（按节点）
+  async getXrayRulesByNodeId(nodeId) {
+    await this.ensureXrayRuleSchema();
+
+    const node = await this.db
+      .prepare("SELECT xray_rule_ids FROM nodes WHERE id = ?")
+      .bind(nodeId)
+      .first<{ xray_rule_ids?: string } | null>();
+    const ruleIds = this.normalizeIdList(node?.xray_rule_ids ?? "[]");
+    if (ruleIds.length === 0) {
+      return [];
+    }
+
+    const placeholders = ruleIds.map(() => "?").join(", ");
+    const stmt = this.db.prepare(
+      `
+      SELECT id, name, rule_type, rule_format, rule_content, rule_json, enabled, created_at, updated_at
+      FROM xray_rules
+      WHERE enabled = 1 AND id IN (${placeholders})
       ORDER BY id ASC
-      LIMIT 2
-    `);
-    const result = await stmt.bind(nodeId).all();
+    `
+    );
+    const result = await stmt.bind(...ruleIds).all();
     return result.results || [];
   }
 
