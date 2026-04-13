@@ -44,8 +44,10 @@
                   </div>
                   <div class="announcement-content">
                     <h3 class="announcement-title">{{ announcement.title }}</h3>
-                    <div class="announcement-text" v-if="announcement.content_html" v-html="announcement.content_html"></div>
-                    <div class="announcement-text" v-else>{{ announcement.content }}</div>
+                    <div
+                      class="announcement-text"
+                      v-html="renderAnnouncementContent(announcement)"
+                    ></div>
                   </div>
                   <div class="announcement-time">
                     {{ formatAnnouncementTime(announcement.created_at) }}
@@ -163,6 +165,7 @@ import { getAnnouncements, type Announcement } from "@/api/announcement";
 import http from "@/api/http";
 import type { User as UserType } from "@/api/types";
 import { getTrafficTrends } from "@/api/user";
+import { renderMarkdown } from "@/utils/markdown";
 
 const router = useRouter();
 const userStore = useUserStore();
@@ -170,6 +173,14 @@ const user = ref<UserType | null>(getUser());
 const loading = ref(false);
 const pinnedAnnouncements = ref<Announcement[]>([]);
 const onlineDeviceCount = ref(0);
+
+const renderAnnouncementContent = (announcement: Announcement): string => {
+  const markdown = (announcement.content || "").trim();
+  if (markdown) {
+    return renderMarkdown(markdown);
+  }
+  return announcement.content_html || "";
+};
 
 // 计算已使用流量
 const usedTraffic = computed(() => {
@@ -738,6 +749,35 @@ onMounted(() => {
           font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
           font-size: 13px;
           color: #e74c3c;
+        }
+
+        :deep(pre) {
+          margin: 8px 0;
+          padding: 12px;
+          border: 1px solid #e5e7eb;
+          border-radius: 6px;
+          background-color: #f8fafc;
+          overflow-x: auto;
+
+          code {
+            background: none;
+            padding: 0;
+            color: #334155;
+          }
+        }
+
+        :deep(blockquote) {
+          margin: 8px 0;
+          padding: 6px 10px;
+          border-left: 3px solid #d1d5db;
+          background-color: #f8fafc;
+          color: #4b5563;
+        }
+
+        :deep(hr) {
+          margin: 10px 0;
+          border: 0;
+          border-top: 1px solid #e5e7eb;
         }
       }
     }
