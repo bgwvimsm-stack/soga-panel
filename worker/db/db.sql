@@ -38,6 +38,10 @@
 -- class_expire_time: 等级过期时间（UTC+8时区）
 -- bark_key: 用户的Bark通知Key，格式如 https://api.day.app/your_key/
 -- bark_enabled: 是否启用Bark通知 (0-禁用，1-启用)
+-- telegram_id: Telegram Chat ID（由 Telegram Bot /start 绑定后自动写入）
+-- telegram_enabled: 是否启用 Telegram 推送 (0-禁用，1-启用)
+-- telegram_bind_code: Telegram Bot 绑定码（用户向机器人发送 /start <code> 时使用）
+-- telegram_bind_code_expires_at: 绑定码过期时间戳（Unix 秒）
 -- register_ip: 用户注册时记录的IP地址
 -- created_at: 创建时间（UTC+8时区）
 -- updated_at: 更新时间（UTC+8时区）
@@ -78,6 +82,10 @@ CREATE TABLE
         class_expire_time DATETIME,
         bark_key TEXT,
         bark_enabled INTEGER DEFAULT 0,
+        telegram_id TEXT,
+        telegram_enabled INTEGER DEFAULT 0,
+        telegram_bind_code TEXT,
+        telegram_bind_code_expires_at INTEGER,
         two_factor_enabled INTEGER DEFAULT 0,
         two_factor_secret TEXT,
         two_factor_backup_codes TEXT,
@@ -360,8 +368,8 @@ CREATE TABLE IF NOT EXISTS announcements (
 -- 字段说明：
 -- announcement_id: 关联公告ID
 -- user_id: 接收用户ID
--- channel: 通知通道（email、bark，未来可扩展）
--- recipient: 接收地址（email地址、bark key等）
+-- channel: 通知通道（email、bark、telegram，未来可扩展）
+-- recipient: 接收地址（email地址、bark key、telegram chat id等）
 -- payload: 通知内容JSON快照，兼容不同通道
 -- status: 状态（0=待发送，1=发送中，2=发送成功，3=发送失败）
 -- attempt_count: 已尝试次数

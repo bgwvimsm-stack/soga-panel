@@ -69,7 +69,11 @@
             <li><strong>register_enabled</strong>: 0=禁用，1=开放注册，2=仅允许邀请码注册</li>
             <li><strong>default_class</strong>: 新用户默认等级，数字越大权限越高</li>
             <li><strong>register_email_verification_enabled</strong>: 1 开启注册验证码，0 可关闭此功能</li>
-            <li><strong>message_queue_page_size</strong>: 消息队列每分钟发送条数（用于邮件/Bark等通知限速）</li>
+            <li><strong>message_queue_page_size</strong>: 消息队列每分钟发送条数（用于邮件/Bark/Telegram 等通知限速）</li>
+            <li><strong>telegram_bot_token</strong>: Telegram 机器人 Token（格式如 123456:ABC...）</li>
+            <li><strong>telegram_bot_api_base</strong>: Telegram API 基础地址（默认 https://api.telegram.org）</li>
+            <li><strong>telegram_bot_username</strong>: 机器人用户名（不含 @，用于生成一键绑定链接）</li>
+            <li><strong>telegram_webhook_secret</strong>: Webhook 请求头校验密钥（可选）</li>
             <li><strong>rebate_rate</strong>: 邀请返利比例，0.1 表示 10%</li>
             <li><strong>rebate_mode</strong>: first_order=首单返利，every_order=每笔返利</li>
             <li><strong>invite_default_limit</strong>: 默认邀请码可使用次数（0 表示不限）</li>

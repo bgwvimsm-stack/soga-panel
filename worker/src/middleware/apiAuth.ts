@@ -135,6 +135,7 @@ export class APIAuthMiddleware {
     if (pathname.startsWith("/api/auth/") ||
         pathname.startsWith("/api/user/") ||
         pathname.startsWith("/api/admin/") ||
+        pathname.startsWith("/api/telegram/") ||
         pathname.startsWith("/api/announcement") ||
         pathname.startsWith("/api/announcements") ||
         pathname.startsWith("/api/packages") ||

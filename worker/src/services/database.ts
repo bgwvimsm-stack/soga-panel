@@ -7,6 +7,8 @@ export class DatabaseService {
   public readonly db: D1Database;
   private registerIpColumnChecked = false;
   private registerIpColumnExists = false;
+  private telegramColumnsChecked = false;
+  private telegramColumnsReady = false;
   private xraySchemaChecked = false;
   private xraySchemaReady = false;
 
@@ -52,6 +54,69 @@ export class DatabaseService {
       }
     }
     return this.registerIpColumnExists;
+  }
+
+  async ensureUsersTelegramColumns() {
+    if (this.telegramColumnsChecked && this.telegramColumnsReady) {
+      return true;
+    }
+
+    try {
+      const info = await this.db
+        .prepare("PRAGMA table_info(users)")
+        .all<{ name?: string }>();
+
+      const columnNames = new Set(
+        (info.results ?? []).map((col) => {
+          if (typeof col?.name === "string") return col.name;
+          if (col?.name !== undefined && col?.name !== null) return String(col.name);
+          return "";
+        })
+      );
+
+      if (!columnNames.has("telegram_id")) {
+        await this.db.prepare("ALTER TABLE users ADD COLUMN telegram_id TEXT").run();
+      }
+      if (!columnNames.has("telegram_enabled")) {
+        await this.db
+          .prepare("ALTER TABLE users ADD COLUMN telegram_enabled INTEGER DEFAULT 0")
+          .run();
+      }
+      if (!columnNames.has("telegram_bind_code")) {
+        await this.db
+          .prepare("ALTER TABLE users ADD COLUMN telegram_bind_code TEXT")
+          .run();
+      }
+      if (!columnNames.has("telegram_bind_code_expires_at")) {
+        await this.db
+          .prepare("ALTER TABLE users ADD COLUMN telegram_bind_code_expires_at INTEGER")
+          .run();
+      }
+
+      await this.db
+        .prepare(
+          `
+          UPDATE users
+          SET telegram_enabled = COALESCE(telegram_enabled, 0)
+          WHERE telegram_enabled IS NULL
+        `
+        )
+        .run();
+
+      this.telegramColumnsReady = true;
+      this.telegramColumnsChecked = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("duplicate column name")) {
+        this.telegramColumnsReady = true;
+        this.telegramColumnsChecked = true;
+      } else {
+        console.error("ensureUsersTelegramColumns error:", error);
+        this.telegramColumnsReady = false;
+      }
+    }
+
+    return this.telegramColumnsReady;
   }
 
   private normalizeIdList(value: unknown): number[] {
