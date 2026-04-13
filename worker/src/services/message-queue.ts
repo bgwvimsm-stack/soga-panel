@@ -6,7 +6,7 @@ import { getLogger, type Logger } from "../utils/logger";
 import { ensureNumber, ensureString, getChanges, toRunResult } from "../utils/d1";
 import { getUtc8Timestamp } from "../utils/crypto";
 
-type MessageChannel = "email" | "bark";
+type MessageChannel = "email" | "bark" | "telegram";
 
 type QueueMessageRow = {
   id: number;
@@ -47,7 +47,7 @@ type QueuePayload = {
   };
 };
 
-const SUPPORTED_CHANNELS: MessageChannel[] = ["email", "bark"];
+const SUPPORTED_CHANNELS: MessageChannel[] = ["email", "bark", "telegram"];
 const STATUS_PENDING = 0;
 const STATUS_PROCESSING = 1;
 const STATUS_SENT = 2;
@@ -109,6 +109,9 @@ export class MessageQueueService {
 
   async enqueueAnnouncementNotifications(input: AnnouncementQueueInput) {
     const channels = this.normalizeChannels(input.channels);
+    if (channels.includes("telegram")) {
+      await this.db.ensureUsersTelegramColumns();
+    }
     if (channels.length === 0) {
       return {
         success: true,
@@ -308,6 +311,26 @@ export class MessageQueueService {
       );
     }
 
+    if (channel === "telegram") {
+      const result = await this.db.db
+        .prepare(
+          `
+          SELECT id as user_id, telegram_id as recipient
+          FROM users
+          WHERE status = 1
+            AND telegram_enabled = 1
+            AND telegram_id IS NOT NULL
+            AND CAST(telegram_id AS TEXT) != ''
+            AND (? <= 0 OR class >= ?)
+        `
+        )
+        .bind(safeMinClass, safeMinClass)
+        .all<RecipientRow>();
+      return (result.results ?? []).filter(
+        (row) => ensureString(row.recipient).length > 0 && ensureNumber(row.user_id) > 0
+      );
+    }
+
     const result = await this.db.db
       .prepare(
         `
@@ -315,6 +338,11 @@ export class MessageQueueService {
         FROM users
         WHERE status = 1
           AND bark_enabled = 1
+          AND NOT (
+            telegram_enabled = 1
+            AND telegram_id IS NOT NULL
+            AND CAST(telegram_id AS TEXT) != ''
+          )
           AND bark_key IS NOT NULL
           AND bark_key != ''
           AND (? <= 0 OR class >= ?)
@@ -357,6 +385,11 @@ export class MessageQueueService {
       return;
     }
 
+    if (channel === "telegram") {
+      await this.sendTelegramNotification(row, payload);
+      return;
+    }
+
     throw new Error(`不支持的通知通道: ${channel}`);
   }
 
@@ -388,6 +421,7 @@ export class MessageQueueService {
     const siteUrl = payload.site_url || "";
     const title = payload.announcement?.title || "系统公告";
     const content = payload.announcement?.content || "";
+    const markdown = this.buildBarkMarkdown(content);
     const preview = this.truncate(content.replace(/\s+/g, " ").trim(), 180);
 
     let endpoint = "https://api.day.app";
@@ -408,6 +442,7 @@ export class MessageQueueService {
       body: JSON.stringify({
         title,
         body: preview || "您有一条新的公告，请登录面板查看。",
+        markdown,
         group: siteName,
         icon: siteUrl ? `${siteUrl.replace(/\/?$/, "")}/favicon.ico` : undefined,
         url: siteUrl || undefined
@@ -427,6 +462,135 @@ export class MessageQueueService {
 
     if (result && typeof result.code === "number" && result.code !== 200) {
       throw new Error(`Bark 返回错误: ${result.message || `code=${result.code}`}`);
+    }
+  }
+
+  private async sendTelegramNotification(row: QueueMessageRow, payload: QueuePayload) {
+    const token =
+      (
+        await this.configManager.getSystemConfig(
+          "telegram_bot_token",
+          ensureString(this.env.TELEGRAM_BOT_TOKEN, "")
+        )
+      )?.trim() || "";
+    if (!token) {
+      throw new Error("未配置 telegram_bot_token");
+    }
+
+    const apiBase =
+      (
+        await this.configManager.getSystemConfig(
+          "telegram_bot_api_base",
+          "https://api.telegram.org"
+        )
+      )?.trim() || "https://api.telegram.org";
+
+    const siteName = payload.site_name || "Soga Panel";
+    const siteUrl = payload.site_url || "";
+    const title = payload.announcement?.title || "系统公告";
+    const content = payload.announcement?.content || "";
+    const titleMarkdown = `*${this.escapeTelegramMarkdownV2(`【${siteName}】${title}`)}*`;
+    const bodyMarkdown = this.buildTelegramMarkdownV2(content);
+    const urlPart = siteUrl
+      ? `\n\n[打开面板](${this.escapeTelegramMarkdownV2Url(siteUrl.trim())})`
+      : "";
+    const text = bodyMarkdown
+      ? `${titleMarkdown}\n\n${bodyMarkdown}${urlPart}`
+      : `${titleMarkdown}\n\n您有一条新的公告，请登录面板查看。${urlPart}`;
+
+    const chatId = ensureString(row.recipient).trim();
+    if (!chatId) {
+      throw new Error("缺少 Telegram chat_id");
+    }
+
+    const endpoint = `${apiBase.replace(/\/+$/, "")}/bot${token}/sendMessage`;
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "User-Agent": "Soga-Panel/1.0"
+      },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        parse_mode: "MarkdownV2",
+        disable_web_page_preview: true
+      })
+    });
+
+    let result:
+      | {
+          ok?: boolean;
+          description?: string;
+          error_code?: number;
+        }
+      | null = null;
+    try {
+      result = (await response.json()) as {
+        ok?: boolean;
+        description?: string;
+        error_code?: number;
+      };
+    } catch (_error) {
+      result = null;
+    }
+
+    const description = ensureString(result?.description, "");
+    if ((!response.ok || result?.ok === false) && this.isTelegramParseError(description)) {
+      const fallbackText = this.buildTelegramPlainText(siteName, title, content, siteUrl);
+      const fallbackResponse = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "User-Agent": "Soga-Panel/1.0"
+        },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: fallbackText,
+          disable_web_page_preview: true
+        })
+      });
+
+      let fallbackResult:
+        | {
+            ok?: boolean;
+            description?: string;
+            error_code?: number;
+          }
+        | null = null;
+      try {
+        fallbackResult = (await fallbackResponse.json()) as {
+          ok?: boolean;
+          description?: string;
+          error_code?: number;
+        };
+      } catch (_error) {
+        fallbackResult = null;
+      }
+
+      if (fallbackResponse.ok && fallbackResult?.ok !== false) {
+        return;
+      }
+
+      throw new Error(
+        `Telegram MarkdownV2与纯文本均发送失败: ${
+          fallbackResult?.description || description || `HTTP ${fallbackResponse.status}`
+        }`
+      );
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `Telegram 请求失败: HTTP ${response.status}${
+          result?.description ? ` - ${result.description}` : ""
+        }`
+      );
+    }
+
+    if (result && result.ok === false) {
+      throw new Error(
+        `Telegram 返回错误: ${result.description || `code=${result.error_code ?? "unknown"}`}`
+      );
     }
   }
 
@@ -518,9 +682,171 @@ export class MessageQueueService {
       .replace(/'/g, "&#39;");
   }
 
+  private buildTelegramMarkdownV2(content: string) {
+    const normalized = ensureString(content, "").replace(/\r\n/g, "\n").trim();
+    if (!normalized) return "";
+
+    const out: string[] = [];
+    let inCodeBlock = false;
+
+    for (const line of normalized.split("\n")) {
+      const trimmed = line.trim();
+      const fenceMatch = /^```([a-zA-Z0-9_+-]*)\s*$/.exec(trimmed);
+      if (fenceMatch) {
+        if (!inCodeBlock) {
+          inCodeBlock = true;
+          const lang = ensureString(fenceMatch[1], "");
+          out.push(`\`\`\`${lang}`);
+        } else {
+          inCodeBlock = false;
+          out.push("```");
+        }
+        continue;
+      }
+
+      if (inCodeBlock) {
+        out.push(this.escapeTelegramCode(line));
+        continue;
+      }
+
+      if (!trimmed) {
+        out.push("");
+        continue;
+      }
+
+      if (/^(\*{3,}|-{3,}|_{3,})$/.test(trimmed)) {
+        out.push("────────");
+        continue;
+      }
+
+      const headingMatch = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+      if (headingMatch) {
+        out.push(`*${this.renderTelegramInlineMarkdownV2(headingMatch[2])}*`);
+        continue;
+      }
+
+      const quoteMatch = /^>\s?(.*)$/.exec(trimmed);
+      if (quoteMatch) {
+        out.push(`❝ ${this.renderTelegramInlineMarkdownV2(quoteMatch[1])}`);
+        continue;
+      }
+
+      const unorderedMatch = /^[-+*]\s+(.+)$/.exec(trimmed);
+      if (unorderedMatch) {
+        out.push(`• ${this.renderTelegramInlineMarkdownV2(unorderedMatch[1])}`);
+        continue;
+      }
+
+      const orderedMatch = /^(\d+)\.\s+(.+)$/.exec(trimmed);
+      if (orderedMatch) {
+        out.push(`${orderedMatch[1]}\\. ${this.renderTelegramInlineMarkdownV2(orderedMatch[2])}`);
+        continue;
+      }
+
+      out.push(this.renderTelegramInlineMarkdownV2(line.trimEnd()));
+    }
+
+    if (inCodeBlock) {
+      out.push("```");
+    }
+
+    return this.collapseBlankLines(out.join("\n"));
+  }
+
+  private renderTelegramInlineMarkdownV2(input: string) {
+    if (!input) return "";
+
+    const tokens: string[] = [];
+    const stash = (value: string) => {
+      const index = tokens.length;
+      tokens.push(value);
+      return `\u0000${index}\u0000`;
+    };
+
+    let text = input;
+
+    text = text.replace(/`([^`\n]+)`/g, (_match, code: string) =>
+      stash(`\`${this.escapeTelegramCode(code)}\``)
+    );
+
+    text = text.replace(
+      /\[([^\]\n]+)\]\(([^)\n]+)\)/g,
+      (_match, label: string, url: string) =>
+        stash(
+          `[${this.escapeTelegramMarkdownV2(label)}](${this.escapeTelegramMarkdownV2Url(url.trim())})`
+        )
+    );
+
+    text = text.replace(
+      /\*\*([^\n*]+)\*\*/g,
+      (_match, value: string) => stash(`*${this.escapeTelegramMarkdownV2(value)}*`)
+    );
+    text = text.replace(
+      /__([^\n_]+)__/g,
+      (_match, value: string) => stash(`*${this.escapeTelegramMarkdownV2(value)}*`)
+    );
+    text = text.replace(
+      /~~([^\n~]+)~~/g,
+      (_match, value: string) => stash(`~${this.escapeTelegramMarkdownV2(value)}~`)
+    );
+    text = text.replace(
+      /\*([^\n*]+)\*/g,
+      (_match, value: string) => stash(`_${this.escapeTelegramMarkdownV2(value)}_`)
+    );
+    text = text.replace(
+      /_([^\n_]+)_/g,
+      (_match, value: string) => stash(`_${this.escapeTelegramMarkdownV2(value)}_`)
+    );
+
+    text = this.escapeTelegramMarkdownV2(text);
+
+    return text.replace(/\u0000(\d+)\u0000/g, (_match, index: string) => {
+      return tokens[Number(index)] || "";
+    });
+  }
+
+  private escapeTelegramMarkdownV2(value: string) {
+    return ensureString(value, "").replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+  }
+
+  private escapeTelegramMarkdownV2Url(value: string) {
+    return ensureString(value, "").replace(/\\/g, "\\\\").replace(/\)/g, "\\)");
+  }
+
+  private escapeTelegramCode(value: string) {
+    return ensureString(value, "").replace(/\\/g, "\\\\").replace(/`/g, "\\`");
+  }
+
+  private collapseBlankLines(value: string) {
+    return value.replace(/\n{3,}/g, "\n\n").trim();
+  }
+
+  private isTelegramParseError(description: string) {
+    const message = ensureString(description, "").toLowerCase();
+    return (
+      message.includes("can't parse entities") ||
+      message.includes("unsupported start tag") ||
+      message.includes("unsupported end tag") ||
+      message.includes("can't find end tag") ||
+      message.includes("entity is not closed")
+    );
+  }
+
+  private buildTelegramPlainText(siteName: string, title: string, content: string, siteUrl: string) {
+    const preview = this.truncate((content || "").trim(), 3200);
+    return preview
+      ? `【${siteName}】${title}\n\n${preview}${siteUrl ? `\n\n${siteUrl}` : ""}`
+      : `【${siteName}】${title}\n\n您有一条新的公告，请登录面板查看。${siteUrl ? `\n${siteUrl}` : ""}`;
+  }
+
   private truncate(value: string, maxLength: number) {
     if (!value) return "";
     if (value.length <= maxLength) return value;
     return `${value.slice(0, maxLength)}...`;
+  }
+
+  private buildBarkMarkdown(content: string) {
+    const normalized = ensureString(content, "").replace(/\r\n/g, "\n").trim();
+    return normalized || "您有一条新的公告，请登录面板查看。";
   }
 }
