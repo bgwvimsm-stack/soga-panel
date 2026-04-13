@@ -90,7 +90,7 @@ export const manualTrafficUpdate = (): Promise<ApiResponse<null>> => {
 export const updateUserProfile = (data: {
   email?: string;
   username?: string;
-  telegram_id?: number;
+  telegram_id?: string;
 }): Promise<ApiResponse<any>> => {
   return http.put("/user/profile", data);
 };
@@ -156,6 +156,73 @@ export const updateBarkSettings = (data: {
  */
 export const testBarkNotification = (barkKey?: string): Promise<ApiResponse<{ message: string; success: boolean }>> => {
   return http.post("/user/bark-test", barkKey ? { bark_key: barkKey } : {});
+};
+
+/**
+ * 获取 Telegram 设置
+ */
+export const getTelegramSettings = (): Promise<ApiResponse<{
+  telegram_id: string;
+  telegram_id_masked: string;
+  telegram_bound: boolean;
+  telegram_enabled: boolean;
+  bind_code: string;
+  bind_code_expires_at: number;
+  bind_command: string;
+  bot_username: string;
+  start_link: string;
+}>> => {
+  return http.get("/user/telegram-settings");
+};
+
+/**
+ * 更新 Telegram 设置
+ */
+export const updateTelegramSettings = (data: {
+  telegram_enabled: boolean;
+}): Promise<ApiResponse<{ message: string }>> => {
+  return http.put("/user/telegram-settings", data);
+};
+
+/**
+ * 刷新 Telegram 绑定码
+ */
+export const refreshTelegramBindCode = (): Promise<ApiResponse<{
+  telegram_id: string;
+  telegram_id_masked: string;
+  telegram_bound: boolean;
+  telegram_enabled: boolean;
+  bind_code: string;
+  bind_code_expires_at: number;
+  bind_command: string;
+  bot_username: string;
+  start_link: string;
+}>> => {
+  return http.post("/user/telegram-bind-code");
+};
+
+/**
+ * 解绑 Telegram
+ */
+export const unbindTelegram = (): Promise<ApiResponse<{
+  telegram_id: string;
+  telegram_id_masked: string;
+  telegram_bound: boolean;
+  telegram_enabled: boolean;
+  bind_code: string;
+  bind_code_expires_at: number;
+  bind_command: string;
+  bot_username: string;
+  start_link: string;
+}>> => {
+  return http.post("/user/telegram-unbind", {});
+};
+
+/**
+ * 测试 Telegram 通知
+ */
+export const testTelegramNotification = (): Promise<ApiResponse<{ message: string; success: boolean }>> => {
+  return http.post("/user/telegram-test", {});
 };
 
 /**

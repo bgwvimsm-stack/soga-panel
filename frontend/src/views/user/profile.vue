@@ -171,21 +171,46 @@
                   <el-icon><Message /></el-icon>
                   Bark通知
                 </div>
-                <div class="security-desc">接收重要通知和流量提醒</div>
+                <div class="security-desc">接收重要通知和流量提醒（仅可启用一种推送方式）</div>
               </div>
-              <div class="bark-controls">
+              <div class="notification-controls">
                 <el-switch 
                   v-model="barkNotifications"
                   @change="updateBarkSettings"
-                  :disabled="!barkKey.trim()"
+                  :disabled="!barkKey.trim() || notificationSwitching"
                 />
                 <el-button 
                   type="text" 
                   size="small" 
                   @click="showBarkDialog = true"
-                  :class="{ 'bark-configured': barkKey.trim() }"
+                  :class="{ 'notification-configured': barkKey.trim() }"
                 >
                   {{ barkKey ? '已配置' : '配置Key' }}
+                </el-button>
+              </div>
+            </div>
+
+            <div class="security-item">
+              <div class="security-info">
+                <div class="security-title">
+                  <el-icon><ChatDotRound /></el-icon>
+                  Telegram通知
+                </div>
+                <div class="security-desc">通过 Telegram Bot 接收公告和每日流量推送（仅可启用一种推送方式）</div>
+              </div>
+              <div class="notification-controls">
+                <el-switch 
+                  v-model="telegramNotifications"
+                  @change="updateTelegramSettings"
+                  :disabled="!telegramBound || notificationSwitching"
+                />
+                <el-button 
+                  type="text" 
+                  size="small" 
+                  @click="showTelegramDialog = true"
+                  :class="{ 'notification-configured': telegramBound }"
+                >
+                  {{ telegramBound ? '已绑定' : '去绑定' }}
                 </el-button>
               </div>
             </div>
@@ -491,16 +516,89 @@
           </el-button>
           <el-button type="primary" @click="saveBarkConfig">保存</el-button>
         </span>
-</template>
+      </template>
+    </el-dialog>
+
+    <!-- Telegram 绑定对话框 -->
+    <el-dialog v-model="showTelegramDialog" title="绑定Telegram机器人" width="560px">
+      <el-form label-width="128px">
+        <el-form-item label="绑定状态">
+          <el-tag :type="telegramBound ? 'success' : 'warning'" size="small">
+            {{ telegramBound ? '已绑定' : '未绑定' }}
+          </el-tag>
+          <span v-if="telegramMaskedId" class="telegram-meta-text">Chat ID: {{ telegramMaskedId }}</span>
+        </el-form-item>
+        <el-form-item label="绑定命令">
+          <el-input
+            :model-value="telegramBindCommand"
+            readonly
+            placeholder="请先刷新绑定码"
+          />
+        </el-form-item>
+      </el-form>
+
+      <div class="form-help">
+        <p>• 第一步：复制绑定命令</p>
+        <p>• 第二步：在 Telegram 里打开机器人并发送该命令</p>
+        <p>• 第三步：收到“绑定成功”后，回到这里打开通知开关</p>
+        <p v-if="telegramBindExpireAtText">• 绑定码有效期至：{{ telegramBindExpireAtText }}</p>
+      </div>
+
+      <template #footer>
+        <div class="telegram-dialog-footer">
+          <div class="telegram-footer-group">
+            <el-button @click="showTelegramDialog = false">关闭</el-button>
+            <el-button
+              @click="refreshTelegramCode"
+              :loading="telegramCodeRefreshing"
+            >
+              刷新绑定码
+            </el-button>
+            <el-button
+              type="info"
+              @click="testTelegramBinding"
+              :loading="telegramTesting"
+              :disabled="!telegramBound"
+            >
+              测试通知
+            </el-button>
+            <el-button
+              type="danger"
+              plain
+              @click="handleUnbindTelegram"
+              :loading="telegramUnbinding"
+              :disabled="!telegramBound"
+            >
+              解绑
+            </el-button>
+          </div>
+          <div class="telegram-footer-group telegram-footer-group--right">
+            <el-button
+              type="primary"
+              @click="copyTelegramBindCommand"
+              :disabled="!telegramBindCommand"
+            >
+              复制命令
+            </el-button>
+            <el-button
+              type="success"
+              @click="openTelegramStartLink"
+              :disabled="!telegramStartLink"
+            >
+              打开机器人
+            </el-button>
+          </div>
+        </div>
+      </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed, nextTick } from "vue";
+import { ref, reactive, onMounted, onBeforeUnmount, computed, nextTick, watch } from "vue";
 import { ElMessage, ElMessageBox, type FormInstance } from "element-plus";
-import { User, Lock, Key, Message } from "@element-plus/icons-vue";
-import { changeUserPassword, getBarkSettings, updateBarkSettings as updateBarkSettingsAPI, testBarkNotification, getLoginLogs, startTwoFactorSetup, enableTwoFactor, regenerateTwoFactorBackupCodes, disableTwoFactor } from "@/api/user";
+import { User, Lock, Key, Message, ChatDotRound } from "@element-plus/icons-vue";
+import { changeUserPassword, getBarkSettings, updateBarkSettings as updateBarkSettingsAPI, testBarkNotification, getTelegramSettings, updateTelegramSettings as updateTelegramSettingsAPI, refreshTelegramBindCode, testTelegramNotification, unbindTelegram, getLoginLogs, startTwoFactorSetup, enableTwoFactor, regenerateTwoFactorBackupCodes, disableTwoFactor } from "@/api/user";
 import { getUserProfile, getPasskeyRegisterOptions, verifyPasskeyRegister } from "@/api/auth";
 import { getPasskeys, deletePasskey } from "@/api/passkey";
 import { useUserStore } from "@/store/user";
@@ -519,11 +617,38 @@ const showBarkDialog = ref(false);
 const barkKey = ref('');
 const barkKeyInput = ref('');
 const barkTesting = ref(false);
+const telegramNotifications = ref(false);
+const notificationSwitching = ref(false);
+const showTelegramDialog = ref(false);
+const telegramBound = ref(false);
+const telegramId = ref('');
+const telegramMaskedId = ref('');
+const telegramBindCode = ref('');
+const telegramBindCodeExpireAt = ref(0);
+const telegramBindCommand = ref('');
+const telegramStartLink = ref('');
+const telegramCodeRefreshing = ref(false);
+const telegramTesting = ref(false);
+const telegramUnbinding = ref(false);
+let telegramBindingPollingTimer: ReturnType<typeof setInterval> | null = null;
 const loginLogs = ref<any[]>([]);
 const loginLogsLoading = ref(false);
 const onlineIps = ref<any[]>([]);
 const onlineIpsLoading = ref(false);
 const hasTwoFactor = computed(() => Boolean(userStore.user?.two_factor_enabled));
+const telegramBindExpireAtText = computed(() => {
+  if (!telegramBindCodeExpireAt.value) return '';
+  const date = new Date(telegramBindCodeExpireAt.value * 1000);
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+});
 const twoFactorSetupDialogVisible = ref(false);
 const twoFactorDisableDialogVisible = ref(false);
 const twoFactorCodesDialogVisible = ref(false);
@@ -861,23 +986,32 @@ const changePassword = async () => {
 
 // Bark通知设置
 const updateBarkSettings = async (value: boolean) => {
-  if (!barkKey.value.trim()) {
+  if (notificationSwitching.value) return;
+  if (value && !barkKey.value.trim()) {
     ElMessage.error('请先配置Bark Key');
     barkNotifications.value = false;
     return;
   }
-  
+
+  notificationSwitching.value = true;
   try {
     await updateBarkSettingsAPI({
       bark_key: barkKey.value,
       bark_enabled: value
     });
-    ElMessage.success(`Bark通知已${value ? '开启' : '关闭'}`);
+    if (value) {
+      telegramNotifications.value = false;
+      ElMessage.success('已切换为 Bark 通知');
+    } else {
+      ElMessage.success('Bark通知已关闭');
+    }
   } catch (error) {
     console.error('更新Bark设置失败:', error);
     ElMessage.error('更新失败，请重试');
     // 回滚状态
     barkNotifications.value = !value;
+  } finally {
+    notificationSwitching.value = false;
   }
 };
 
@@ -899,6 +1033,9 @@ const saveBarkConfig = async () => {
     });
     
     barkKey.value = barkKeyInput.value;
+    if (barkNotifications.value) {
+      telegramNotifications.value = false;
+    }
     showBarkDialog.value = false;
     ElMessage.success('Bark Key配置已保存');
   } catch (error) {
@@ -930,6 +1067,193 @@ const testBarkKey = async () => {
   } finally {
     barkTesting.value = false;
   }
+};
+
+// Telegram 通知设置
+const updateTelegramSettings = async (value: boolean) => {
+  if (notificationSwitching.value) return;
+  if (value && !telegramBound.value) {
+    ElMessage.error('请先完成 Telegram Bot 绑定');
+    telegramNotifications.value = false;
+    return;
+  }
+
+  notificationSwitching.value = true;
+  try {
+    await updateTelegramSettingsAPI({
+      telegram_enabled: value
+    });
+    if (value) {
+      barkNotifications.value = false;
+      ElMessage.success('已切换为 Telegram 通知');
+    } else {
+      ElMessage.success('Telegram通知已关闭');
+    }
+  } catch (error) {
+    console.error('更新Telegram设置失败:', error);
+    ElMessage.error('更新失败，请重试');
+    telegramNotifications.value = !value;
+  } finally {
+    notificationSwitching.value = false;
+  }
+};
+
+const normalizeNotificationChannel = () => {
+  if (telegramNotifications.value && barkNotifications.value) {
+    barkNotifications.value = false;
+  }
+};
+
+const applyTelegramSettings = (
+  data: {
+  telegram_id?: string;
+  telegram_id_masked?: string;
+  telegram_bound?: boolean;
+  telegram_enabled?: boolean;
+  bind_code?: string;
+  bind_code_expires_at?: number;
+  bind_command?: string;
+  start_link?: string;
+},
+  options?: {
+    notifyOnBound?: boolean;
+  }
+) => {
+  const wasBound = telegramBound.value;
+  telegramId.value = data.telegram_id || '';
+  telegramMaskedId.value = data.telegram_id_masked || '';
+  telegramBound.value = Boolean(data.telegram_bound);
+  telegramNotifications.value = Boolean(data.telegram_enabled);
+  normalizeNotificationChannel();
+  telegramBindCode.value = data.bind_code || '';
+  telegramBindCodeExpireAt.value = Number(data.bind_code_expires_at || 0);
+  telegramBindCommand.value = data.bind_command || '';
+  telegramStartLink.value = data.start_link || '';
+  const justBound = !wasBound && telegramBound.value;
+  if (options?.notifyOnBound && justBound) {
+    ElMessage.success('Telegram 绑定成功，可开启通知开关接收消息');
+  }
+  return justBound;
+};
+
+const refreshTelegramCode = async () => {
+  telegramCodeRefreshing.value = true;
+  try {
+    const response = await refreshTelegramBindCode();
+    const justBound = applyTelegramSettings(response.data || {}, { notifyOnBound: true });
+    if (!justBound) {
+      ElMessage.success(response.message || 'Telegram 绑定码已刷新');
+    }
+  } catch (error) {
+    console.error('刷新Telegram绑定码失败:', error);
+    ElMessage.error('刷新失败，请重试');
+  } finally {
+    telegramCodeRefreshing.value = false;
+  }
+};
+
+const copyTelegramBindCommand = async () => {
+  if (!telegramBindCommand.value) {
+    ElMessage.warning('暂无可复制的绑定命令');
+    return;
+  }
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(telegramBindCommand.value);
+    } else {
+      const textarea = document.createElement('textarea');
+      textarea.value = telegramBindCommand.value;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+    }
+    ElMessage.success('绑定命令已复制');
+  } catch (error) {
+    console.error('复制Telegram绑定命令失败:', error);
+    ElMessage.error('复制失败，请手动复制命令');
+  }
+};
+
+const openTelegramStartLink = () => {
+  if (!telegramStartLink.value) {
+    ElMessage.warning('未配置机器人用户名，无法生成一键跳转链接');
+    return;
+  }
+  window.open(telegramStartLink.value, '_blank');
+};
+
+const testTelegramBinding = async () => {
+  if (!telegramBound.value) {
+    ElMessage.error('请先完成 Telegram Bot 绑定');
+    return;
+  }
+  telegramTesting.value = true;
+  try {
+    const { data } = await testTelegramNotification();
+    if (data.success) {
+      ElMessage.success(data.message || '测试通知发送成功，请检查 Telegram');
+    } else {
+      ElMessage.error(data.message || '测试失败，请检查机器人配置');
+    }
+  } catch (error) {
+    console.error('测试Telegram通知失败:', error);
+    ElMessage.error('测试失败，请检查 Telegram 绑定状态与机器人配置');
+  } finally {
+    telegramTesting.value = false;
+    loadTelegramSettings();
+  }
+};
+
+const handleUnbindTelegram = async () => {
+  if (!telegramBound.value) {
+    ElMessage.info('当前未绑定 Telegram');
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      '解绑后将停止 Telegram 公告与每日流量通知，是否继续？',
+      '确认解绑 Telegram',
+      {
+        type: 'warning',
+        confirmButtonText: '确认解绑',
+        cancelButtonText: '取消'
+      }
+    );
+  } catch {
+    return;
+  }
+
+  telegramUnbinding.value = true;
+  try {
+    const response = await unbindTelegram();
+    applyTelegramSettings(response.data || {});
+    ElMessage.success(response.message || 'Telegram 已解绑');
+  } catch (error) {
+    console.error('解绑Telegram失败:', error);
+    ElMessage.error('解绑失败，请重试');
+  } finally {
+    telegramUnbinding.value = false;
+  }
+};
+
+const stopTelegramBindingPolling = () => {
+  if (telegramBindingPollingTimer) {
+    clearInterval(telegramBindingPollingTimer);
+    telegramBindingPollingTimer = null;
+  }
+};
+
+const startTelegramBindingPolling = () => {
+  stopTelegramBindingPolling();
+  telegramBindingPollingTimer = setInterval(() => {
+    if (!showTelegramDialog.value) return;
+    loadTelegramSettings(true);
+  }, 5000);
 };
 
 const handleBindPasskey = async () => {
@@ -1034,11 +1358,33 @@ const loadBarkSettings = async () => {
     const { data } = await getBarkSettings();
     barkKey.value = data.bark_key || '';
     barkNotifications.value = data.bark_enabled;
+    normalizeNotificationChannel();
     barkKeyInput.value = barkKey.value;
   } catch (error) {
     console.error('加载Bark设置失败:', error);
   }
 };
+
+// 加载 Telegram 设置
+const loadTelegramSettings = async (notifyOnBound = false) => {
+  try {
+    const { data } = await getTelegramSettings();
+    applyTelegramSettings(data || {}, {
+      notifyOnBound: notifyOnBound && showTelegramDialog.value
+    });
+  } catch (error) {
+    console.error('加载Telegram设置失败:', error);
+  }
+};
+
+watch(showTelegramDialog, (visible) => {
+  if (visible) {
+    loadTelegramSettings(true);
+    startTelegramBindingPolling();
+  } else {
+    stopTelegramBindingPolling();
+  }
+});
 
 // 格式化日期时间
 const formatDateTime = (dateStr: string): string => {
@@ -1075,9 +1421,14 @@ onMounted(async () => {
   // 先加载用户资料确保数据是最新的
   await loadUserProfile();
   loadBarkSettings();
+  loadTelegramSettings();
   loadLoginLogs();
   loadOnlineIps();
   loadPasskeys();
+});
+
+onBeforeUnmount(() => {
+  stopTelegramBindingPolling();
 });
 </script>
 
@@ -1236,12 +1587,12 @@ onMounted(async () => {
         max-width: 240px;
       }
       
-      .bark-controls {
+      .notification-controls {
         display: flex;
         align-items: center;
         gap: 10px;
         
-        .bark-configured {
+        .notification-configured {
           color: #67c23a;
           font-weight: 500;
         }
@@ -1273,6 +1624,36 @@ onMounted(async () => {
       margin-bottom: 0;
     }
   }
+}
+
+.telegram-meta-text {
+  margin-left: 10px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.telegram-dialog-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.telegram-footer-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+
+  :deep(.el-button) {
+    min-width: 96px;
+    margin-left: 0;
+  }
+}
+
+.telegram-footer-group--right {
+  margin-left: auto;
 }
 
 .passkey-list-card {
@@ -1712,7 +2093,7 @@ onMounted(async () => {
           padding: 8px 15px;
         }
         
-        .bark-controls {
+        .notification-controls {
           width: 100%;
           justify-content: space-between;
           
@@ -1867,6 +2248,28 @@ onMounted(async () => {
         }
       }
     }
+  }
+
+  .telegram-dialog-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .telegram-footer-group {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+
+    :deep(.el-button) {
+      width: 100%;
+      min-width: 0;
+    }
+  }
+
+  .telegram-footer-group--right {
+    margin-left: 0;
   }
 }
 </style>

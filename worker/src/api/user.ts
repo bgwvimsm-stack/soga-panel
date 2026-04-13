@@ -21,6 +21,8 @@ type AuthenticatedUser = {
   is_admin?: boolean;
   bark_enabled?: number;
   bark_key?: string | null;
+  telegram_enabled?: number;
+  telegram_id?: string | null;
   [key: string]: unknown;
 };
 
@@ -54,6 +56,10 @@ const toNumber = (value: unknown, fallback = 0): number => ensureNumber(value, f
 const toString = (value: unknown, fallback = ""): string => ensureString(value, fallback);
 const toErrorMessage = (error: unknown, fallback = "Internal Server Error"): string =>
   error instanceof Error ? error.message : fallback ?? String(error);
+
+const TELEGRAM_BIND_CODE_LENGTH = 16;
+const TELEGRAM_BIND_CODE_TTL_SECONDS = 15 * 60;
+const TELEGRAM_BIND_CODE_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 
 export class UserAPI {
   private readonly db: DatabaseService;
@@ -244,6 +250,8 @@ export class UserAPI {
         status: user.status,
         traffic_reset_day: trafficResetDay,
         subscription_url: subscriptionUrl,
+        telegram_id: toString(user.telegram_id, ''),
+        telegram_enabled: Number(user.telegram_enabled) === 1,
         two_factor_enabled: Number(user.two_factor_enabled) === 1,
         has_two_factor_backup_codes: Boolean(user.two_factor_backup_codes),
       });
@@ -872,20 +880,53 @@ export class UserAPI {
         return errorResponse(authResult.message, 401);
       }
 
+      await this.db.ensureUsersTelegramColumns();
+
       const authUser = authResult.user;
       const { bark_key, bark_enabled } = (await request.json()) as {
         bark_key?: string;
         bark_enabled?: boolean;
       };
 
-      // 验证bark_key格式（如果提供）
-      if (bark_key && !this.isValidBarkKey(bark_key)) {
+      const hasInputBarkKey = typeof bark_key === "string";
+      const inputBarkKey = hasInputBarkKey ? bark_key.trim() : "";
+      const shouldEnable = Boolean(bark_enabled);
+
+      // 验证 bark_key 格式（如果提供）
+      if (inputBarkKey && !this.isValidBarkKey(inputBarkKey)) {
         return errorResponse('Bark Key格式无效', 400);
       }
 
+      const currentUser = await this.db.db
+        .prepare("SELECT bark_key FROM users WHERE id = ?")
+        .bind(authUser.id)
+        .first<DbRow | null>();
+
+      if (!currentUser) {
+        return errorResponse("用户不存在", 404);
+      }
+
+      const currentBarkKey = toString(currentUser.bark_key, "").trim();
+      const finalBarkKey = hasInputBarkKey
+        ? (inputBarkKey || null)
+        : (currentBarkKey || null);
+
+      if (shouldEnable && !finalBarkKey) {
+        return errorResponse("请先配置 Bark Key", 400);
+      }
+
       await this.db.db
-        .prepare("UPDATE users SET bark_key = ?, bark_enabled = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?")
-        .bind(bark_key || null, bark_enabled ? 1 : 0, authUser.id)
+        .prepare(
+          `
+          UPDATE users
+          SET bark_key = ?,
+              bark_enabled = ?,
+              telegram_enabled = CASE WHEN ? = 1 THEN 0 ELSE telegram_enabled END,
+              updated_at = datetime('now', '+8 hours')
+          WHERE id = ?
+        `
+        )
+        .bind(finalBarkKey, shouldEnable ? 1 : 0, shouldEnable ? 1 : 0, authUser.id)
         .run();
 
       return successResponse({ message: 'Bark设置更新成功' });
@@ -894,6 +935,349 @@ export class UserAPI {
       console.error('Update bark settings error:', error);
       return errorResponse('更新Bark设置失败', 500);
     }
+  }
+
+  // 获取用户 Telegram 设置
+  async getTelegramSettings(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+
+      await this.db.ensureUsersTelegramColumns();
+
+      const payload = await this.getTelegramSettingsData(authResult.user.id, false);
+      return successResponse(payload);
+    } catch (error: unknown) {
+      console.error('Get telegram settings error:', error);
+      return errorResponse('获取Telegram设置失败', 500);
+    }
+  }
+
+  // 刷新 Telegram 绑定码
+  async refreshTelegramBindCode(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+
+      await this.db.ensureUsersTelegramColumns();
+      const payload = await this.getTelegramSettingsData(authResult.user.id, true);
+      return successResponse(payload, "Telegram 绑定码已刷新");
+    } catch (error: unknown) {
+      console.error("Refresh telegram bind code error:", error);
+      return errorResponse("刷新 Telegram 绑定码失败", 500);
+    }
+  }
+
+  // 更新用户 Telegram 设置
+  async updateTelegramSettings(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+
+      await this.db.ensureUsersTelegramColumns();
+
+      const authUser = authResult.user;
+      const { telegram_enabled } = (await request.json()) as {
+        telegram_enabled?: boolean;
+      };
+
+      const shouldEnable = Boolean(telegram_enabled);
+      const user = await this.db.db
+        .prepare("SELECT telegram_id FROM users WHERE id = ?")
+        .bind(authUser.id)
+        .first<DbRow | null>();
+
+      if (!user) {
+        return errorResponse("用户不存在", 404);
+      }
+
+      const telegramId = toString(user.telegram_id, "").trim();
+      if (shouldEnable && !telegramId) {
+        return errorResponse("请先通过 Telegram Bot 完成绑定", 400);
+      }
+
+      await this.db.db
+        .prepare(
+          `
+          UPDATE users
+          SET telegram_enabled = ?,
+              bark_enabled = CASE WHEN ? = 1 THEN 0 ELSE bark_enabled END,
+              updated_at = datetime('now', '+8 hours')
+          WHERE id = ?
+        `
+        )
+        .bind(
+          shouldEnable ? 1 : 0,
+          shouldEnable ? 1 : 0,
+          authUser.id
+        )
+        .run();
+
+      return successResponse({ message: 'Telegram设置更新成功' });
+    } catch (error: unknown) {
+      console.error('Update telegram settings error:', error);
+      return errorResponse('更新Telegram设置失败', 500);
+    }
+  }
+
+  // 解绑 Telegram
+  async unbindTelegram(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+
+      await this.db.ensureUsersTelegramColumns();
+
+      const userId = authResult.user.id;
+      const user = await this.db.db
+        .prepare("SELECT telegram_id FROM users WHERE id = ?")
+        .bind(userId)
+        .first<DbRow | null>();
+
+      if (!user) {
+        return errorResponse("用户不存在", 404);
+      }
+
+      const telegramId = toString(user.telegram_id, "").trim();
+      const hadBound = Boolean(telegramId);
+
+      await this.db.db
+        .prepare(
+          `
+          UPDATE users
+          SET telegram_id = NULL,
+              telegram_enabled = 0,
+              telegram_bind_code = NULL,
+              telegram_bind_code_expires_at = NULL,
+              updated_at = datetime('now', '+8 hours')
+          WHERE id = ?
+        `
+        )
+        .bind(userId)
+        .run();
+
+      const payload = await this.getTelegramSettingsData(userId, true);
+      return successResponse(payload, hadBound ? "Telegram 已解绑" : "当前未绑定 Telegram");
+    } catch (error: unknown) {
+      console.error("Unbind telegram error:", error);
+      return errorResponse("解绑 Telegram 失败", 500);
+    }
+  }
+
+  // 测试 Telegram 通知
+  async testTelegramNotification(request: Request) {
+    try {
+      const authResult = await this.validateUser(request);
+      if (!authResult.success) {
+        return errorResponse(authResult.message, 401);
+      }
+
+      await this.db.ensureUsersTelegramColumns();
+
+      const authUser = authResult.user;
+      const user = await this.db.db
+        .prepare("SELECT telegram_id FROM users WHERE id = ?")
+        .bind(authUser.id)
+        .first<DbRow | null>();
+      const testTelegramId = toString(user?.telegram_id, "").trim();
+
+      if (!testTelegramId) {
+        return errorResponse("请先通过 Telegram Bot 完成绑定", 400);
+      }
+      if (!this.isValidTelegramChatId(testTelegramId)) {
+        return errorResponse('Telegram Chat ID格式无效', 400);
+      }
+
+      const botToken =
+        (
+          await this.configManager.getSystemConfig(
+            'telegram_bot_token',
+            toString(this.env.TELEGRAM_BOT_TOKEN, '')
+          )
+        )?.trim() || '';
+      const apiBase =
+        (
+          await this.configManager.getSystemConfig(
+            'telegram_bot_api_base',
+            'https://api.telegram.org'
+          )
+        )?.trim() || 'https://api.telegram.org';
+
+      if (!botToken) {
+        return errorResponse('未配置 telegram_bot_token，请联系管理员', 400);
+      }
+
+      const endpoint = `${apiBase.replace(/\/+$/, '')}/bot${botToken}/sendMessage`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'User-Agent': 'Soga-Panel/1.0'
+        },
+        body: JSON.stringify({
+          chat_id: testTelegramId,
+          text: 'Telegram通知测试\n\n如果您收到这条消息，说明 Telegram 配置正确！',
+          disable_web_page_preview: true
+        })
+      });
+
+      const result = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        description?: string;
+        error_code?: number;
+      };
+
+      if (!response.ok || result.ok === false) {
+        await this.disableTelegramNotification(authUser.id);
+        const message = result.description || `HTTP ${response.status}`;
+        return errorResponse(`Telegram 测试失败：${message}。已自动禁用 Telegram 通知。`, 400);
+      }
+
+      return successResponse({
+        message: 'Telegram通知测试成功！请检查您的 Telegram。',
+        success: true,
+        telegram_response: result
+      });
+    } catch (error: unknown) {
+      console.error('测试Telegram通知失败:', error);
+      return errorResponse(toErrorMessage(error), 500);
+    }
+  }
+
+  private async getTelegramSettingsData(userId: number, forceRefreshCode: boolean) {
+    const user = await this.db.db
+      .prepare(
+        `
+        SELECT telegram_id, telegram_enabled, telegram_bind_code, telegram_bind_code_expires_at
+        FROM users
+        WHERE id = ?
+      `
+      )
+      .bind(userId)
+      .first<DbRow | null>();
+
+    if (!user) {
+      throw new Error("用户不存在");
+    }
+
+    const telegramId = toString(user.telegram_id, "").trim();
+    const telegramEnabled = Number(user.telegram_enabled) === 1 && Boolean(telegramId);
+
+    const bindCodeResult = await this.ensureTelegramBindCode(userId, {
+      currentCode: toString(user.telegram_bind_code, "").trim(),
+      currentExpireAt: toNumber(user.telegram_bind_code_expires_at, 0),
+      forceRefresh: forceRefreshCode,
+    });
+
+    const botUsername = (
+      (
+        await this.configManager.getSystemConfig(
+          "telegram_bot_username",
+          toString(this.env.TELEGRAM_BOT_USERNAME, "")
+        )
+      ) || ""
+    )
+      .trim()
+      .replace(/^@+/, "");
+
+    const bindCommand = `/start ${bindCodeResult.code}`;
+    const startLink = botUsername
+      ? `https://t.me/${encodeURIComponent(botUsername)}?start=${encodeURIComponent(bindCodeResult.code)}`
+      : "";
+
+    return {
+      telegram_id: telegramId,
+      telegram_id_masked: this.maskTelegramId(telegramId),
+      telegram_bound: Boolean(telegramId),
+      telegram_enabled: telegramEnabled,
+      bind_code: bindCodeResult.code,
+      bind_code_expires_at: bindCodeResult.expiresAt,
+      bind_command: bindCommand,
+      bot_username: botUsername,
+      start_link: startLink,
+    };
+  }
+
+  private async ensureTelegramBindCode(
+    userId: number,
+    options: {
+      currentCode: string;
+      currentExpireAt: number;
+      forceRefresh: boolean;
+    }
+  ): Promise<{ code: string; expiresAt: number }> {
+    const now = Math.floor(Date.now() / 1000);
+    const reusableLifetimeBuffer = 60;
+    if (
+      !options.forceRefresh &&
+      options.currentCode &&
+      TELEGRAM_BIND_CODE_PATTERN.test(options.currentCode) &&
+      options.currentExpireAt > now + reusableLifetimeBuffer
+    ) {
+      return {
+        code: options.currentCode,
+        expiresAt: options.currentExpireAt,
+      };
+    }
+
+    let code = "";
+    for (let i = 0; i < 6; i++) {
+      const candidate = this.generateTelegramBindCode();
+      const exists = await this.db.db
+        .prepare("SELECT id FROM users WHERE telegram_bind_code = ? AND id != ? LIMIT 1")
+        .bind(candidate, userId)
+        .first<DbRow | null>();
+      if (!exists) {
+        code = candidate;
+        break;
+      }
+    }
+
+    if (!code) {
+      throw new Error("生成 Telegram 绑定码失败");
+    }
+
+    const expiresAt = now + TELEGRAM_BIND_CODE_TTL_SECONDS;
+    await this.db.db
+      .prepare(
+        `
+        UPDATE users
+        SET telegram_bind_code = ?,
+            telegram_bind_code_expires_at = ?,
+            updated_at = datetime('now', '+8 hours')
+        WHERE id = ?
+      `
+      )
+      .bind(code, expiresAt, userId)
+      .run();
+
+    return { code, expiresAt };
+  }
+
+  private generateTelegramBindCode(length = TELEGRAM_BIND_CODE_LENGTH): string {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const bytes = new Uint8Array(length);
+    crypto.getRandomValues(bytes);
+    let result = "";
+    for (let i = 0; i < bytes.length; i++) {
+      result += chars[bytes[i] % chars.length];
+    }
+    return result;
+  }
+
+  private maskTelegramId(telegramId: string): string {
+    const trimmed = telegramId.trim();
+    if (!trimmed) return "";
+    if (trimmed.length <= 6) return trimmed;
+    return `${trimmed.slice(0, 2)}***${trimmed.slice(-3)}`;
   }
 
   // 获取用户登录记录
@@ -1417,6 +1801,19 @@ export class UserAPI {
     }
   }
 
+  // 禁用用户的 Telegram 通知
+  async disableTelegramNotification(userId: number) {
+    try {
+      await this.db.db
+        .prepare("UPDATE users SET telegram_enabled = 0, updated_at = datetime('now', '+8 hours') WHERE id = ?")
+        .bind(userId)
+        .run();
+      console.log(`已禁用用户 ${userId} 的Telegram通知`);
+    } catch (error: unknown) {
+      console.error(`禁用用户 ${userId} Telegram通知失败:`, error);
+    }
+  }
+
   // 验证Bark Key格式
   isValidBarkKey(barkKey: string) {
     // 简单的格式验证：应该是一个URL或者包含有效字符的字符串
@@ -1434,6 +1831,14 @@ export class UserAPI {
     
     // 支持简单的key格式：只包含字母数字和基本符号
     return /^[a-zA-Z0-9_-]+$/.test(barkKey);
+  }
+
+  // 验证 Telegram Chat ID 格式
+  isValidTelegramChatId(chatId: string) {
+    if (!chatId) return false;
+    const trimmed = chatId.trim();
+    // 私聊/群组 chat_id 通常为纯数字（群组可能为负数）
+    return /^-?\d{5,20}$/.test(trimmed);
   }
 
   // 获取用户审计规则
