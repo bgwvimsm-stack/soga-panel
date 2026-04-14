@@ -166,7 +166,7 @@ export default {
         logger.scheduler('daily_tasks', 'started');
         console.log('Starting daily traffic reset and node status cleanup task...');
 
-        // 先执行每日流量重置（包含Bark通知，使用重置前的流量数据）
+        // 先执行每日流量重置（包含 Bark/Telegram 通知，使用重置前的流量数据）
         const trafficResetResult = await scheduler.dailyTrafficReset();
         results.executed_tasks.push({
           task: 'daily_traffic_reset',

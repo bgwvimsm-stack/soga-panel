@@ -64,19 +64,6 @@
               x{{ Number(row.traffic_multiplier || 1).toFixed(2) }}
             </el-tag>
           </template>
-          <template #xray_rules="{ row }">
-            <div class="rule-tags">
-              <el-tag
-                v-for="item in getNodeRuleTags(row)"
-                :key="`${row.id}-${item.id}`"
-                size="small"
-                :type="item.type"
-              >
-                {{ item.label }}
-              </el-tag>
-              <span v-if="getNodeRuleTags(row).length === 0">-</span>
-            </div>
-          </template>
           <template #bandwidth_limit="{ row }">
             <span v-if="row.node_bandwidth_limit > 0">{{ formatTraffic(row.node_bandwidth_limit) }}</span>
             <span v-else>无限制</span>
@@ -938,6 +925,20 @@
           <el-descriptions-item label="当前状态">
             <el-tag :type="selectedNode.status === 1 ? 'success' : 'info'">{{ selectedNode.status === 1 ? '显示' : '隐藏' }}</el-tag>
           </el-descriptions-item>
+          <el-descriptions-item label="路由规则" :span="2">
+            <div class="detail-rule-tags">
+              <el-tag
+                v-for="item in getNodeRuleTags(selectedNode)"
+                :key="`details-${selectedNode.id}-${item.id}`"
+                size="small"
+                :type="item.type"
+                :title="item.label"
+              >
+                {{ item.label }}
+              </el-tag>
+              <span v-if="getNodeRuleTags(selectedNode).length === 0">-</span>
+            </div>
+          </el-descriptions-item>
           <el-descriptions-item label="已用流量">{{ formatTraffic(selectedNode.node_bandwidth || 0) }}</el-descriptions-item>
           <el-descriptions-item label="流量限制">
             {{ selectedNode.node_bandwidth_limit > 0 ? formatTraffic(selectedNode.node_bandwidth_limit) : '无限制' }}
@@ -1086,7 +1087,6 @@ const columns: VxeTableBarColumns = [
   { field: 'id', title: 'ID', width: 80, visible: true },
   { field: 'name', title: '节点名称', minWidth: 150, visible: true, slots: { default: 'name' } },
   { field: 'type', title: '类型', width: 130, visible: true, slots: { default: 'type' } },
-  { field: 'xray_rules', title: '路由规则', minWidth: 240, visible: true, slots: { default: 'xray_rules' } },
   { field: 'server', title: '地址', minWidth: 180, visible: true, slots: { default: 'server' } },
   { field: 'server_port', title: '端口', width: 100, visible: true, slots: { default: 'server_port' } },
   { field: 'node_class', title: '等级', width: 100, visible: true, slots: { default: 'node_class' } },
@@ -2976,10 +2976,15 @@ onMounted(() => {
   font-size: 12px;
 }
 
-.rule-tags {
+.detail-rule-tags {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
+}
+
+.detail-rule-tags :deep(.el-tag__content) {
+  white-space: normal;
 }
 
 .form-hint {

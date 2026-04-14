@@ -5,13 +5,18 @@
       <template #header>
         <span>系统配置管理</span>
       </template>
-      
-      <el-table :data="configList" stripe>
-        <el-table-column prop="key" label="配置键" width="200" />
-        <el-table-column prop="value" label="当前值" min-width="150">
+
+      <el-table
+        :data="configList"
+        row-key="key"
+        stripe
+        :header-cell-style="tableHeaderCellStyle"
+      >
+        <el-table-column prop="key" label="配置键" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="value" label="当前值" min-width="240">
           <template #default="scope">
             <el-input
-              v-if="scope.row.editing"
+              v-if="isEditing(scope.row.key)"
               v-model="scope.row.editValue"
               :type="getInputType(scope.row.key)"
               size="small"
@@ -24,34 +29,36 @@
             <span v-else>{{ scope.row.value }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="description" label="说明" />
-        <el-table-column label="操作" width="120">
+        <el-table-column prop="description" label="说明" min-width="300" show-overflow-tooltip />
+        <el-table-column label="操作" width="140" fixed="right">
           <template #default="scope">
-            <div v-if="scope.row.editing" class="edit-buttons">
-              <el-button 
-                size="small" 
-                type="primary" 
+            <el-button
+              v-if="!isEditing(scope.row.key)"
+              class="reset-margin"
+              link
+              type="primary"
+              @click="handleStartEdit(scope.row)"
+            >
+              修改
+            </el-button>
+            <div v-else class="operation-actions">
+              <el-button
+                class="reset-margin"
+                link
+                type="primary"
+                :loading="isSaving(scope.row.key)"
                 @click="handleSaveEdit(scope.row)"
-                :loading="scope.row.saving"
               >
                 保存
               </el-button>
-              <el-button 
-                size="small" 
+              <el-button
+                class="reset-margin"
+                link
                 @click="handleCancelEdit(scope.row)"
               >
                 取消
               </el-button>
             </div>
-            <el-button 
-              v-else
-              size="small" 
-              type="primary" 
-              @click="handleStartEdit(scope.row)"
-            >
-              <el-icon><Edit /></el-icon>
-              编辑
-            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -69,7 +76,11 @@
             <li><strong>register_enabled</strong>: 0=禁用，1=开放注册，2=仅允许邀请码注册</li>
             <li><strong>default_class</strong>: 新用户默认等级，数字越大权限越高</li>
             <li><strong>register_email_verification_enabled</strong>: 1 开启注册验证码，0 可关闭此功能</li>
-            <li><strong>message_queue_page_size</strong>: 消息队列每分钟发送条数（用于邮件/Bark等通知限速）</li>
+            <li><strong>message_queue_page_size</strong>: 消息队列每分钟发送条数（用于邮件/Bark/Telegram 等通知限速）</li>
+            <li><strong>telegram_bot_token</strong>: Telegram 机器人 Token（格式如 123456:ABC...）</li>
+            <li><strong>telegram_bot_api_base</strong>: Telegram API 基础地址（默认 https://api.telegram.org）</li>
+            <li><strong>telegram_bot_username</strong>: 机器人用户名（不含 @，用于生成一键绑定链接）</li>
+            <li><strong>telegram_webhook_secret</strong>: Webhook 请求头校验密钥（可选）</li>
             <li><strong>rebate_rate</strong>: 邀请返利比例，0.1 表示 10%</li>
             <li><strong>rebate_mode</strong>: first_order=首单返利，every_order=每笔返利</li>
             <li><strong>invite_default_limit</strong>: 默认邀请码可使用次数（0 表示不限）</li>
@@ -85,21 +96,47 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Edit } from '@element-plus/icons-vue'
-import { 
+import {
   getSystemConfigs,
   updateSystemConfig,
   type SystemConfig
 } from '@/api/admin'
 
 interface ExtendedSystemConfig extends SystemConfig {
-  saving?: boolean
-  editing?: boolean
-  editValue?: string
+  editValue: string
+}
+
+interface EditState {
+  editable: boolean
+  saving: boolean
+  snapshot: string
 }
 
 const loading = ref(false)
 const configList = ref<ExtendedSystemConfig[]>([])
+const editMap = ref<Record<string, EditState>>({})
+const editingKey = ref('')
+
+const tableHeaderCellStyle = {
+  background: 'var(--el-fill-color-light)',
+  color: 'var(--el-text-color-primary)'
+}
+
+const isEditing = (key: string) => Boolean(editMap.value[key]?.editable)
+const isSaving = (key: string) => Boolean(editMap.value[key]?.saving)
+
+const resetEditingByKey = (key: string) => {
+  if (!key) return
+  const target = configList.value.find(item => item.key === key)
+  const state = editMap.value[key]
+  if (target && state) {
+    target.editValue = state.snapshot
+  }
+  delete editMap.value[key]
+  if (editingKey.value === key) {
+    editingKey.value = ''
+  }
+}
 
 // 获取系统配置
 const fetchConfigs = async () => {
@@ -107,14 +144,14 @@ const fetchConfigs = async () => {
     loading.value = true
     const response = await getSystemConfigs()
     const configs = Array.isArray(response.data) ? response.data : []
-    
+
     // 初始化扩展属性
     configList.value = configs.map(config => ({
       ...config,
-      editing: false,
-      editValue: config.value || '',
-      saving: false
+      editValue: config.value || ''
     }))
+    editMap.value = {}
+    editingKey.value = ''
   } catch (error: any) {
     ElMessage.error(error.message || '获取系统配置失败')
     configList.value = []
@@ -125,33 +162,50 @@ const fetchConfigs = async () => {
 
 // 开始编辑
 const handleStartEdit = (config: ExtendedSystemConfig) => {
-  config.editing = true
+  if (editingKey.value && editingKey.value !== config.key) {
+    resetEditingByKey(editingKey.value)
+  }
+
   config.editValue = config.value || ''
+  editMap.value[config.key] = {
+    editable: true,
+    saving: false,
+    snapshot: config.value || ''
+  }
+  editingKey.value = config.key
 }
 
 // 取消编辑
 const handleCancelEdit = (config: ExtendedSystemConfig) => {
-  config.editing = false
-  config.editValue = config.value || ''
+  resetEditingByKey(config.key)
 }
 
 // 保存编辑
 const handleSaveEdit = async (config: ExtendedSystemConfig) => {
+  const state = editMap.value[config.key]
+  if (!state?.editable) {
+    return
+  }
+
   try {
-    config.saving = true
-    
+    state.saving = true
+    const nextValue = config.editValue || ''
+
     await updateSystemConfig({
       key: config.key,
-      value: config.editValue || ''
+      value: nextValue
     })
-    
-    config.value = config.editValue || ''
-    config.editing = false
+
+    config.value = nextValue
+    resetEditingByKey(config.key)
     ElMessage.success(`${config.description || config.key} 保存成功`)
   } catch (error: any) {
     ElMessage.error(error.message || '保存失败')
   } finally {
-    config.saving = false
+    const currentState = editMap.value[config.key]
+    if (currentState) {
+      currentState.saving = false
+    }
   }
 }
 
@@ -202,13 +256,14 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .system-configs-container {
-  .edit-buttons {
-    display: flex;
-    gap: 4px;
-    
-    .el-button {
-      padding: 4px 8px;
-    }
+  .reset-margin {
+    margin-left: 0 !important;
+  }
+
+  .operation-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
   }
 
   .config-hints {
@@ -252,15 +307,10 @@ onMounted(() => {
         padding: 4px 6px;
       }
     }
-    
-    .edit-buttons {
+
+    .operation-actions {
       flex-direction: column;
       gap: 2px;
-      
-      .el-button {
-        font-size: 11px;
-        padding: 2px 4px;
-      }
     }
     
     .config-hints {

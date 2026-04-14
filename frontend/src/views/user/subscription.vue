@@ -142,7 +142,7 @@
               <li>系统将自动启动 Clash 客户端并导入订阅配置</li>
               <li>更新配置，选择合适的节点开始使用</li>
             </ol>
-            <p><strong>推荐客户端：</strong>Clash for Windows、ClashX (macOS)、Clash for Android</p>
+            <p><strong>推荐客户端：</strong>FlClash(Android、Windows、MacOS、Linux)、Clash Verge Rev(Windows、MacOS、Linux)</p>
           </div>
         </el-collapse-item>
 

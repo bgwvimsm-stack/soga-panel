@@ -20,6 +20,7 @@ const DEFAULT_MAX_ATTEMPTS: i64 = 3;
 pub enum MessageChannel {
     Email,
     Bark,
+    Telegram,
 }
 
 impl MessageChannel {
@@ -27,6 +28,7 @@ impl MessageChannel {
         match self {
             Self::Email => "email",
             Self::Bark => "bark",
+            Self::Telegram => "telegram",
         }
     }
 
@@ -34,6 +36,7 @@ impl MessageChannel {
         match value.trim().to_lowercase().as_str() {
             "email" => Some(Self::Email),
             "bark" => Some(Self::Bark),
+            "telegram" => Some(Self::Telegram),
             _ => None,
         }
     }
@@ -403,8 +406,8 @@ async fn get_recipients_by_channel(
     min_class: i64,
 ) -> Result<Vec<RecipientRow>, String> {
     let safe_min_class = min_class.max(0);
-    let rows = if channel == MessageChannel::Email {
-        sqlx::query(
+    let rows = match channel {
+        MessageChannel::Email => sqlx::query(
             r#"
       SELECT id AS user_id, email AS recipient
       FROM users
@@ -418,14 +421,18 @@ async fn get_recipients_by_channel(
         .bind(safe_min_class)
         .fetch_all(&state.db)
         .await
-        .map_err(|err| err.to_string())?
-    } else {
-        sqlx::query(
+        .map_err(|err| err.to_string())?,
+        MessageChannel::Bark => sqlx::query(
             r#"
       SELECT id AS user_id, bark_key AS recipient
       FROM users
       WHERE status = 1
         AND bark_enabled = 1
+        AND NOT (
+          telegram_enabled = 1
+          AND telegram_id IS NOT NULL
+          AND telegram_id != ''
+        )
         AND bark_key IS NOT NULL
         AND bark_key != ''
         AND (? <= 0 OR class >= ?)
@@ -435,7 +442,23 @@ async fn get_recipients_by_channel(
         .bind(safe_min_class)
         .fetch_all(&state.db)
         .await
-        .map_err(|err| err.to_string())?
+        .map_err(|err| err.to_string())?,
+        MessageChannel::Telegram => sqlx::query(
+            r#"
+      SELECT id AS user_id, telegram_id AS recipient
+      FROM users
+      WHERE status = 1
+        AND telegram_enabled = 1
+        AND telegram_id IS NOT NULL
+        AND telegram_id != ''
+        AND (? <= 0 OR class >= ?)
+      "#,
+        )
+        .bind(safe_min_class)
+        .bind(safe_min_class)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|err| err.to_string())?,
     };
 
     let recipients = rows
@@ -486,6 +509,10 @@ async fn dispatch_message(state: &AppState, row: &QueueMessageRow) -> Result<(),
     }
     if channel == "bark" {
         send_bark_notification(row, &payload).await?;
+        return Ok(());
+    }
+    if channel == "telegram" {
+        send_telegram_notification(state, row, &payload).await?;
         return Ok(());
     }
 
@@ -549,6 +576,7 @@ async fn send_bark_notification(
     } else {
         payload.announcement.title.clone()
     };
+    let markdown = build_bark_markdown(&payload.announcement.content);
     let preview = truncate(
         &payload
             .announcement
@@ -580,6 +608,7 @@ async fn send_bark_notification(
     let mut request_body = json!({
       "title": title,
       "body": if preview.is_empty() { "您有一条新的公告，请登录面板查看。".to_string() } else { preview },
+      "markdown": markdown,
       "group": site_name
     });
     if !site_url.trim().is_empty() {
@@ -616,6 +645,169 @@ async fn send_bark_notification(
         }
         Err(_) => Ok(()),
     }
+}
+
+async fn load_telegram_bot_configs(state: &AppState) -> Result<(String, String), String> {
+    let rows = sqlx::query(
+        "SELECT `key`, `value` FROM system_configs WHERE `key` IN ('telegram_bot_token','telegram_bot_api_base')",
+    )
+    .fetch_all(&state.db)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    let mut token = String::new();
+    let mut api_base = "https://api.telegram.org".to_string();
+    for row in rows {
+        let key = row
+            .try_get::<Option<String>, _>("key")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let value = row
+            .try_get::<Option<String>, _>("value")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if key == "telegram_bot_token" && !value.trim().is_empty() {
+            token = value.trim().to_string();
+        } else if key == "telegram_bot_api_base" && !value.trim().is_empty() {
+            api_base = value.trim().to_string();
+        }
+    }
+
+    Ok((token, api_base))
+}
+
+async fn send_telegram_notification(
+    state: &AppState,
+    row: &QueueMessageRow,
+    payload: &QueuePayload,
+) -> Result<(), String> {
+    let (token, api_base) = load_telegram_bot_configs(state).await?;
+    if token.trim().is_empty() {
+        return Err("未配置 telegram_bot_token".to_string());
+    }
+
+    let site_name = payload
+        .site_name
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Soga Panel".to_string());
+    let site_url = payload.site_url.clone().unwrap_or_default();
+    let title = if payload.announcement.title.trim().is_empty() {
+        "系统公告".to_string()
+    } else {
+        payload.announcement.title.clone()
+    };
+    let content = payload.announcement.content.clone();
+    let title_markdown = format!(
+        "*{}*",
+        escape_telegram_markdown_v2(&format!("【{}】{}", site_name, title))
+    );
+    let body_markdown = build_telegram_markdown_v2(&content);
+    let url_part = if site_url.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\n[打开面板]({})",
+            escape_telegram_markdown_v2_url(site_url.trim())
+        )
+    };
+    let text = if body_markdown.is_empty() {
+        format!("{title_markdown}\n\n您有一条新的公告，请登录面板查看。{url_part}")
+    } else {
+        format!("{title_markdown}\n\n{body_markdown}{url_part}")
+    };
+
+    let endpoint = format!(
+        "{}/bot{}/sendMessage",
+        api_base.trim_end_matches('/'),
+        token
+    );
+    let response = reqwest::Client::new()
+        .post(endpoint.clone())
+        .header("Content-Type", "application/json; charset=utf-8")
+        .header("User-Agent", "Soga-Panel-Rust/1.0")
+        .json(&json!({
+            "chat_id": row.recipient,
+            "text": text,
+            "parse_mode": "MarkdownV2",
+            "disable_web_page_preview": true
+        }))
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    let status = response.status();
+    let value = response.json::<Value>().await.unwrap_or_else(|_| json!({}));
+    let detail = value
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(true);
+
+    if (!status.is_success() || !ok) && is_telegram_parse_error(&detail) {
+        let fallback_text = build_telegram_plain_text(&site_name, &title, &content, &site_url);
+        let fallback_response = reqwest::Client::new()
+            .post(endpoint)
+            .header("Content-Type", "application/json; charset=utf-8")
+            .header("User-Agent", "Soga-Panel-Rust/1.0")
+            .json(&json!({
+                "chat_id": row.recipient,
+                "text": fallback_text,
+                "disable_web_page_preview": true
+            }))
+            .send()
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let fallback_status = fallback_response.status();
+        let fallback_value = fallback_response
+            .json::<Value>()
+            .await
+            .unwrap_or_else(|_| json!({}));
+        let fallback_ok = fallback_value
+            .get("ok")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        if fallback_status.is_success() && fallback_ok {
+            return Ok(());
+        }
+        let fallback_detail = fallback_value
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        return Err(format!(
+            "Telegram MarkdownV2与纯文本均发送失败: {}",
+            fallback_detail
+        ));
+    }
+
+    if !status.is_success() {
+        return Err(format!(
+            "Telegram 请求失败: HTTP {} - {}",
+            status,
+            if detail.is_empty() {
+                "unknown"
+            } else {
+                &detail
+            }
+        ));
+    }
+
+    if !ok {
+        return Err(format!(
+            "Telegram 返回错误: {}",
+            if detail.is_empty() {
+                "unknown"
+            } else {
+                &detail
+            }
+        ));
+    }
+
+    Ok(())
 }
 
 async fn mark_sent(state: &AppState, id: i64, attempts: i64) -> Result<(), String> {
@@ -705,6 +897,210 @@ fn escape_html(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+fn build_telegram_markdown_v2(content: &str) -> String {
+    let normalized = content.replace("\r\n", "\n");
+    let normalized = normalized.trim();
+    if normalized.is_empty() {
+        return String::new();
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    let mut in_code_block = false;
+
+    for line in normalized.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("```") {
+            if !in_code_block {
+                in_code_block = true;
+                let lang = trimmed
+                    .trim_start_matches("```")
+                    .trim()
+                    .chars()
+                    .filter(|ch| {
+                        ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '+' || *ch == '-'
+                    })
+                    .collect::<String>();
+                out.push(format!("```{}", lang));
+            } else {
+                in_code_block = false;
+                out.push("```".to_string());
+            }
+            continue;
+        }
+
+        if in_code_block {
+            out.push(escape_telegram_code(line));
+            continue;
+        }
+
+        if trimmed.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+
+        if is_horizontal_rule(trimmed) {
+            out.push("────────".to_string());
+            continue;
+        }
+
+        let heading_level = trimmed.chars().take_while(|ch| *ch == '#').count();
+        if (1..=6).contains(&heading_level) {
+            let heading_text = trimmed[heading_level..].trim_start();
+            if !heading_text.is_empty() {
+                out.push(format!("*{}*", escape_telegram_markdown_v2(heading_text)));
+                continue;
+            }
+        }
+
+        if let Some(quote) = trimmed.strip_prefix('>') {
+            out.push(format!(
+                "❝ {}",
+                escape_telegram_markdown_v2(quote.trim_start())
+            ));
+            continue;
+        }
+
+        let unordered_item = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "));
+        if let Some(item) = unordered_item {
+            out.push(format!("• {}", escape_telegram_markdown_v2(item)));
+            continue;
+        }
+
+        if let Some((prefix, item)) = parse_ordered_markdown_line(trimmed) {
+            out.push(format!(
+                "{}\\. {}",
+                escape_telegram_markdown_v2(prefix),
+                escape_telegram_markdown_v2(item)
+            ));
+            continue;
+        }
+
+        out.push(escape_telegram_markdown_v2(line.trim_end()));
+    }
+
+    if in_code_block {
+        out.push("```".to_string());
+    }
+
+    collapse_blank_lines(&out.join("\n"))
+}
+
+fn collapse_blank_lines(value: &str) -> String {
+    let mut out = value.to_string();
+    while out.contains("\n\n\n") {
+        out = out.replace("\n\n\n", "\n\n");
+    }
+    out.trim().to_string()
+}
+
+fn escape_telegram_markdown_v2(value: &str) -> String {
+    let mut out = String::new();
+    for ch in value.chars() {
+        if matches!(
+            ch,
+            '_' | '*'
+                | '['
+                | ']'
+                | '('
+                | ')'
+                | '~'
+                | '`'
+                | '>'
+                | '#'
+                | '+'
+                | '-'
+                | '='
+                | '|'
+                | '{'
+                | '}'
+                | '.'
+                | '!'
+                | '\\'
+        ) {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn escape_telegram_markdown_v2_url(value: &str) -> String {
+    value.replace('\\', "\\\\").replace(')', "\\)")
+}
+
+fn escape_telegram_code(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('`', "\\`")
+}
+
+fn parse_ordered_markdown_line(input: &str) -> Option<(&str, &str)> {
+    let bytes = input.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+        idx += 1;
+    }
+    if idx == 0 || idx + 1 >= bytes.len() {
+        return None;
+    }
+    if bytes[idx] != b'.' || bytes[idx + 1] != b' ' {
+        return None;
+    }
+    Some((&input[..idx], input[idx + 2..].trim()))
+}
+
+fn is_horizontal_rule(input: &str) -> bool {
+    let trimmed = input.trim();
+    if trimmed.len() < 3 {
+        return false;
+    }
+    let mut chars = trimmed.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if first != '-' && first != '*' && first != '_' {
+        return false;
+    }
+    chars.all(|ch| ch == first)
+}
+
+fn is_telegram_parse_error(detail: &str) -> bool {
+    let message = detail.trim().to_lowercase();
+    message.contains("can't parse entities")
+        || message.contains("unsupported start tag")
+        || message.contains("unsupported end tag")
+        || message.contains("can't find end tag")
+        || message.contains("entity is not closed")
+}
+
+fn build_telegram_plain_text(
+    site_name: &str,
+    title: &str,
+    content: &str,
+    site_url: &str,
+) -> String {
+    let preview = truncate(content.trim(), 3200);
+    if preview.trim().is_empty() {
+        if site_url.trim().is_empty() {
+            format!(
+                "【{}】{}\n\n您有一条新的公告，请登录面板查看。",
+                site_name, title
+            )
+        } else {
+            format!(
+                "【{}】{}\n\n您有一条新的公告，请登录面板查看。\n{}",
+                site_name, title, site_url
+            )
+        }
+    } else if site_url.trim().is_empty() {
+        format!("【{}】{}\n\n{}", site_name, title, preview)
+    } else {
+        format!("【{}】{}\n\n{}\n\n{}", site_name, title, preview, site_url)
+    }
+}
+
 fn truncate(value: &str, max_len: usize) -> String {
     if value.chars().count() <= max_len {
         return value.to_string();
@@ -715,6 +1111,16 @@ fn truncate(value: &str, max_len: usize) -> String {
     }
     out.push_str("...");
     out
+}
+
+fn build_bark_markdown(content: &str) -> String {
+    let normalized = content.replace("\r\n", "\n");
+    let trimmed = normalized.trim();
+    if trimmed.is_empty() {
+        "您有一条新的公告，请登录面板查看。".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn extract_channel_list(raw: Option<&Value>) -> Vec<String> {

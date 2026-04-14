@@ -5,7 +5,7 @@ use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
 use chrono::{Datelike, Duration, Local, NaiveDateTime, Utc};
 use data_encoding::BASE32_NOPAD;
-use rand::Rng;
+use rand::{distributions::Alphanumeric, Rng};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -24,6 +24,9 @@ use super::auth::{
     decrypt_two_factor_secret, encrypt_two_factor_secret, list_passkeys, list_system_configs,
     normalize_backup_code, parse_backup_codes, require_user_id,
 };
+
+const TELEGRAM_BIND_CODE_LEN: usize = 16;
+const TELEGRAM_BIND_CODE_TTL_SECONDS: i64 = 15 * 60;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -48,6 +51,11 @@ pub fn router() -> Router<AppState> {
         .route("/bark-settings", get(get_bark_settings))
         .route("/bark-settings", put(put_bark_settings))
         .route("/bark-test", post(post_bark_test))
+        .route("/telegram-settings", get(get_telegram_settings))
+        .route("/telegram-settings", put(put_telegram_settings))
+        .route("/telegram-bind-code", post(post_telegram_bind_code))
+        .route("/telegram-unbind", post(post_telegram_unbind))
+        .route("/telegram-test", post(post_telegram_test))
         .route("/passkeys", get(get_passkeys))
         .route("/passkeys/{id}", delete(delete_passkey))
         .route("/two-factor/setup", post(post_two_factor_setup))
@@ -1468,8 +1476,38 @@ async fn put_bark_settings(
         Err(resp) => return resp,
     };
 
-    let bark_key = body.bark_key;
     let bark_enabled = body.bark_enabled.unwrap_or(false);
+    let row = sqlx::query("SELECT bark_key FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+    let row = match row {
+        Ok(Some(value)) => value,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "用户不存在", None),
+        Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None),
+    };
+
+    let current_bark_key = row
+        .try_get::<Option<String>, _>("bark_key")
+        .ok()
+        .flatten()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let input_bark_key = body.bark_key.map(|value| value.trim().to_string());
+    let bark_key = match input_bark_key {
+        Some(value) => {
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+        None => current_bark_key,
+    };
+
+    if bark_enabled && bark_key.is_none() {
+        return error(StatusCode::BAD_REQUEST, "请先配置 Bark Key", None);
+    }
 
     if let Err(message) = update_user_bark_settings(&state, user_id, bark_key, bark_enabled).await {
         return error(StatusCode::INTERNAL_SERVER_ERROR, &message, None);
@@ -1589,6 +1627,282 @@ async fn post_bark_test(
           "message": "Bark 通知测试成功，请检查您的设备是否收到测试消息",
           "success": true,
           "bark_response": result
+        }),
+        "Success",
+    )
+    .into_response()
+}
+
+async fn get_telegram_settings(
+    State(state): State<AppState>,
+    Extension(headers): Extension<axum::http::HeaderMap>,
+) -> Response {
+    let user_id = match require_user_id(&state, &headers, None).await {
+        Ok(value) => value,
+        Err(resp) => return resp,
+    };
+
+    match build_telegram_settings_payload(&state, user_id, false).await {
+        Ok(value) => success(value, "Success").into_response(),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, &message, None),
+    }
+}
+
+async fn post_telegram_bind_code(
+    State(state): State<AppState>,
+    Extension(headers): Extension<axum::http::HeaderMap>,
+) -> Response {
+    let user_id = match require_user_id(&state, &headers, None).await {
+        Ok(value) => value,
+        Err(resp) => return resp,
+    };
+
+    match build_telegram_settings_payload(&state, user_id, true).await {
+        Ok(value) => success(value, "Telegram 绑定码已刷新").into_response(),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, &message, None),
+    }
+}
+
+#[derive(Deserialize)]
+struct TelegramSettingsRequest {
+    telegram_enabled: Option<bool>,
+}
+
+async fn put_telegram_settings(
+    State(state): State<AppState>,
+    Extension(headers): Extension<axum::http::HeaderMap>,
+    Json(body): Json<TelegramSettingsRequest>,
+) -> Response {
+    let user_id = match require_user_id(&state, &headers, None).await {
+        Ok(value) => value,
+        Err(resp) => return resp,
+    };
+
+    let telegram_enabled = body.telegram_enabled.unwrap_or(false);
+    let row = sqlx::query("SELECT telegram_id FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+    let row = match row {
+        Ok(Some(value)) => value,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "用户不存在", None),
+        Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None),
+    };
+    let telegram_id = row
+        .try_get::<Option<String>, _>("telegram_id")
+        .ok()
+        .flatten()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if telegram_enabled && telegram_id.is_none() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "请先通过 Telegram Bot 完成绑定",
+            None,
+        );
+    }
+
+    if let Err(message) =
+        update_user_telegram_settings(&state, user_id, telegram_id, telegram_enabled).await
+    {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &message, None);
+    }
+
+    success(Value::Null, "Telegram 设置已更新").into_response()
+}
+
+async fn post_telegram_unbind(
+    State(state): State<AppState>,
+    Extension(headers): Extension<axum::http::HeaderMap>,
+) -> Response {
+    let user_id = match require_user_id(&state, &headers, None).await {
+        Ok(value) => value,
+        Err(resp) => return resp,
+    };
+
+    let row = sqlx::query("SELECT telegram_id FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+    let row = match row {
+        Ok(Some(value)) => value,
+        Ok(None) => return error(StatusCode::NOT_FOUND, "用户不存在", None),
+        Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None),
+    };
+
+    let had_bound = row
+        .try_get::<Option<String>, _>("telegram_id")
+        .ok()
+        .flatten()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+
+    let update_result = sqlx::query(
+        r#"
+      UPDATE users
+      SET telegram_id = NULL,
+          telegram_enabled = 0,
+          telegram_bind_code = NULL,
+          telegram_bind_code_expires_at = NULL,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    "#,
+    )
+    .bind(user_id)
+    .execute(&state.db)
+    .await;
+    if let Err(err) = update_result {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
+    }
+
+    match build_telegram_settings_payload(&state, user_id, true).await {
+        Ok(value) => success(
+            value,
+            if had_bound {
+                "Telegram 已解绑"
+            } else {
+                "当前未绑定 Telegram"
+            },
+        )
+        .into_response(),
+        Err(message) => error(StatusCode::INTERNAL_SERVER_ERROR, &message, None),
+    }
+}
+
+#[derive(Deserialize)]
+struct TelegramTestRequest {}
+
+async fn post_telegram_test(
+    State(state): State<AppState>,
+    Extension(headers): Extension<axum::http::HeaderMap>,
+    Json(_body): Json<TelegramTestRequest>,
+) -> Response {
+    let user_id = match require_user_id(&state, &headers, None).await {
+        Ok(value) => value,
+        Err(resp) => return resp,
+    };
+
+    let row = sqlx::query("SELECT telegram_id FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(&state.db)
+        .await;
+    let test_chat_id = match row {
+        Ok(Some(row)) => row
+            .try_get::<Option<String>, _>("telegram_id")
+            .ok()
+            .flatten()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        Ok(None) => return error(StatusCode::NOT_FOUND, "用户不存在", None),
+        Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None),
+    };
+    let test_chat_id = match test_chat_id {
+        Some(value) => value,
+        None => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "请先通过 Telegram Bot 完成绑定",
+                None,
+            )
+        }
+    };
+    if !is_valid_telegram_chat_id(&test_chat_id) {
+        return error(StatusCode::BAD_REQUEST, "Telegram Chat ID 格式无效", None);
+    }
+
+    let config_rows = sqlx::query(
+        "SELECT `key`, `value` FROM system_configs WHERE `key` IN ('telegram_bot_token','telegram_bot_api_base')",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let mut bot_token = String::new();
+    let mut api_base = "https://api.telegram.org".to_string();
+    for row in config_rows {
+        let key = row
+            .try_get::<Option<String>, _>("key")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let value = row
+            .try_get::<Option<String>, _>("value")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if key == "telegram_bot_token" && !value.trim().is_empty() {
+            bot_token = value.trim().to_string();
+        } else if key == "telegram_bot_api_base" && !value.trim().is_empty() {
+            api_base = value.trim().to_string();
+        }
+    }
+
+    if bot_token.is_empty() {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "未配置 telegram_bot_token，请联系管理员",
+            None,
+        );
+    }
+
+    let endpoint = format!(
+        "{}/bot{}/sendMessage",
+        api_base.trim_end_matches('/'),
+        bot_token
+    );
+    let response = reqwest::Client::new()
+        .post(endpoint)
+        .header("User-Agent", "Soga-Panel-Server/1.0")
+        .json(&json!({
+            "chat_id": test_chat_id,
+            "text": "Telegram通知测试\n\n如果您收到这条消息，说明 Telegram 配置正确！",
+            "disable_web_page_preview": true
+        }))
+        .send()
+        .await;
+
+    let response = match response {
+        Ok(value) => value,
+        Err(err) => {
+            let _ =
+                update_user_telegram_settings(&state, user_id, Some(test_chat_id.clone()), false)
+                    .await;
+            return error(
+                StatusCode::BAD_REQUEST,
+                &format!("网络请求失败: {}，已自动禁用 Telegram 通知", err),
+                None,
+            );
+        }
+    };
+
+    let status = response.status();
+    let result = response.json::<Value>().await.ok();
+    if !status.is_success()
+        || result
+            .as_ref()
+            .and_then(|value| value.get("ok"))
+            .and_then(Value::as_bool)
+            == Some(false)
+    {
+        let _ =
+            update_user_telegram_settings(&state, user_id, Some(test_chat_id.clone()), false).await;
+        let message = result
+            .as_ref()
+            .and_then(|value| value.get("description"))
+            .and_then(Value::as_str)
+            .unwrap_or("未知错误");
+        return error(
+            StatusCode::BAD_REQUEST,
+            &format!("Telegram 测试失败: {}，已自动禁用 Telegram 通知", message),
+            None,
+        );
+    }
+
+    success(
+        json!({
+          "message": "Telegram 通知测试成功，请检查您的 Telegram",
+          "success": true,
+          "telegram_response": result
         }),
         "Success",
     )
@@ -3661,17 +3975,230 @@ async fn update_user_bark_settings(
     sqlx::query(
         r#"
     UPDATE users
-    SET bark_key = ?, bark_enabled = ?, updated_at = CURRENT_TIMESTAMP
+    SET bark_key = ?,
+        bark_enabled = ?,
+        telegram_enabled = CASE WHEN ? = 1 THEN 0 ELSE telegram_enabled END,
+        updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
     "#,
     )
     .bind(bark_key)
+    .bind(if bark_enabled { 1 } else { 0 })
     .bind(if bark_enabled { 1 } else { 0 })
     .bind(user_id)
     .execute(&state.db)
     .await
     .map_err(|err| err.to_string())?;
     Ok(())
+}
+
+async fn build_telegram_settings_payload(
+    state: &AppState,
+    user_id: i64,
+    force_refresh_code: bool,
+) -> Result<Value, String> {
+    let row = sqlx::query(
+        "SELECT telegram_id, telegram_enabled, telegram_bind_code, telegram_bind_code_expires_at FROM users WHERE id = ?",
+    )
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| err.to_string())?;
+    let row = row.ok_or_else(|| "用户不存在".to_string())?;
+
+    let telegram_id = row
+        .try_get::<Option<String>, _>("telegram_id")
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let telegram_enabled = row
+        .try_get::<Option<i64>, _>("telegram_enabled")
+        .unwrap_or(Some(0))
+        .unwrap_or(0)
+        == 1
+        && !telegram_id.is_empty();
+    let current_bind_code = row
+        .try_get::<Option<String>, _>("telegram_bind_code")
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let current_bind_code_expire_at = row
+        .try_get::<Option<i64>, _>("telegram_bind_code_expires_at")
+        .unwrap_or(Some(0))
+        .unwrap_or(0);
+
+    let (bind_code, bind_code_expires_at) = ensure_telegram_bind_code(
+        state,
+        user_id,
+        current_bind_code,
+        current_bind_code_expire_at,
+        force_refresh_code,
+    )
+    .await?;
+
+    let configs = list_system_configs(state).await.unwrap_or_default();
+    let bot_username = configs
+        .get("telegram_bot_username")
+        .cloned()
+        .unwrap_or_default()
+        .trim_start_matches('@')
+        .trim()
+        .to_string();
+    let bind_command = format!("/start {bind_code}");
+    let start_link = if bot_username.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "https://t.me/{}?start={}",
+            urlencoding::encode(&bot_username),
+            urlencoding::encode(&bind_code)
+        )
+    };
+
+    Ok(json!({
+      "telegram_id": telegram_id,
+      "telegram_id_masked": mask_telegram_id(&telegram_id),
+      "telegram_bound": !telegram_id.is_empty(),
+      "telegram_enabled": telegram_enabled,
+      "bind_code": bind_code,
+      "bind_code_expires_at": bind_code_expires_at,
+      "bind_command": bind_command,
+      "bot_username": bot_username,
+      "start_link": start_link
+    }))
+}
+
+async fn ensure_telegram_bind_code(
+    state: &AppState,
+    user_id: i64,
+    current_code: String,
+    current_expires_at: i64,
+    force_refresh: bool,
+) -> Result<(String, i64), String> {
+    let now = Utc::now().timestamp();
+    let reusable_lifetime_buffer = 60;
+    if !force_refresh
+        && !current_code.is_empty()
+        && is_valid_telegram_bind_code(&current_code)
+        && current_expires_at > now + reusable_lifetime_buffer
+    {
+        return Ok((current_code, current_expires_at));
+    }
+
+    let mut bind_code = String::new();
+    for _ in 0..6 {
+        let candidate = generate_telegram_bind_code();
+        let exists =
+            sqlx::query("SELECT id FROM users WHERE telegram_bind_code = ? AND id != ? LIMIT 1")
+                .bind(&candidate)
+                .bind(user_id)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|err| err.to_string())?;
+        if exists.is_none() {
+            bind_code = candidate;
+            break;
+        }
+    }
+
+    if bind_code.is_empty() {
+        return Err("生成 Telegram 绑定码失败".to_string());
+    }
+
+    let expires_at = now + TELEGRAM_BIND_CODE_TTL_SECONDS;
+    sqlx::query(
+        r#"
+        UPDATE users
+        SET telegram_bind_code = ?,
+            telegram_bind_code_expires_at = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    "#,
+    )
+    .bind(&bind_code)
+    .bind(expires_at)
+    .bind(user_id)
+    .execute(&state.db)
+    .await
+    .map_err(|err| err.to_string())?;
+
+    Ok((bind_code, expires_at))
+}
+
+fn generate_telegram_bind_code() -> String {
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(TELEGRAM_BIND_CODE_LEN)
+        .map(char::from)
+        .collect()
+}
+
+fn is_valid_telegram_bind_code(code: &str) -> bool {
+    let trimmed = code.trim();
+    if trimmed.len() < 8 || trimmed.len() > 64 {
+        return false;
+    }
+    trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+}
+
+fn mask_telegram_id(chat_id: &str) -> String {
+    let trimmed = chat_id.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if trimmed.len() <= 6 {
+        return trimmed.to_string();
+    }
+    format!("{}***{}", &trimmed[..2], &trimmed[trimmed.len() - 3..])
+}
+
+async fn update_user_telegram_settings(
+    state: &AppState,
+    user_id: i64,
+    telegram_id: Option<String>,
+    telegram_enabled: bool,
+) -> Result<(), String> {
+    sqlx::query(
+        r#"
+    UPDATE users
+    SET telegram_id = ?,
+        telegram_enabled = ?,
+        bark_enabled = CASE WHEN ? = 1 THEN 0 ELSE bark_enabled END,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+    "#,
+    )
+    .bind(telegram_id)
+    .bind(if telegram_enabled { 1 } else { 0 })
+    .bind(if telegram_enabled { 1 } else { 0 })
+    .bind(user_id)
+    .execute(&state.db)
+    .await
+    .map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn is_valid_telegram_chat_id(chat_id: &str) -> bool {
+    let trimmed = chat_id.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let mut chars = trimmed.chars();
+    if let Some(first) = chars.next() {
+        if first == '-' {
+            return chars.all(|ch| ch.is_ascii_digit());
+        }
+        if first.is_ascii_digit() {
+            return chars.all(|ch| ch.is_ascii_digit());
+        }
+    }
+    false
 }
 
 async fn get_user_class(state: &AppState, user_id: i64) -> Result<Option<i64>, String> {

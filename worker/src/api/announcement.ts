@@ -336,32 +336,223 @@ export class AnnouncementAPI {
     return Math.max(0, normalized);
   }
 
-  // 简单的Markdown转HTML（基础版本）
+  // Markdown转HTML（支持标题、引用、列表、代码块、分隔线等常见语法）
   async markdownToHtml(markdown: string | undefined): Promise<string> {
     if (!markdown) return '';
-    
-    // 基础的Markdown转换
-    let html = markdown
-      // 标题
-      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-      .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-      .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-      // 粗体
-      .replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>')
-      .replace(/\*(.*)\*/gim, '<em>$1</em>')
-      // 列表
-      .replace(/^\- (.*$)/gim, '<li>$1</li>')
-      // 段落
-      .replace(/\n\n/gim, '</p><p>')
-      // 换行
-      .replace(/\n/gim, '<br/>');
-    
-    // 包装在段落中
-    html = '<p>' + html + '</p>';
-    
-    // 处理列表
-    html = html.replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>');
-    
-    return html;
+
+    const normalized = markdown.replace(/\r\n/g, '\n').trim();
+    if (!normalized) return '';
+
+    const blocks: string[] = [];
+    let paragraphLines: string[] = [];
+    let quoteLines: string[] = [];
+    let listItems: string[] = [];
+    let listType: 'ul' | 'ol' | null = null;
+    let inCodeBlock = false;
+    let codeFenceLang = '';
+    let codeLines: string[] = [];
+
+    const flushParagraph = () => {
+      if (paragraphLines.length === 0) return;
+      const paragraph = paragraphLines.join('\n').trim();
+      paragraphLines = [];
+      if (!paragraph) return;
+      const content = this.formatInlineMarkdown(paragraph).replace(/\n/g, '<br/>');
+      blocks.push(`<p>${content}</p>`);
+    };
+
+    const flushQuote = () => {
+      if (quoteLines.length === 0) return;
+      const quoteContent = quoteLines
+        .map((line) => this.formatInlineMarkdown(line))
+        .join('<br/>');
+      quoteLines = [];
+      blocks.push(`<blockquote>${quoteContent}</blockquote>`);
+    };
+
+    const flushList = () => {
+      if (!listType || listItems.length === 0) {
+        listType = null;
+        listItems = [];
+        return;
+      }
+      const items = listItems
+        .map((item) => `<li>${this.formatInlineMarkdown(item)}</li>`)
+        .join('');
+      blocks.push(`<${listType}>${items}</${listType}>`);
+      listType = null;
+      listItems = [];
+    };
+
+    const flushCodeBlock = () => {
+      if (codeLines.length === 0 && !codeFenceLang) return;
+      const safeLang = codeFenceLang
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, '');
+      const langClass = safeLang ? ` class="language-${safeLang}"` : '';
+      blocks.push(
+        `<pre><code${langClass}>${this.escapeHtml(codeLines.join('\n'))}</code></pre>`
+      );
+      codeLines = [];
+      codeFenceLang = '';
+    };
+
+    const lines = normalized.split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      if (inCodeBlock) {
+        if (trimmed.startsWith('```')) {
+          flushCodeBlock();
+          inCodeBlock = false;
+          continue;
+        }
+        codeLines.push(line);
+        continue;
+      }
+
+      if (trimmed.startsWith('```')) {
+        flushParagraph();
+        flushQuote();
+        flushList();
+        inCodeBlock = true;
+        codeFenceLang = trimmed.slice(3).trim();
+        codeLines = [];
+        continue;
+      }
+
+      if (!trimmed) {
+        flushParagraph();
+        flushQuote();
+        flushList();
+        continue;
+      }
+
+      if (/^(\*{3,}|-{3,}|_{3,})$/.test(trimmed)) {
+        flushParagraph();
+        flushQuote();
+        flushList();
+        blocks.push('<hr/>');
+        continue;
+      }
+
+      const headingMatch = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+      if (headingMatch) {
+        flushParagraph();
+        flushQuote();
+        flushList();
+        const level = headingMatch[1].length;
+        blocks.push(
+          `<h${level}>${this.formatInlineMarkdown(headingMatch[2])}</h${level}>`
+        );
+        continue;
+      }
+
+      const quoteMatch = /^>\s?(.*)$/.exec(trimmed);
+      if (quoteMatch) {
+        flushParagraph();
+        flushList();
+        quoteLines.push(quoteMatch[1]);
+        continue;
+      }
+
+      const unorderedMatch = /^[-+*]\s+(.+)$/.exec(trimmed);
+      if (unorderedMatch) {
+        flushParagraph();
+        flushQuote();
+        if (listType && listType !== 'ul') {
+          flushList();
+        }
+        listType = 'ul';
+        listItems.push(unorderedMatch[1]);
+        continue;
+      }
+
+      const orderedMatch = /^\d+\.\s+(.+)$/.exec(trimmed);
+      if (orderedMatch) {
+        flushParagraph();
+        flushQuote();
+        if (listType && listType !== 'ol') {
+          flushList();
+        }
+        listType = 'ol';
+        listItems.push(orderedMatch[1]);
+        continue;
+      }
+
+      flushQuote();
+      flushList();
+      paragraphLines.push(line.trimEnd());
+    }
+
+    flushParagraph();
+    flushQuote();
+    flushList();
+    if (inCodeBlock) {
+      flushCodeBlock();
+    }
+
+    return blocks.join('\n');
+  }
+
+  private formatInlineMarkdown(input: string) {
+    if (!input) return '';
+
+    const tokens: string[] = [];
+    const stash = (value: string) => {
+      const index = tokens.length;
+      tokens.push(value);
+      return `\u0000${index}\u0000`;
+    };
+
+    let text = input;
+
+    text = text.replace(/`([^`\n]+)`/g, (_match, code: string) =>
+      stash(`<code>${this.escapeHtml(code)}</code>`)
+    );
+
+    text = text.replace(
+      /\[([^\]]+)\]\(([^)\s]+)\)/g,
+      (_match, label: string, url: string) => {
+        const safeUrl = this.sanitizeMarkdownUrl(url);
+        if (!safeUrl) {
+          return this.escapeHtml(label);
+        }
+        return stash(
+          `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${this.escapeHtml(label)}</a>`
+        );
+      }
+    );
+
+    text = this.escapeHtml(text);
+
+    text = text
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/__([^_\n]+)__/g, '<strong>$1</strong>')
+      .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+      .replace(/_([^_\n]+)_/g, '<em>$1</em>');
+
+    return text.replace(/\u0000(\d+)\u0000/g, (_match, index: string) => {
+      return tokens[Number(index)] || '';
+    });
+  }
+
+  private sanitizeMarkdownUrl(url: string) {
+    const trimmed = (url || '').trim();
+    if (!trimmed) return '';
+    if (/^(https?:\/\/|mailto:)/i.test(trimmed)) {
+      return this.escapeHtml(trimmed);
+    }
+    return '';
+  }
+
+  private escapeHtml(value: string) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 }

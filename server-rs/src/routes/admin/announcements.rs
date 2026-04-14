@@ -399,69 +399,274 @@ fn format_timestamp(value: i64) -> Option<String> {
 }
 
 fn markdown_to_html(input: &str) -> String {
-    if input.trim().is_empty() {
+    let normalized = input.replace("\r\n", "\n");
+    let normalized = normalized.trim();
+    if normalized.is_empty() {
         return String::new();
     }
 
-    let mut html = String::new();
-    let mut in_list = false;
+    let mut blocks: Vec<String> = Vec::new();
+    let mut paragraph_lines: Vec<String> = Vec::new();
+    let mut quote_lines: Vec<String> = Vec::new();
+    let mut list_items: Vec<String> = Vec::new();
+    let mut list_type: Option<&str> = None;
+    let mut in_code_block = false;
+    let mut code_lang = String::new();
+    let mut code_lines: Vec<String> = Vec::new();
 
-    for line in input.lines() {
+    for line in normalized.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("- ") {
-            if !in_list {
-                html.push_str("<ul>");
-                in_list = true;
+
+        if in_code_block {
+            if trimmed.starts_with("```") {
+                flush_code_block(&mut blocks, &mut code_lines, &mut code_lang);
+                in_code_block = false;
+                continue;
             }
-            html.push_str("<li>");
-            html.push_str(&format_inline(&trimmed[2..]));
-            html.push_str("</li>");
+            code_lines.push(line.to_string());
             continue;
         }
 
-        if in_list {
-            html.push_str("</ul>");
-            in_list = false;
+        if trimmed.starts_with("```") {
+            flush_paragraph(&mut blocks, &mut paragraph_lines);
+            flush_quote(&mut blocks, &mut quote_lines);
+            flush_list(&mut blocks, &mut list_items, &mut list_type);
+            in_code_block = true;
+            code_lang = trimmed.trim_start_matches("```").trim().to_string();
+            code_lines.clear();
+            continue;
         }
 
         if trimmed.is_empty() {
+            flush_paragraph(&mut blocks, &mut paragraph_lines);
+            flush_quote(&mut blocks, &mut quote_lines);
+            flush_list(&mut blocks, &mut list_items, &mut list_type);
             continue;
         }
 
-        if let Some(content) = trimmed.strip_prefix("### ") {
-            html.push_str("<h3>");
-            html.push_str(&format_inline(content));
-            html.push_str("</h3>");
-            continue;
-        }
-        if let Some(content) = trimmed.strip_prefix("## ") {
-            html.push_str("<h2>");
-            html.push_str(&format_inline(content));
-            html.push_str("</h2>");
-            continue;
-        }
-        if let Some(content) = trimmed.strip_prefix("# ") {
-            html.push_str("<h1>");
-            html.push_str(&format_inline(content));
-            html.push_str("</h1>");
+        if is_horizontal_rule(trimmed) {
+            flush_paragraph(&mut blocks, &mut paragraph_lines);
+            flush_quote(&mut blocks, &mut quote_lines);
+            flush_list(&mut blocks, &mut list_items, &mut list_type);
+            blocks.push("<hr/>".to_string());
             continue;
         }
 
-        html.push_str("<p>");
-        html.push_str(&format_inline(trimmed));
-        html.push_str("</p>");
+        let heading_level = trimmed.chars().take_while(|ch| *ch == '#').count();
+        if (1..=6).contains(&heading_level) {
+            let heading_content = trimmed[heading_level..].trim_start();
+            if !heading_content.is_empty() {
+                flush_paragraph(&mut blocks, &mut paragraph_lines);
+                flush_quote(&mut blocks, &mut quote_lines);
+                flush_list(&mut blocks, &mut list_items, &mut list_type);
+                blocks.push(format!(
+                    "<h{level}>{content}</h{level}>",
+                    level = heading_level,
+                    content = format_inline(heading_content)
+                ));
+                continue;
+            }
+        }
+
+        if let Some(content) = trimmed.strip_prefix('>') {
+            flush_paragraph(&mut blocks, &mut paragraph_lines);
+            flush_list(&mut blocks, &mut list_items, &mut list_type);
+            quote_lines.push(content.trim_start().to_string());
+            continue;
+        }
+
+        let unordered_item = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "));
+        if let Some(item) = unordered_item {
+            flush_paragraph(&mut blocks, &mut paragraph_lines);
+            flush_quote(&mut blocks, &mut quote_lines);
+            if list_type.is_some() && list_type != Some("ul") {
+                flush_list(&mut blocks, &mut list_items, &mut list_type);
+            }
+            list_type = Some("ul");
+            list_items.push(item.to_string());
+            continue;
+        }
+
+        if let Some(item) = parse_ordered_list_item(trimmed) {
+            flush_paragraph(&mut blocks, &mut paragraph_lines);
+            flush_quote(&mut blocks, &mut quote_lines);
+            if list_type.is_some() && list_type != Some("ol") {
+                flush_list(&mut blocks, &mut list_items, &mut list_type);
+            }
+            list_type = Some("ol");
+            list_items.push(item.to_string());
+            continue;
+        }
+
+        flush_quote(&mut blocks, &mut quote_lines);
+        flush_list(&mut blocks, &mut list_items, &mut list_type);
+        paragraph_lines.push(line.trim_end().to_string());
     }
 
-    if in_list {
-        html.push_str("</ul>");
+    flush_paragraph(&mut blocks, &mut paragraph_lines);
+    flush_quote(&mut blocks, &mut quote_lines);
+    flush_list(&mut blocks, &mut list_items, &mut list_type);
+    if in_code_block {
+        flush_code_block(&mut blocks, &mut code_lines, &mut code_lang);
     }
 
-    html
+    blocks.join("\n")
+}
+
+fn flush_paragraph(blocks: &mut Vec<String>, paragraph_lines: &mut Vec<String>) {
+    if paragraph_lines.is_empty() {
+        return;
+    }
+    let paragraph = paragraph_lines.join("\n");
+    paragraph_lines.clear();
+    let paragraph = paragraph.trim();
+    if paragraph.is_empty() {
+        return;
+    }
+    let content = format_inline(paragraph).replace('\n', "<br/>");
+    blocks.push(format!("<p>{content}</p>"));
+}
+
+fn flush_quote(blocks: &mut Vec<String>, quote_lines: &mut Vec<String>) {
+    if quote_lines.is_empty() {
+        return;
+    }
+    let content = quote_lines
+        .iter()
+        .map(|line| format_inline(line))
+        .collect::<Vec<_>>()
+        .join("<br/>");
+    quote_lines.clear();
+    blocks.push(format!("<blockquote>{content}</blockquote>"));
+}
+
+fn flush_list(
+    blocks: &mut Vec<String>,
+    list_items: &mut Vec<String>,
+    list_type: &mut Option<&str>,
+) {
+    let Some(tag) = *list_type else {
+        list_items.clear();
+        return;
+    };
+    if list_items.is_empty() {
+        *list_type = None;
+        return;
+    }
+    let items_html = list_items
+        .iter()
+        .map(|item| format!("<li>{}</li>", format_inline(item)))
+        .collect::<Vec<_>>()
+        .join("");
+    blocks.push(format!("<{tag}>{items_html}</{tag}>"));
+    list_items.clear();
+    *list_type = None;
+}
+
+fn flush_code_block(
+    blocks: &mut Vec<String>,
+    code_lines: &mut Vec<String>,
+    code_lang: &mut String,
+) {
+    if code_lines.is_empty() && code_lang.trim().is_empty() {
+        return;
+    }
+    let safe_lang = code_lang
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_')
+        .collect::<String>();
+    let lang_attr = if safe_lang.is_empty() {
+        String::new()
+    } else {
+        format!(" class=\"language-{safe_lang}\"")
+    };
+    let code_content = escape_html(&code_lines.join("\n"));
+    blocks.push(format!("<pre><code{lang_attr}>{code_content}</code></pre>"));
+    code_lines.clear();
+    code_lang.clear();
+}
+
+fn is_horizontal_rule(input: &str) -> bool {
+    let trimmed = input.trim();
+    if trimmed.len() < 3 {
+        return false;
+    }
+    let mut chars = trimmed.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if first != '-' && first != '*' && first != '_' {
+        return false;
+    }
+    chars.all(|ch| ch == first)
+}
+
+fn parse_ordered_list_item(input: &str) -> Option<&str> {
+    let bytes = input.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+        idx += 1;
+    }
+    if idx == 0 || idx + 1 >= bytes.len() {
+        return None;
+    }
+    if bytes[idx] != b'.' || bytes[idx + 1] != b' ' {
+        return None;
+    }
+    Some(input[idx + 2..].trim())
 }
 
 fn format_inline(input: &str) -> String {
-    let bold = replace_pairs(input, "**", "strong");
-    replace_pairs(&bold, "*", "em")
+    let (with_tokens, placeholders) = extract_inline_code_spans(input);
+    let escaped = escape_html(&with_tokens);
+    let bold = replace_pairs(&escaped, "**", "strong");
+    let bold = replace_pairs(&bold, "__", "strong");
+    let italic = replace_pairs(&bold, "*", "em");
+    let italic = replace_pairs(&italic, "_", "em");
+    restore_inline_placeholders(italic, &placeholders)
+}
+
+fn extract_inline_code_spans(input: &str) -> (String, Vec<String>) {
+    let mut out = String::new();
+    let mut rest = input;
+    let mut placeholders: Vec<String> = Vec::new();
+
+    while let Some(start) = rest.find('`') {
+        out.push_str(&rest[..start]);
+        let after_start = &rest[start + 1..];
+        if let Some(end) = after_start.find('`') {
+            let code = &after_start[..end];
+            if code.contains('\n') {
+                out.push('`');
+                out.push_str(code);
+                out.push('`');
+            } else {
+                let token = format!("@@MDTOKEN{}@@", placeholders.len());
+                placeholders.push(format!("<code>{}</code>", escape_html(code)));
+                out.push_str(&token);
+            }
+            rest = &after_start[end + 1..];
+        } else {
+            out.push('`');
+            out.push_str(after_start);
+            rest = "";
+            break;
+        }
+    }
+
+    out.push_str(rest);
+    (out, placeholders)
+}
+
+fn restore_inline_placeholders(mut input: String, placeholders: &[String]) -> String {
+    for (index, value) in placeholders.iter().enumerate() {
+        let key = format!("@@MDTOKEN{index}@@");
+        input = input.replace(&key, value);
+    }
+    input
 }
 
 fn replace_pairs(input: &str, marker: &str, tag: &str) -> String {
@@ -479,6 +684,15 @@ fn replace_pairs(input: &str, marker: &str, tag: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+fn escape_html(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 type SqlxQuery<'a> = sqlx::query::Query<'a, sqlx::MySql, sqlx::mysql::MySqlArguments>;

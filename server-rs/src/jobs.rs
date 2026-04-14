@@ -1,6 +1,6 @@
 use chrono::{Datelike, Duration, NaiveDateTime, Utc};
 use reqwest::Url;
-use serde_json::json;
+use serde_json::{json, Value};
 use sqlx::Row;
 
 use crate::cache::cache_delete_by_prefix;
@@ -30,7 +30,7 @@ pub fn job_descriptions() -> Vec<(&'static str, &'static str)> {
         ("userExpirationCheck", "检查账号/等级过期并重置"),
         (
             "dailyTasks",
-            "每日流量汇总、Bark 通知、日/月重置、节点状态清理",
+            "每日流量汇总、Bark/Telegram 通知、日/月重置、节点状态清理",
         ),
         ("subscriptionCleanup", "清理 7 天前订阅记录并刷新订阅缓存"),
     ]
@@ -189,6 +189,11 @@ async fn run_daily_tasks(state: &AppState) -> Result<(), String> {
     println!(
         "[job] daily Bark notifications: success={}, sent={}, failed={}",
         bark_result.success, bark_result.sent_count, bark_result.failed_count
+    );
+    let telegram_result = send_daily_telegram_notifications(state).await;
+    println!(
+        "[job] daily Telegram notifications: success={}, sent={}, failed={}",
+        telegram_result.success, telegram_result.sent_count, telegram_result.failed_count
     );
 
     let _ = sqlx::query(
@@ -415,7 +420,7 @@ async fn try_monthly_reset(state: &AppState) {
     println!("[job] monthly traffic reset done (day={reset_day})");
 }
 
-async fn send_daily_bark_notifications(state: &AppState) -> BarkResult {
+async fn send_daily_bark_notifications(state: &AppState) -> NotifyResult {
     let mut site_name = state
         .env
         .site_name
@@ -456,6 +461,11 @@ async fn send_daily_bark_notifications(state: &AppState) -> BarkResult {
            transfer_enable, transfer_total, class_expire_time, class
     FROM users
     WHERE bark_enabled = 1
+      AND NOT (
+        telegram_enabled = 1
+        AND telegram_id IS NOT NULL
+        AND telegram_id != ''
+      )
       AND bark_key IS NOT NULL
       AND bark_key != ''
       AND class > 0
@@ -467,7 +477,7 @@ async fn send_daily_bark_notifications(state: &AppState) -> BarkResult {
     .unwrap_or_default();
 
     if users.is_empty() {
-        return BarkResult::empty();
+        return NotifyResult::empty();
     }
 
     let client = reqwest::Client::new();
@@ -481,7 +491,7 @@ async fn send_daily_bark_notifications(state: &AppState) -> BarkResult {
         }
     }
 
-    BarkResult {
+    NotifyResult {
         success: true,
         sent_count: sent,
         failed_count: failed,
@@ -609,6 +619,214 @@ async fn send_bark_notification(
     Ok(true)
 }
 
+async fn send_daily_telegram_notifications(state: &AppState) -> NotifyResult {
+    let mut site_name = state
+        .env
+        .site_name
+        .clone()
+        .unwrap_or_else(|| "Soga Panel".to_string());
+    let mut site_url = state.env.site_url.clone().unwrap_or_default();
+    let mut bot_token = String::new();
+    let mut api_base = "https://api.telegram.org".to_string();
+
+    let config_rows = sqlx::query(
+        "SELECT `key`, `value` FROM system_configs WHERE `key` IN ('site_name','site_url','telegram_bot_token','telegram_bot_api_base')",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    for row in config_rows {
+        let key = row
+            .try_get::<Option<String>, _>("key")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let value = row
+            .try_get::<Option<String>, _>("value")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if value.is_empty() {
+            continue;
+        }
+        match key.as_str() {
+            "site_name" => site_name = value.clone(),
+            "site_url" => site_url = value.clone(),
+            "telegram_bot_token" => bot_token = value.trim().to_string(),
+            "telegram_bot_api_base" => api_base = value.trim().to_string(),
+            _ => {}
+        }
+    }
+
+    let users = sqlx::query(
+        r#"
+    SELECT id, username, telegram_id, upload_today, download_today,
+           transfer_enable, transfer_total, class_expire_time, class
+    FROM users
+    WHERE status = 1
+      AND telegram_enabled = 1
+      AND telegram_id IS NOT NULL
+      AND telegram_id != ''
+    ORDER BY id
+    "#,
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+
+    if users.is_empty() {
+        return NotifyResult::empty();
+    }
+
+    if bot_token.trim().is_empty() {
+        return NotifyResult {
+            success: false,
+            sent_count: 0,
+            failed_count: users.len() as i64,
+        };
+    }
+
+    let client = reqwest::Client::new();
+    let mut sent = 0;
+    let mut failed = 0;
+
+    for row in users {
+        match send_telegram_daily_notification(
+            state, &client, row, &site_name, &site_url, &bot_token, &api_base,
+        )
+        .await
+        {
+            Ok(true) => sent += 1,
+            _ => failed += 1,
+        }
+    }
+
+    NotifyResult {
+        success: true,
+        sent_count: sent,
+        failed_count: failed,
+    }
+}
+
+async fn send_telegram_daily_notification(
+    state: &AppState,
+    client: &reqwest::Client,
+    row: sqlx::mysql::MySqlRow,
+    site_name: &str,
+    site_url: &str,
+    bot_token: &str,
+    api_base: &str,
+) -> Result<bool, String> {
+    let user_id = row
+        .try_get::<Option<i64>, _>("id")
+        .ok()
+        .flatten()
+        .unwrap_or(0);
+    let username = row
+        .try_get::<Option<String>, _>("username")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let telegram_id = row
+        .try_get::<Option<String>, _>("telegram_id")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if telegram_id.is_empty() {
+        return Ok(false);
+    }
+
+    let upload_today = row
+        .try_get::<Option<i64>, _>("upload_today")
+        .unwrap_or(Some(0))
+        .unwrap_or(0);
+    let download_today = row
+        .try_get::<Option<i64>, _>("download_today")
+        .unwrap_or(Some(0))
+        .unwrap_or(0);
+    let transfer_enable = row
+        .try_get::<Option<i64>, _>("transfer_enable")
+        .unwrap_or(Some(0))
+        .unwrap_or(0);
+    let transfer_total = row
+        .try_get::<Option<i64>, _>("transfer_total")
+        .unwrap_or(Some(0))
+        .unwrap_or(0);
+    let class_expire_time = row
+        .try_get::<Option<NaiveDateTime>, _>("class_expire_time")
+        .ok()
+        .flatten();
+
+    let today_usage = upload_today + download_today;
+    let today_total_traffic = format_bytes(today_usage);
+    let remain_traffic = format_bytes((transfer_enable - transfer_total).max(0));
+    let class_expire_text = match class_expire_time {
+        Some(value) => value.format("%Y-%m-%d %H:%M").to_string(),
+        None => "永不过期".to_string(),
+    };
+
+    let title = "每日流量使用情况";
+    let body = if today_usage > 0 {
+        format!(
+      "{username}，您好！\n\n您今日已用流量为 {today_total_traffic}\n剩余流量为 {remain_traffic}\n\n您的等级到期时间为 {class_expire_text}\n\n祝您使用愉快！"
+    )
+    } else {
+        format!(
+      "{username}，您好！\n\n今日您未使用流量\n剩余流量为 {remain_traffic}\n\n您的等级到期时间为 {class_expire_text}\n\n祝您使用愉快！"
+    )
+    };
+    let text = format!(
+        "【{}】{}\n\n{}{}",
+        if site_name.is_empty() {
+            "Soga Panel"
+        } else {
+            site_name
+        },
+        title,
+        body,
+        if site_url.is_empty() {
+            "".to_string()
+        } else {
+            format!("\n\n{}", site_url)
+        }
+    );
+
+    let endpoint = format!(
+        "{}/bot{}/sendMessage",
+        api_base.trim_end_matches('/'),
+        bot_token
+    );
+    let resp = client
+        .post(endpoint)
+        .header("User-Agent", "Soga-Panel-Server/1.0")
+        .json(&json!({
+            "chat_id": telegram_id,
+            "text": text,
+            "disable_web_page_preview": true
+        }))
+        .send()
+        .await
+        .map_err(|err| err.to_string())?;
+
+    let status = resp.status();
+    let payload = resp.json::<Value>().await.unwrap_or_else(|_| json!({}));
+    let ok = payload
+        .get("ok")
+        .and_then(Value::as_bool)
+        .unwrap_or(status.is_success());
+    if !status.is_success() || !ok {
+        let _ = sqlx::query(
+            "UPDATE users SET telegram_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+        )
+        .bind(user_id)
+        .execute(&state.db)
+        .await;
+        return Ok(false);
+    }
+
+    Ok(true)
+}
+
 fn format_bytes(bytes: i64) -> String {
     if bytes <= 0 {
         return "0 B".to_string();
@@ -639,13 +857,13 @@ struct SystemTrafficStats {
     total_traffic: i64,
 }
 
-struct BarkResult {
+struct NotifyResult {
     success: bool,
     sent_count: i64,
     failed_count: i64,
 }
 
-impl BarkResult {
+impl NotifyResult {
     fn empty() -> Self {
         Self {
             success: true,

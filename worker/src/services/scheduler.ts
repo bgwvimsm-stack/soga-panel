@@ -42,6 +42,12 @@ type BarkUser = DailyTrafficUserRow & {
   class: number;
 };
 
+type TelegramUser = DailyTrafficUserRow & {
+  telegram_id: string;
+  class_expire_time: string | null;
+  class: number;
+};
+
 export class SchedulerService {
   private readonly env: Env;
   private readonly db: DatabaseService;
@@ -150,9 +156,9 @@ export class SchedulerService {
       console.log(`找到 ${users.length} 个有流量使用的用户`);
       
       if (users.length === 0) {
-        console.log('没有用户需要重置流量，但仍需发送Bark通知和检查节点流量重置');
+        console.log('没有用户需要重置流量，但仍需发送通知和检查节点流量重置');
         
-        // 即使没有用户需要重置流量，仍然需要发送Bark通知给符合条件的用户
+        // 即使没有用户需要重置流量，仍然需要发送通知给符合条件的用户
         const notificationResult = await this.sendDailyResetNotifications();
         
         // 检查节点流量重置
@@ -160,7 +166,7 @@ export class SchedulerService {
         
         return { 
           success: true, 
-          message: `没有用户需要重置流量，但已发送 ${notificationResult.sent_count || 0} 条Bark通知，${nodeResetResult.reset_count || 0} 个节点的流量已重置`,
+          message: `没有用户需要重置流量，但已发送 ${notificationResult.sent_count || 0} 条通知，${nodeResetResult.reset_count || 0} 个节点的流量已重置`,
           processed_users: 0,
           notification_result: notificationResult,
           node_reset_result: nodeResetResult
@@ -180,7 +186,7 @@ export class SchedulerService {
         }
       }
       
-      // 3. 在重置之前发送Bark通知给启用通知且等级超过1的用户（使用重置前的流量数据）
+      // 3. 在重置之前发送通知（使用重置前的流量数据）
       const notificationResult = await this.sendDailyResetNotifications();
       
       // 4. 重置所有用户的当日流量
@@ -631,131 +637,226 @@ export class SchedulerService {
   }
 
   /**
-   * 发送每日重置通知给启用Bark通知且等级超过1的用户
+   * 发送每日流量通知（Bark + Telegram）
    */
   async sendDailyResetNotifications() {
     try {
-      console.log('开始发送每日重置Bark通知...');
+      console.log('开始发送每日流量通知（Bark + Telegram）...');
+      await this.db.ensureUsersTelegramColumns();
 
-      const siteName = await this.configManager.getSystemConfig('site_name', (this.env.SITE_NAME as string) || 'Soga Panel');
-      const siteUrl = await this.configManager.getSystemConfig('site_url', (this.env.SITE_URL as string) || '');
+      const siteName =
+        (await this.configManager.getSystemConfig('site_name', (this.env.SITE_NAME as string) || 'Soga Panel')) ||
+        'Soga Panel';
+      const siteUrl =
+        (await this.configManager.getSystemConfig('site_url', (this.env.SITE_URL as string) || '')) || '';
 
-      const usersWithBarkResult = await this.db.db.prepare(`
-        SELECT id, username, email, bark_key, upload_today, download_today,
-               transfer_enable, transfer_total, class_expire_time, class
-        FROM users
-        WHERE bark_enabled = 1 AND bark_key IS NOT NULL AND bark_key != ''
-        AND class > 0
-        ORDER BY id
-      `).all<BarkUser>();
-      const usersWithBark = (usersWithBarkResult.results ?? []) as BarkUser[];
+      const barkResult = await this.sendDailyBarkNotifications(siteName, siteUrl);
+      const telegramResult = await this.sendDailyTelegramNotifications(siteName, siteUrl);
 
-      if (!usersWithBark || usersWithBark.length === 0) {
-        console.log('没有符合条件的用户需要发送Bark通知 (需要等级>0且启用Bark)');
-        return { success: true, message: '没有符合条件的用户需要发送Bark通知', sent_count: 0 };
-      }
+      const sentCount = (barkResult.sent_count || 0) + (telegramResult.sent_count || 0);
+      const failedCount = (barkResult.failed_count || 0) + (telegramResult.failed_count || 0);
 
-      console.log(`找到 ${usersWithBark.length} 个符合条件的用户 (等级>0且启用Bark通知)`);
-
-      let sentCount = 0;
-      let failedCount = 0;
-
-      const now = new Date();
-      const utc8Time = new Date(now.getTime() + (8 * 60 * 60 * 1000));
-      const timeStr = utc8Time.toLocaleString('zh-CN', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-
-      const batchSize = 5;
-      for (let i = 0; i < usersWithBark.length; i += batchSize) {
-        const batch = usersWithBark.slice(i, i + batchSize);
-        const promises = batch.map(user => this.sendBarkNotification(user, timeStr, siteName, siteUrl));
-
-        const results = await Promise.allSettled(promises);
-
-        results.forEach((result, index) => {
-          if (result.status === 'fulfilled') {
-            if (result.value.success) {
-              sentCount++;
-              console.log(`成功发送通知给用户 ${batch[index].username}`);
-            } else {
-              failedCount++;
-              console.error(`发送通知给用户 ${batch[index].username} 失败:`, result.value.error);
-            }
-          } else {
-            failedCount++;
-            const reason = result.reason instanceof Error ? result.reason : new Error(String(result.reason ?? 'Unknown error'));
-            console.error(`发送通知给用户 ${batch[index].username} 失败:`, reason);
-          }
-        });
-      }
-
-      const message = `Bark通知发送完成: 成功 ${sentCount} 个, 失败 ${failedCount} 个`;
+      const message = `每日通知发送完成：总成功 ${sentCount}，总失败 ${failedCount}（Bark 成功 ${barkResult.sent_count || 0} / Telegram 成功 ${telegramResult.sent_count || 0}）`;
       console.log(message);
 
       return {
-        success: true,
-        message: message,
+        success: barkResult.success !== false && telegramResult.success !== false,
+        message,
         sent_count: sentCount,
         failed_count: failedCount,
-        total_bark_users: usersWithBark.length
+        bark: barkResult,
+        telegram: telegramResult
       };
-
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
-      console.error('发送每日重置Bark通知失败:', err);
+      console.error('发送每日通知失败:', err);
       return {
         success: false,
-        message: `发送Bark通知失败: ${err.message}`,
+        message: `发送每日通知失败: ${err.message}`,
         error: err.message
       };
     }
   }
 
-  /**
-   * 发送单个Bark通知
-   */
-  async sendBarkNotification(user: BarkUser, timeStr: string, siteName: string, siteUrl: string) {
-    try {
-      // 直接使用传入的用户数据（重置前的数据）
-      // 计算今日总使用流量并格式化
-      const todayTotalTraffic = this.formatBytes((user.upload_today || 0) + (user.download_today || 0));
-      const remainTraffic = this.formatBytes(Math.max(0, user.transfer_enable - user.transfer_total));
-      
-      // 格式化等级过期时间
-      let classExpireText = '永不过期';
-      if (user.class_expire_time) {
-        try {
-          const expireDate = new Date(user.class_expire_time);
-          classExpireText = expireDate.toLocaleString('zh-CN', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit',
-            hour: '2-digit',
-            minute: '2-digit'
-          });
-        } catch (e) {
-          classExpireText = user.class_expire_time;
+  private async sendDailyBarkNotifications(siteName: string, siteUrl: string) {
+    const usersWithBarkResult = await this.db.db.prepare(`
+      SELECT id, username, email, bark_key, upload_today, download_today,
+             transfer_enable, transfer_total, class_expire_time, class
+      FROM users
+      WHERE bark_enabled = 1 AND bark_key IS NOT NULL AND bark_key != ''
+      AND NOT (
+        telegram_enabled = 1
+        AND telegram_id IS NOT NULL
+        AND CAST(telegram_id AS TEXT) != ''
+      )
+      AND class > 0
+      ORDER BY id
+    `).all<BarkUser>();
+    const usersWithBark = (usersWithBarkResult.results ?? []) as BarkUser[];
+
+    if (usersWithBark.length === 0) {
+      return {
+        success: true,
+        message: '没有符合条件的用户需要发送 Bark 通知',
+        sent_count: 0,
+        failed_count: 0,
+        total_users: 0
+      };
+    }
+
+    let sentCount = 0;
+    let failedCount = 0;
+    const batchSize = 5;
+
+    for (let i = 0; i < usersWithBark.length; i += batchSize) {
+      const batch = usersWithBark.slice(i, i + batchSize);
+      const promises = batch.map((user) => this.sendBarkNotification(user, siteName, siteUrl));
+      const results = await Promise.allSettled(promises);
+
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled" && result.value.success) {
+          sentCount++;
+        } else {
+          failedCount++;
+          const reason =
+            result.status === "rejected"
+              ? result.reason
+              : (result.status === "fulfilled" ? result.value.error : "unknown");
+          console.error(`发送 Bark 通知失败(${batch[index].username}):`, reason);
         }
+      });
+    }
+
+    return {
+      success: true,
+      message: `Bark 通知发送完成: 成功 ${sentCount}, 失败 ${failedCount}`,
+      sent_count: sentCount,
+      failed_count: failedCount,
+      total_users: usersWithBark.length
+    };
+  }
+
+  private async sendDailyTelegramNotifications(siteName: string, siteUrl: string) {
+    const usersWithTelegramResult = await this.db.db.prepare(`
+      SELECT id, username, telegram_id, upload_today, download_today,
+             transfer_enable, transfer_total, class_expire_time, class
+      FROM users
+      WHERE status = 1
+        AND telegram_enabled = 1
+        AND telegram_id IS NOT NULL
+        AND CAST(telegram_id AS TEXT) != ''
+      ORDER BY id
+    `).all<TelegramUser>();
+    const usersWithTelegram = (usersWithTelegramResult.results ?? []) as TelegramUser[];
+
+    if (usersWithTelegram.length === 0) {
+      return {
+        success: true,
+        message: '没有符合条件的用户需要发送 Telegram 通知',
+        sent_count: 0,
+        failed_count: 0,
+        total_users: 0
+      };
+    }
+
+    const botToken =
+      (await this.configManager.getSystemConfig(
+        'telegram_bot_token',
+        (this.env.TELEGRAM_BOT_TOKEN as string) || ''
+      )) || '';
+    const apiBase =
+      (await this.configManager.getSystemConfig(
+        'telegram_bot_api_base',
+        'https://api.telegram.org'
+      )) || 'https://api.telegram.org';
+
+    if (!botToken.trim()) {
+      return {
+        success: false,
+        message: '未配置 telegram_bot_token，已跳过 Telegram 通知',
+        sent_count: 0,
+        failed_count: usersWithTelegram.length,
+        total_users: usersWithTelegram.length
+      };
+    }
+
+    let sentCount = 0;
+    let failedCount = 0;
+    const batchSize = 5;
+
+    for (let i = 0; i < usersWithTelegram.length; i += batchSize) {
+      const batch = usersWithTelegram.slice(i, i + batchSize);
+      const promises = batch.map((user) =>
+        this.sendTelegramNotification(user, siteName, siteUrl, botToken, apiBase)
+      );
+      const results = await Promise.allSettled(promises);
+
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled" && result.value.success) {
+          sentCount++;
+        } else {
+          failedCount++;
+          const reason =
+            result.status === "rejected"
+              ? result.reason
+              : (result.status === "fulfilled" ? result.value.error : "unknown");
+          console.error(`发送 Telegram 通知失败(${batch[index].username}):`, reason);
+        }
+      });
+    }
+
+    return {
+      success: true,
+      message: `Telegram 通知发送完成: 成功 ${sentCount}, 失败 ${failedCount}`,
+      sent_count: sentCount,
+      failed_count: failedCount,
+      total_users: usersWithTelegram.length
+    };
+  }
+
+  private buildDailyTrafficMessage(user: {
+    username: string;
+    upload_today: number;
+    download_today: number;
+    transfer_enable: number;
+    transfer_total: number;
+    class_expire_time: string | null;
+  }) {
+    const todayUsage = (user.upload_today || 0) + (user.download_today || 0);
+    const todayTotalTraffic = this.formatBytes(todayUsage);
+    const remainTraffic = this.formatBytes(Math.max(0, user.transfer_enable - user.transfer_total));
+
+    let classExpireText = '永不过期';
+    if (user.class_expire_time) {
+      try {
+        const expireDate = new Date(user.class_expire_time);
+        classExpireText = expireDate.toLocaleString('zh-CN', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+      } catch (_error) {
+        classExpireText = user.class_expire_time;
       }
-      
-      // 构建通知消息
-      const title = '每日流量使用情况';
-      const todayUsage = (user.upload_today || 0) + (user.download_today || 0);
-      let body;
-      
-      if (todayUsage > 0) {
-        // 有使用流量的情况
-        body = `${user.username}，您好！\n\n您今日已用流量为 ${todayTotalTraffic}\n剩余流量为 ${remainTraffic}\n\n您的等级到期时间为 ${classExpireText}\n\n祝您使用愉快！`;
-      } else {
-        // 没有使用流量的情况
-        body = `${user.username}，您好！\n\n今日您未使用流量\n剩余流量为 ${remainTraffic}\n\n您的等级到期时间为 ${classExpireText}\n\n祝您使用愉快！`;
-      }
-      
+    }
+
+    const title = '每日流量使用情况';
+    const body = todayUsage > 0
+      ? `${user.username}，您好！\n\n您今日已用流量为 ${todayTotalTraffic}\n剩余流量为 ${remainTraffic}\n\n您的等级到期时间为 ${classExpireText}\n\n祝您使用愉快！`
+      : `${user.username}，您好！\n\n今日您未使用流量\n剩余流量为 ${remainTraffic}\n\n您的等级到期时间为 ${classExpireText}\n\n祝您使用愉快！`;
+
+    return { title, body };
+  }
+
+  /**
+   * 发送单个 Bark 通知
+   */
+  async sendBarkNotification(user: BarkUser, siteName: string, siteUrl: string) {
+    try {
+      const { title, body } = this.buildDailyTrafficMessage(user);
+
       let endpoint = 'https://api.day.app';
       let keyPath = user.bark_key;
 
@@ -783,21 +884,19 @@ export class SchedulerService {
           url: siteUrl || undefined
         })
       });
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      
+
       const result = (await response.json()) as { code?: number; message?: string };
       const code = typeof result.code === 'number' ? result.code : undefined;
-      
+
       if (code === 200) {
         return { success: true, message: '通知发送成功' };
-      } else {
-        const message = typeof result.message === 'string' ? result.message : 'Unknown error';
-        throw new Error(`Bark API返回错误: code=${code ?? 'N/A'}, message=${message}`);
       }
-      
+      const message = typeof result.message === 'string' ? result.message : 'Unknown error';
+      throw new Error(`Bark API返回错误: code=${code ?? 'N/A'}, message=${message}`);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       await this.disableBarkNotification(user.id);
@@ -806,9 +905,58 @@ export class SchedulerService {
   }
 
   /**
-   * 禁用用户的Bark通知
+   * 发送单个 Telegram 通知
    */
-  async disableBarkNotification(userId) {
+  async sendTelegramNotification(
+    user: TelegramUser,
+    siteName: string,
+    siteUrl: string,
+    botToken: string,
+    apiBase: string
+  ) {
+    try {
+      const { title, body } = this.buildDailyTrafficMessage(user);
+      const text = `【${siteName || 'Soga Panel'}】${title}\n\n${body}${siteUrl ? `\n\n${siteUrl}` : ''}`;
+
+      const endpoint = `${apiBase.replace(/\/+$/, '')}/bot${botToken}/sendMessage`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          'User-Agent': 'Soga-Panel/1.0'
+        },
+        body: JSON.stringify({
+          chat_id: String(user.telegram_id),
+          text,
+          disable_web_page_preview: true
+        })
+      });
+
+      const result = (await response.json().catch(() => ({}))) as {
+        ok?: boolean;
+        description?: string;
+        error_code?: number;
+      };
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${result.description || response.statusText}`);
+      }
+      if (result.ok === false) {
+        throw new Error(result.description || `error_code=${result.error_code ?? 'unknown'}`);
+      }
+
+      return { success: true, message: '通知发送成功' };
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      await this.disableTelegramNotification(user.id);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * 禁用用户的 Bark 通知
+   */
+  async disableBarkNotification(userId: number) {
     try {
       await this.db.db
         .prepare("UPDATE users SET bark_enabled = 0, updated_at = datetime('now', '+8 hours') WHERE id = ?")
@@ -818,6 +966,22 @@ export class SchedulerService {
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       console.error(`禁用用户 ${userId} Bark通知失败:`, err);
+    }
+  }
+
+  /**
+   * 禁用用户的 Telegram 通知
+   */
+  async disableTelegramNotification(userId: number) {
+    try {
+      await this.db.db
+        .prepare("UPDATE users SET telegram_enabled = 0, updated_at = datetime('now', '+8 hours') WHERE id = ?")
+        .bind(userId)
+        .run();
+      console.log(`已禁用用户 ${userId} 的Telegram通知`);
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      console.error(`禁用用户 ${userId} Telegram通知失败:`, err);
     }
   }
 

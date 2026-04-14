@@ -12,6 +12,7 @@ import { WalletAPI } from "./api/wallet";
 import { StoreAPI } from "./api/store";
 import { PaymentAPI } from "./api/pay/PaymentAPI";
 import { TicketAPI } from "./api/ticket";
+import { TelegramAPI } from "./api/telegram";
 import { errorResponse, successResponse } from "./utils/response";
 import { DatabaseService } from "./services/database";
 import { validateSubscriptionDomain } from "./middleware/subscriptionAuth";
@@ -44,6 +45,7 @@ export async function handleRequest(
   const storeAPI = new StoreAPI(env);
   const paymentAPI = new PaymentAPI(env);
   const ticketAPI = new TicketAPI(env);
+  const telegramAPI = new TelegramAPI(env);
 
   // 路由映射
   const routes: Record<string, () => Promise<Response> | Response> = {
@@ -98,6 +100,11 @@ export async function handleRequest(
     "GET /api/user/bark-settings": () => userAPI.getBarkSettings(request),
     "PUT /api/user/bark-settings": () => userAPI.updateBarkSettings(request),
     "POST /api/user/bark-test": () => userAPI.testBarkNotification(request),
+    "GET /api/user/telegram-settings": () => userAPI.getTelegramSettings(request),
+    "PUT /api/user/telegram-settings": () => userAPI.updateTelegramSettings(request),
+    "POST /api/user/telegram-test": () => userAPI.testTelegramNotification(request),
+    "POST /api/user/telegram-bind-code": () => userAPI.refreshTelegramBindCode(request),
+    "POST /api/user/telegram-unbind": () => userAPI.unbindTelegram(request),
     "GET /api/user/login-logs": () => userAPI.getLoginLogs(request),
     "GET /api/user/online-devices": () => userAPI.getOnlineDevices(request),
     "GET /api/user/online-ips-detail": () => userAPI.getOnlineIpsDetail(request),
@@ -285,6 +292,10 @@ export async function handleRequest(
     "GET /api/payment/status/:trade_no": () => paymentAPI.getPaymentStatus(request),
     "GET /api/payment/notify": () => paymentAPI.paymentNotify(request),
     "POST /api/payment/notify": () => paymentAPI.paymentNotify(request),
+
+    // Telegram Bot Webhook
+    "GET /api/telegram/webhook": () => telegramAPI.handleWebhook(request),
+    "POST /api/telegram/webhook": () => telegramAPI.handleWebhook(request),
 
     // 管理员套餐管理 API
     "GET /api/admin/packages": () => adminAPI.getPackages(request),

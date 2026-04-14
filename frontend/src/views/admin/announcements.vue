@@ -224,7 +224,8 @@ const editingAnnouncement = ref<any>(null);
 const announcements = ref<Announcement[]>([]);
 const notificationChannelOptions = [
   { label: "邮件通知", value: "email" },
-  { label: "Bark 通知", value: "bark" }
+  { label: "Bark 通知", value: "bark" },
+  { label: "Telegram 通知", value: "telegram" }
 ];
 
 // 分页配置
@@ -280,11 +281,11 @@ const announcementForm = reactive({
 const announcementRules = {
   title: [
     { required: true, message: '请输入公告标题', trigger: 'blur' },
-    { min: 5, max: 100, message: '标题长度应在5-100个字符', trigger: 'blur' }
+    { min: 1, max: 100, message: '标题长度应在1-100个字符', trigger: 'blur' }
   ],
   content: [
     { required: true, message: '请输入公告内容', trigger: 'blur' },
-    { min: 10, max: 2000, message: '内容长度应在10-2000个字符', trigger: 'blur' }
+    { min: 1, max: 2000, message: '内容长度应在1-2000个字符', trigger: 'blur' }
   ],
   type: [
     { required: true, message: '请选择公告类型', trigger: 'change' }

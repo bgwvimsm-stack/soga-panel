@@ -67,8 +67,10 @@
 
           <!-- 公告内容 -->
           <div class="announcement-content">
-            <div v-if="announcement.content_html" v-html="announcement.content_html"></div>
-            <div v-else class="content-text">{{ announcement.content }}</div>
+            <div
+              class="content-text markdown-content"
+              v-html="renderAnnouncementContent(announcement)"
+            ></div>
           </div>
 
           <!-- 公告底部信息 -->
@@ -110,6 +112,7 @@ import {
   Clock
 } from '@element-plus/icons-vue';
 import { getAnnouncements, type Announcement } from '@/api/announcement';
+import { renderMarkdown } from '@/utils/markdown';
 
 // 响应式数据
 const announcements = ref<Announcement[]>([]);
@@ -119,6 +122,14 @@ const error = ref('');
 const hasMore = ref(true);
 const offset = ref(0);
 const limit = 10;
+
+const renderAnnouncementContent = (announcement: Announcement): string => {
+  const markdown = (announcement.content || '').trim();
+  if (markdown) {
+    return renderMarkdown(markdown);
+  }
+  return announcement.content_html || '';
+};
 
 // 加载公告列表
 const loadAnnouncements = async (isLoadMore = false) => {
@@ -408,6 +419,20 @@ onMounted(() => {
               padding: 0;
               color: #495057;
             }
+          }
+
+          :deep(blockquote) {
+            margin: 12px 0;
+            padding: 8px 12px;
+            border-left: 4px solid #dcdfe6;
+            background-color: #f8f9fa;
+            color: #606266;
+          }
+
+          :deep(hr) {
+            margin: 16px 0;
+            border: 0;
+            border-top: 1px solid #e4e7ed;
           }
         }
 

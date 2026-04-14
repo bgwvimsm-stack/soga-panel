@@ -19,6 +19,7 @@ mod payment_config;
 mod rebate;
 mod store;
 mod subscription;
+mod telegram;
 mod user;
 mod wallet;
 
@@ -75,6 +76,7 @@ pub fn create_router(state: AppState) -> Router {
         .nest("/api", store::router())
         .nest("/api/auth", auth::router())
         .nest("/api/user", user_router)
+        .nest("/api/telegram", telegram::router())
         .nest("/api/v1", node::router())
         .fallback(not_found)
         .with_state(state)
