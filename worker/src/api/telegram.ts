@@ -17,8 +17,27 @@ type DbRow = Record<string, unknown>;
 
 type TelegramMessage = {
   text?: string;
+  entities?: TelegramMessageEntity[];
   message_id?: string | number | bigint;
+  message_thread_id?: string | number | bigint;
+  from?: {
+    id?: string | number | bigint;
+    is_bot?: boolean;
+  };
   chat?: {
+    id?: string | number | bigint;
+    type?: string;
+    is_forum?: boolean;
+  };
+};
+
+type TelegramMessageEntity = {
+  type?: string;
+  offset?: string | number | bigint;
+  length?: string | number | bigint;
+  url?: string;
+  language?: string;
+  user?: {
     id?: string | number | bigint;
   };
 };
@@ -65,6 +84,25 @@ type BoundTelegramUser = {
   telegram_enabled: number;
 };
 
+type TicketTopicBindingRow = {
+  ticket_id?: number;
+  group_chat_id?: string;
+  message_thread_id?: number;
+};
+
+type TicketBasicRow = {
+  id?: number;
+  user_id?: number;
+  title?: string;
+  status?: string;
+};
+
+type TicketOperatorRow = {
+  id?: number;
+  is_admin?: number;
+  username?: string;
+};
+
 type TelegramCommand = {
   name: string;
   arg: string;
@@ -109,6 +147,7 @@ const REGISTER_HUMAN_CODE_CHARSET =
 const REGISTER_HUMAN_CODE_REGEX = /^[2-9A-HJ-NP-Z]+$/;
 const REGISTER_CAPTCHA_CALLBACK_PREFIX = "regcap:";
 const REGISTER_INVITE_SKIP_INPUTS = ["skip", "none", "-", "无", "跳过"];
+const TELEGRAM_CHAT_ID_REGEX = /^-?\d{5,20}$/;
 const SUBSCRIPTION_TYPES: { type: SubscriptionType; label: string }[] = [
   { type: "v2ray", label: "V2Ray" },
   { type: "clash", label: "Clash" },
@@ -181,6 +220,7 @@ export class TelegramAPI {
     try {
       await this.db.ensureUsersTelegramColumns();
       await this.db.ensureTelegramRegisterSessionTable();
+      await this.db.ensureTelegramTicketTopicsTable();
       await this.db.cleanupExpiredTelegramRegisterSessions();
 
       const botConfig = await this.loadBotConfig();
@@ -205,13 +245,26 @@ export class TelegramAPI {
       }
 
       const message = this.extractMessage(payload);
-      if (!message?.text) {
-        return successResponse({ ok: true, skipped: "no_text_message" });
+      if (!message) {
+        return successResponse({ ok: true, skipped: "no_message" });
       }
 
       const chatId = this.normalizeChatId(message.chat?.id);
       if (!chatId) {
         return successResponse({ ok: true, skipped: "no_chat_id" });
+      }
+
+      const topicReplyHandled = await this.handleTicketTopicReply(
+        message,
+        chatId,
+        botConfig
+      );
+      if (topicReplyHandled) {
+        return topicReplyHandled;
+      }
+
+      if (!message.text) {
+        return successResponse({ ok: true, skipped: "no_text_message" });
       }
 
       const command = this.parseCommand(message.text);
@@ -246,6 +299,9 @@ export class TelegramAPI {
       }
       if (command.name === "notify") {
         return await this.handleNotifyCommand(chatId, command.arg, botConfig);
+      }
+      if (command.name === "id") {
+        return await this.handleIdCommand(message, chatId, botConfig);
       }
       if (command.name === "help") {
         return await this.handleHelpCommand(chatId, botConfig);
@@ -1224,6 +1280,39 @@ export class TelegramAPI {
     return successResponse({ ok: true, command: "help" });
   }
 
+  private async handleIdCommand(
+    message: TelegramMessage,
+    chatId: string,
+    botConfig: TelegramBotConfig
+  ) {
+    const userId = this.normalizeChatId(message.from?.id);
+    const chatType = ensureString(message.chat?.type, "").trim() || "unknown";
+    const isForum = message.chat?.is_forum === true;
+    const threadId = this.normalizeThreadId(message.message_thread_id);
+
+    const lines = [
+      "ID 信息：",
+      `用户 ID：${userId || "-"}`,
+      `聊天 ID：${chatId}`,
+      `聊天类型：${chatType}`,
+      `论坛话题：${isForum ? "已开启" : "未开启/未知"}`,
+    ];
+    if (threadId > 0) {
+      lines.push(`话题 ID：${threadId}`);
+    }
+
+    await this.sendMessageIfEnabled(botConfig, chatId, lines.join("\n"));
+    return successResponse({
+      ok: true,
+      command: "id",
+      user_id: userId || null,
+      chat_id: chatId,
+      chat_type: chatType,
+      is_forum: isForum,
+      message_thread_id: threadId > 0 ? threadId : null,
+    });
+  }
+
   private async handleNotifyCommand(
     chatId: string,
     argText: string,
@@ -1488,6 +1577,277 @@ export class TelegramAPI {
       return raw.toString();
     }
     return "";
+  }
+
+  private normalizeThreadId(raw: unknown): number {
+    if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+      return Math.trunc(raw);
+    }
+    if (typeof raw === "string") {
+      const parsed = Number.parseInt(raw.trim(), 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        return parsed;
+      }
+    }
+    if (typeof raw === "bigint" && raw > 0n && raw <= BigInt(Number.MAX_SAFE_INTEGER)) {
+      return Number(raw);
+    }
+    return 0;
+  }
+
+  private normalizeEntityPos(raw: unknown): number {
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      return Math.max(0, Math.trunc(raw));
+    }
+    if (typeof raw === "string") {
+      const parsed = Number.parseInt(raw.trim(), 10);
+      if (Number.isFinite(parsed)) {
+        return Math.max(0, parsed);
+      }
+    }
+    if (typeof raw === "bigint") {
+      if (raw <= 0n) return 0;
+      if (raw > BigInt(Number.MAX_SAFE_INTEGER)) return Number.MAX_SAFE_INTEGER;
+      return Number(raw);
+    }
+    return 0;
+  }
+
+  private entityMarkers(entity: TelegramMessageEntity): { start: string; end: string } | null {
+    const type = ensureString(entity.type, "").trim();
+    if (!type) return null;
+
+    if (type === "bold") return { start: "**", end: "**" };
+    if (type === "italic") return { start: "*", end: "*" };
+    if (type === "strikethrough") return { start: "~~", end: "~~" };
+    if (type === "spoiler") return { start: "||", end: "||" };
+    if (type === "code") return { start: "`", end: "`" };
+    if (type === "pre") {
+      const language = ensureString(entity.language, "").trim();
+      return {
+        start: language ? `\`\`\`${language}\n` : "```\n",
+        end: "\n```",
+      };
+    }
+    if (type === "text_link") {
+      const url = ensureString(entity.url, "").trim();
+      if (!url) return null;
+      return { start: "[", end: `](${url})` };
+    }
+    if (type === "text_mention") {
+      const userId = this.normalizeChatId(entity.user?.id);
+      if (!userId) return null;
+      return { start: "[", end: `](tg://user?id=${userId})` };
+    }
+    return null;
+  }
+
+  private telegramTextToMarkdown(textRaw: string, entitiesRaw: unknown): string {
+    const text = ensureString(textRaw, "");
+    const entities = Array.isArray(entitiesRaw)
+      ? (entitiesRaw as TelegramMessageEntity[])
+      : [];
+    if (!entities.length || !text) {
+      return text;
+    }
+
+    const starts = new Map<number, string[]>();
+    const ends = new Map<number, string[]>();
+    for (const entity of entities) {
+      const markers = this.entityMarkers(entity);
+      if (!markers) continue;
+
+      const startPos = Math.min(this.normalizeEntityPos(entity.offset), text.length);
+      const length = this.normalizeEntityPos(entity.length);
+      if (length <= 0) continue;
+      const endPos = Math.min(startPos + length, text.length);
+      if (endPos <= startPos) continue;
+
+      const startList = starts.get(startPos) ?? [];
+      startList.push(markers.start);
+      starts.set(startPos, startList);
+
+      const endList = ends.get(endPos) ?? [];
+      endList.push(markers.end);
+      ends.set(endPos, endList);
+    }
+
+    let out = "";
+    for (let i = 0; i <= text.length; i += 1) {
+      const endMarkers = ends.get(i);
+      if (endMarkers?.length) {
+        for (let j = endMarkers.length - 1; j >= 0; j -= 1) {
+          out += endMarkers[j];
+        }
+      }
+
+      const startMarkers = starts.get(i);
+      if (startMarkers?.length) {
+        for (const marker of startMarkers) {
+          out += marker;
+        }
+      }
+
+      if (i < text.length) {
+        out += text[i];
+      }
+    }
+
+    return out;
+  }
+
+  private async loadTicketGroupChatId(): Promise<string> {
+    const value = (
+      await this.configManager.getSystemConfig("telegram_ticket_group_id", "")
+    )?.trim() || "";
+    if (!TELEGRAM_CHAT_ID_REGEX.test(value)) {
+      return "";
+    }
+    return value;
+  }
+
+  private async handleTicketTopicReply(
+    message: TelegramMessage,
+    chatId: string,
+    botConfig: TelegramBotConfig
+  ): Promise<Response | null> {
+    const ticketGroupChatId = await this.loadTicketGroupChatId();
+    if (!ticketGroupChatId || chatId !== ticketGroupChatId) {
+      return null;
+    }
+
+    const threadId = this.normalizeThreadId(message.message_thread_id);
+    if (threadId <= 0) {
+      return successResponse({ ok: true, skipped: "ticket_topic_missing_thread_id" });
+    }
+
+    if (message.from?.is_bot) {
+      return successResponse({ ok: true, skipped: "ticket_topic_sender_is_bot" });
+    }
+
+    const replyText = this.telegramTextToMarkdown(
+      ensureString(message.text, ""),
+      message.entities
+    ).trim();
+    if (!replyText) {
+      return successResponse({ ok: true, skipped: "ticket_topic_empty_text" });
+    }
+
+    const operatorTelegramId = this.normalizeChatId(message.from?.id);
+    if (!operatorTelegramId) {
+      return successResponse({ ok: true, skipped: "ticket_topic_missing_sender_id" });
+    }
+
+    const operator = await this.db.db
+      .prepare(
+        `
+          SELECT id, is_admin, username
+          FROM users
+          WHERE telegram_id = ?
+          LIMIT 1
+        `
+      )
+      .bind(operatorTelegramId)
+      .first<TicketOperatorRow | null>();
+    if (!operator || ensureNumber(operator.is_admin, 0) !== 1) {
+      return successResponse({ ok: true, skipped: "ticket_topic_sender_not_admin" });
+    }
+    const operatorId = ensureNumber(operator.id, 0);
+    if (operatorId <= 0) {
+      return successResponse({ ok: true, skipped: "ticket_topic_invalid_admin_id" });
+    }
+
+    const topicBinding = await this.db.db
+      .prepare(
+        `
+          SELECT ticket_id, group_chat_id, message_thread_id
+          FROM ticket_telegram_topics
+          WHERE group_chat_id = ? AND message_thread_id = ?
+          LIMIT 1
+        `
+      )
+      .bind(ticketGroupChatId, threadId)
+      .first<TicketTopicBindingRow | null>();
+    const ticketId = ensureNumber(topicBinding?.ticket_id, 0);
+    if (ticketId <= 0) {
+      return successResponse({ ok: true, skipped: "ticket_topic_not_mapped" });
+    }
+
+    const ticket = await this.db.db
+      .prepare(
+        `
+          SELECT id, user_id, title, status
+          FROM tickets
+          WHERE id = ?
+          LIMIT 1
+        `
+      )
+      .bind(ticketId)
+      .first<TicketBasicRow | null>();
+    if (!ticket) {
+      return successResponse({ ok: true, skipped: "ticket_topic_ticket_missing" });
+    }
+
+    await this.db.db
+      .prepare(
+        `
+          INSERT INTO ticket_replies (ticket_id, author_id, author_role, content, created_at)
+          VALUES (?, ?, 'admin', ?, datetime('now', '+8 hours'))
+        `
+      )
+      .bind(ticketId, operatorId, replyText)
+      .run();
+
+    await this.db.db
+      .prepare(
+        `
+          UPDATE tickets
+          SET status = 'answered',
+              last_reply_by_admin_id = ?,
+              last_reply_at = datetime('now', '+8 hours'),
+              updated_at = datetime('now', '+8 hours')
+          WHERE id = ?
+        `
+      )
+      .bind(operatorId, ticketId)
+      .run();
+
+    const ticketUserId = ensureNumber(ticket.user_id, 0);
+    if (ticketUserId > 0) {
+      const ticketOwner = await this.db.db
+        .prepare("SELECT telegram_id FROM users WHERE id = ? LIMIT 1")
+        .bind(ticketUserId)
+        .first<{ telegram_id?: string | null } | null>();
+      const ownerChatId = this.normalizeChatId(ticketOwner?.telegram_id);
+      if (ownerChatId) {
+        const operatorName =
+          ensureString(operator.username, "").trim() || `#${operatorId}`;
+        const ticketTitle = ensureString(ticket.title, "").trim();
+        await this.sendMessageIfEnabled(
+          botConfig,
+          ownerChatId,
+          [
+            `你的工单 #${ticketId} 已收到客服回复。`,
+            ticketTitle ? `标题：${ticketTitle}` : "",
+            `回复人：${operatorName}`,
+            "",
+            replyText,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          undefined,
+          "Markdown"
+        );
+      }
+    }
+
+    return successResponse({
+      ok: true,
+      command: "ticket_topic_reply_forwarded",
+      ticket_id: ticketId,
+      operator_id: operatorId,
+      thread_id: threadId,
+    });
   }
 
   private async loadBotConfig(): Promise<TelegramBotConfig> {
@@ -1815,7 +2175,8 @@ export class TelegramAPI {
     botConfig: TelegramBotConfig,
     chatId: string,
     text: string,
-    replyMarkup?: Record<string, unknown>
+    replyMarkup?: Record<string, unknown>,
+    parseMode?: "Markdown" | "MarkdownV2" | "HTML"
   ) {
     if (!botConfig.token) {
       return;
@@ -1823,24 +2184,63 @@ export class TelegramAPI {
 
     try {
       const endpoint = `${botConfig.apiBase.replace(/\/+$/, "")}/bot${botConfig.token}/sendMessage`;
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "User-Agent": "Soga-Panel/1.0",
-        },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-          disable_web_page_preview: true,
-          ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
-        }),
-      });
-      if (!response.ok) {
+      const basePayload: Record<string, unknown> = {
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: true,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {}),
+      };
+
+      const send = async (payload: Record<string, unknown>) => {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+            "User-Agent": "Soga-Panel/1.0",
+          },
+          body: JSON.stringify(payload),
+        });
+        const body = (await response.json().catch(() => ({}))) as {
+          ok?: boolean;
+          description?: string;
+        };
+        return { response, body };
+      };
+
+      if (parseMode) {
+        const first = await send({ ...basePayload, parse_mode: parseMode });
+        if (first.response.ok && first.body?.ok !== false) {
+          return;
+        }
+
+        const shouldFallback =
+          ensureString(first.body?.description, "").toLowerCase().includes("can't parse entities");
+        if (!shouldFallback) {
+          console.error(
+            "Telegram webhook reply failed:",
+            first.response.status,
+            ensureString(first.body?.description, "")
+          );
+          return;
+        }
+
+        const fallback = await send(basePayload);
+        if (!fallback.response.ok || fallback.body?.ok === false) {
+          console.error(
+            "Telegram webhook fallback reply failed:",
+            fallback.response.status,
+            ensureString(fallback.body?.description, "")
+          );
+        }
+        return;
+      }
+
+      const response = await send(basePayload);
+      if (!response.response.ok || response.body?.ok === false) {
         console.error(
           "Telegram webhook reply failed:",
-          response.status,
-          await response.text().catch(() => "")
+          response.response.status,
+          ensureString(response.body?.description, "")
         );
       }
     } catch (error) {
