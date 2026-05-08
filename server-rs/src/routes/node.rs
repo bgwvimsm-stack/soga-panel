@@ -170,11 +170,13 @@ async fn get_users(State(state): State<AppState>, headers: HeaderMap) -> Respons
 
         if auth.node_type == "v2ray" || auth.node_type == "vmess" || auth.node_type == "vless" {
             entry["uuid"] = json!(uuid);
-        } else if auth.node_type == "ss" || auth.node_type == "shadowsocks" {
+        } else if is_shadowsocks_node_type(&auth.node_type) {
             let resolved = build_ss_password(&ss_config, &password);
             entry["password"] = json!(resolved);
-        } else {
+        } else if is_ssr_node_type(&auth.node_type) {
             entry["password"] = json!(password);
+        } else {
+            entry["password"] = json!(resolve_uuid_password(&uuid, &password));
         }
 
         users.push(entry);
@@ -856,6 +858,19 @@ fn build_ss_password(node_config: &Value, user_password: &str) -> String {
     } else {
         node_password.to_string()
     }
+}
+
+fn resolve_uuid_password(uuid: &str, fallback_password: &str) -> String {
+    let trimmed = uuid.trim();
+    if !trimmed.is_empty() {
+        trimmed.to_string()
+    } else {
+        fallback_password.to_string()
+    }
+}
+
+fn is_shadowsocks_node_type(node_type: &str) -> bool {
+    matches!(node_type, "ss" | "shadowsocks")
 }
 
 fn is_ssr_node_type(node_type: &str) -> bool {

@@ -251,6 +251,22 @@ export class SogaAPI {
     return userPassword || nodePassword;
   }
 
+  private isShadowsocksNodeType(nodeType: string) {
+    return nodeType === "ss" || nodeType === "shadowsocks";
+  }
+
+  private isShadowsocksRNodeType(nodeType: string) {
+    return nodeType === "ssr" || nodeType === "shadowsocksr";
+  }
+
+  private resolveUuidPassword(user: any) {
+    const uuid = ensureString(user?.uuid, "");
+    if (uuid) {
+      return uuid;
+    }
+    return ensureString(user?.password ?? user?.passwd, "");
+  }
+
   // 获取用户信息
   async getUsers(request) {
     try {
@@ -295,15 +311,17 @@ export class SogaAPI {
         // 根据节点类型返回不同字段
         if (nodeType === "v2ray" || nodeType === "vmess" || nodeType === "vless") {
           return { ...baseUser, uuid: user.uuid };
-        } else if (nodeType === "ss" || nodeType === "shadowsocks") {
+        } else if (this.isShadowsocksNodeType(nodeType)) {
           const password = this.buildSSPassword(
             ssConfig,
             String(user.password ?? user.passwd ?? "")
           );
           return { ...baseUser, password };
+        } else if (this.isShadowsocksRNodeType(nodeType)) {
+          return { ...baseUser, password: ensureString(user.password ?? user.passwd, "") };
         } else {
-          // trojan, ss, hysteria 使用 password
-          return { ...baseUser, password: user.password };
+          // 非 SS/SSR 协议统一使用 uuid 作为密码字段
+          return { ...baseUser, password: this.resolveUuidPassword(user) };
         }
       });
 
