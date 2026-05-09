@@ -174,7 +174,11 @@
     <el-dialog v-model="showRechargeDialog" title="余额充值" width="500px">
       <el-form :model="rechargeForm" label-width="100px">
         <el-form-item label="充值金额" required>
-          <el-input v-model="rechargeForm.amount" placeholder="请输入充值金额">
+          <el-input
+            v-model="rechargeForm.amount"
+            placeholder="请输入充值金额"
+            @input="rechargeForm.amount = rechargeForm.amount.replace(/[^\d]/g, '')"
+          >
             <template #suffix>元</template>
           </el-input>
         </el-form-item>
@@ -582,8 +586,11 @@ const submitGiftCardRedeem = async () => {
 };
 
 const submitRecharge = async () => {
-  if (!rechargeForm.amount || parseFloat(rechargeForm.amount) <= 0) {
-    ElMessage.warning('请输入有效的充值金额');
+  const amountStr = rechargeForm.amount;
+  const amount = parseInt(amountStr, 10);
+
+  if (!amountStr || isNaN(amount) || amount <= 0 || !/^\d+$/.test(amountStr)) {
+    ElMessage.warning('请输入有效的充值金额 (必须为正整数)');
     return;
   }
 
@@ -594,14 +601,13 @@ const submitRecharge = async () => {
         ? window.location.origin.replace(/\/$/, '')
         : '';
     const payload: Record<string, unknown> = {
-      amount: parseFloat(rechargeForm.amount),
+      amount: amount,
       payment_method: rechargeForm.payment_method
     };
     if (origin) {
       payload.return_url = `${origin}/user/wallet`;
     }
-    const amount = Number(rechargeForm.amount);
-    
+
     // 如果是扫码支付相关方式，先展示弹窗进入加载状态
     const isQRCodeMethod = ['alipay', 'wechat', 'wxpay', 'qqpay'].includes(rechargeForm.payment_method);
     if (isQRCodeMethod) {
