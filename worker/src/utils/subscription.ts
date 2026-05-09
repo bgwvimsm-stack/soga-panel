@@ -175,6 +175,14 @@ function isVlessEncryptionEnabled(config: any, client: any) {
   return resolveVlessClientEncryption(config, client).toLowerCase() !== "none";
 }
 
+function resolveUuidCredential(user: any) {
+  const uuid = ensureString(user?.uuid, "").trim();
+  if (uuid) {
+    return uuid;
+  }
+  return ensureString(user?.passwd ?? user?.password, "");
+}
+
 /**
  * 生成 V2Ray 订阅配置
  * @param {Array} nodes - 节点列表
@@ -348,7 +356,7 @@ function generateTrojanLink(node, config, user, client = {}) {
 
   const queryString = params.toString();
   const host = formatHostForUrl(node.server);
-  const password = encodeURIComponent(String(user.passwd ?? ""));
+  const password = encodeURIComponent(resolveUuidCredential(user));
   const url = `trojan://${password}@${host}:${node.server_port}`;
 
   return queryString
@@ -437,7 +445,7 @@ function generateHysteriaLink(node, config, user, client = {}) {
   const params = new URLSearchParams();
 
   params.set("protocol", "udp");
-  params.set("auth", user.passwd);
+  params.set("auth", resolveUuidCredential(user));
   params.set("peer", node.tls_host || node.server);
   if (resolveSkipCertVerify(config, client, false)) {
     params.set("insecure", "1");
@@ -619,7 +627,7 @@ export function generateClashConfig(nodes, user) {
           type: "trojan",
           server,
           port,
-          password: user.passwd,
+          password: resolveUuidCredential(user),
           "skip-cert-verify": resolveSkipCertVerify(config, client, false),
           sni: tlsHost || config.sni || server,
         };
@@ -717,7 +725,7 @@ export function generateClashConfig(nodes, user) {
           type: "anytls",
           server,
           port,
-          password: String(user.passwd || config.password || ""),
+          password: resolveUuidCredential(user),
           "client-fingerprint": config.fingerprint || "chrome",
           udp: true,
           "idle-session-check-interval": config.idle_session_check_interval ?? 30,
@@ -746,7 +754,7 @@ export function generateClashConfig(nodes, user) {
           type: "hysteria2",
           server,
           port,
-          password: user.passwd,
+          password: resolveUuidCredential(user),
           "skip-cert-verify": resolveSkipCertVerify(config, client, false),
         };
 
@@ -997,7 +1005,7 @@ export function generateSingboxConfig(nodes, user): string {
           tag,
           server,
           server_port: port,
-          password: ensureString(user.passwd, "")
+          password: resolveUuidCredential(user)
         };
         const tlsMode = config.tls_type === "reality" ? "reality" : "tls";
         const tls = buildSingboxTls(config, tlsHost, server, tlsMode, client);
@@ -1013,7 +1021,7 @@ export function generateSingboxConfig(nodes, user): string {
           tag,
           server,
           server_port: port,
-          password: ensureString(user.passwd, ""),
+          password: resolveUuidCredential(user),
           up_mbps: ensureNumber(config.up_mbps, 100),
           down_mbps: ensureNumber(config.down_mbps, 100)
         };
@@ -1034,7 +1042,7 @@ export function generateSingboxConfig(nodes, user): string {
           tag,
           server,
           server_port: port,
-          password: ensureString(user.passwd || config.password, "")
+          password: resolveUuidCredential(user)
         };
         const tls = buildSingboxTls(config, tlsHost, server, "tls", client);
         if (tls) anytls.tls = tls;
@@ -1193,7 +1201,7 @@ function buildQuantumultXTrojanEntry(node, config, user) {
   const isWebsocket = streamType === "ws";
   const host = getHeaderHost(node, config);
 
-  pushOption(options, "password", user.passwd);
+  pushOption(options, "password", resolveUuidCredential(user));
   pushOption(options, "fast-open", false);
   pushOption(options, "tls-verification", false);
 
@@ -1214,7 +1222,7 @@ function buildQuantumultXTrojanEntry(node, config, user) {
 
 function buildQuantumultXAnyTLSEntry(node, config, user, client) {
   const options = [];
-  pushOption(options, "password", ensureString(user.passwd || config.password, ""));
+  pushOption(options, "password", resolveUuidCredential(user));
   pushOption(options, "over-tls", true);
   pushOption(options, "tls-host", getHeaderHost(node, config));
 
@@ -1367,7 +1375,7 @@ export function generateSurgeConfig(nodes, user) {
         break;
 
       case "trojan":
-        proxy = `${node.name} = trojan, ${server}, ${port}, password=${user.passwd}`;
+        proxy = `${node.name} = trojan, ${server}, ${port}, password=${resolveUuidCredential(user)}`;
         proxy += ", tls=true";
         if (resolveSkipCertVerify(config, client, false)) {
           proxy += ", skip-cert-verify=true";
@@ -1386,7 +1394,7 @@ export function generateSurgeConfig(nodes, user) {
         break;
 
       case "hysteria":
-        proxy = `${node.name} = hysteria2, ${server}, ${port}, password=${user.passwd}`;
+        proxy = `${node.name} = hysteria2, ${server}, ${port}, password=${resolveUuidCredential(user)}`;
         if (resolveSkipCertVerify(config, client, false)) {
           proxy += ", skip-cert-verify=true";
         }
@@ -1394,7 +1402,7 @@ export function generateSurgeConfig(nodes, user) {
         break;
 
       case "anytls":
-        proxy = `${node.name} = anytls, ${server}, ${port}, password=${ensureString(user.passwd || config.password, "")}`;
+        proxy = `${node.name} = anytls, ${server}, ${port}, password=${resolveUuidCredential(user)}`;
         if (resolveSkipCertVerify(config, client, false)) {
           proxy += ", skip-cert-verify=true";
         }

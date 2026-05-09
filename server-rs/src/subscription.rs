@@ -541,6 +541,15 @@ fn build_ss2022_password(config: &Value, user_password: &str) -> String {
     }
 }
 
+fn resolve_uuid_credential(user: &SubscriptionUser) -> String {
+    let uuid = user.uuid.as_deref().unwrap_or("").trim();
+    if !uuid.is_empty() {
+        uuid.to_string()
+    } else {
+        user.passwd.clone().unwrap_or_default()
+    }
+}
+
 fn normalize_alpn(value: Option<&Value>) -> Option<Vec<String>> {
     let list = match value {
         Some(Value::Array(values)) => values
@@ -1243,7 +1252,8 @@ fn generate_trojan_link(
     }
     let query = build_query_string(params);
     let host = format_host_for_url(server);
-    let password = encode(user.passwd.as_deref().unwrap_or(""));
+    let credential = resolve_uuid_credential(user);
+    let password = encode(&credential);
     if query.is_empty() {
         format!("trojan://{}@{}:{}#{}", password, host, port, encode(name))
     } else {
@@ -1305,7 +1315,7 @@ fn generate_hysteria_link(
 ) -> String {
     let mut params: Vec<(String, String)> = Vec::new();
     params.push(("protocol".to_string(), "udp".to_string()));
-    params.push(("auth".to_string(), user.passwd.clone().unwrap_or_default()));
+    params.push(("auth".to_string(), resolve_uuid_credential(user)));
     let peer = if !tls_host.is_empty() {
         tls_host.to_string()
     } else {
@@ -1347,7 +1357,8 @@ fn generate_anytls_link(
     user: &SubscriptionUser,
 ) -> String {
     let host = format_host_for_url(server);
-    let password = encode(user.passwd.as_deref().unwrap_or(""));
+    let credential = resolve_uuid_credential(user);
+    let password = encode(&credential);
     let peer = resolve_config_string_value(
         config,
         &["sni", "host", "server"],
@@ -1592,7 +1603,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 value.insert("port".to_string(), json!(port));
                 value.insert(
                     "password".to_string(),
-                    json!(user.passwd.clone().unwrap_or_default()),
+                    json!(resolve_uuid_credential(user)),
                 );
                 value.insert(
                     "skip-cert-verify".to_string(),
@@ -1767,11 +1778,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 value.insert("port".to_string(), json!(port));
                 value.insert(
                     "password".to_string(),
-                    json!(resolve_config_string_value(
-                        &config,
-                        &["password"],
-                        &user.passwd.clone().unwrap_or_default()
-                    )),
+                    json!(resolve_uuid_credential(user)),
                 );
                 value.insert(
                     "client-fingerprint".to_string(),
@@ -1818,7 +1825,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 value.insert("port".to_string(), json!(port));
                 value.insert(
                     "password".to_string(),
-                    json!(user.passwd.clone().unwrap_or_default()),
+                    json!(resolve_uuid_credential(user)),
                 );
                 value.insert(
                     "skip-cert-verify".to_string(),
@@ -2487,7 +2494,7 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                 value.insert("server_port".to_string(), json!(port));
                 value.insert(
                     "password".to_string(),
-                    json!(user.passwd.clone().unwrap_or_default()),
+                    json!(resolve_uuid_credential(user)),
                 );
                 let tls_mode = if ensure_string(config.get("tls_type")) == "reality" {
                     "reality"
@@ -2509,7 +2516,7 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                 value.insert("server_port".to_string(), json!(port));
                 value.insert(
                     "password".to_string(),
-                    json!(user.passwd.clone().unwrap_or_default()),
+                    json!(resolve_uuid_credential(user)),
                 );
                 value.insert(
                     "up_mbps".to_string(),
@@ -2542,11 +2549,7 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                 value.insert("server_port".to_string(), json!(port));
                 value.insert(
                     "password".to_string(),
-                    json!(resolve_config_string_value(
-                        &config,
-                        &["password"],
-                        &user.passwd.clone().unwrap_or_default()
-                    )),
+                    json!(resolve_uuid_credential(user)),
                 );
                 if let Some(tls) = build_singbox_tls(&config, &tls_host, &server, "tls", &client) {
                     value.insert("tls".to_string(), tls);
@@ -2912,7 +2915,7 @@ fn build_quantumultx_trojan_entry(
     let host = get_header_host(server, tls_host, config);
     options.push(format!(
         "password={}",
-        user.passwd.clone().unwrap_or_default()
+        resolve_uuid_credential(user)
     ));
     options.push("fast-open=false".to_string());
     options.push("tls-verification=false".to_string());
@@ -2940,12 +2943,7 @@ fn build_quantumultx_anytls_entry(
     client: &Value,
 ) -> String {
     let mut options: Vec<String> = Vec::new();
-    let user_password = user.passwd.clone().unwrap_or_default();
-    let password = if !user_password.is_empty() {
-        user_password
-    } else {
-        resolve_config_string(config, &["password"])
-    };
+    let password = resolve_uuid_credential(user);
     options.push(format!("password={password}"));
     options.push("over-tls=true".to_string());
 
@@ -3064,7 +3062,7 @@ pub fn generate_surge_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
             ),
             "trojan" => format!(
                 "{name} = trojan, {server}, {port}, password={}, sni={}",
-                user.passwd.clone().unwrap_or_default(),
+                resolve_uuid_credential(user),
                 resolve_config_string_value(
                     &config,
                     &["sni"],
@@ -3082,16 +3080,12 @@ pub fn generate_surge_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
             ),
             "hysteria" => format!(
                 "{name} = hysteria2, {server}, {port}, password={}",
-                user.passwd.clone().unwrap_or_default()
+                resolve_uuid_credential(user)
             ),
             "anytls" => {
                 let mut line = format!(
                     "{name} = anytls, {server}, {port}, password={}",
-                    resolve_config_string_value(
-                        &config,
-                        &["password"],
-                        &user.passwd.clone().unwrap_or_default()
-                    )
+                    resolve_uuid_credential(user)
                 );
                 if resolve_skip_cert_verify(&config, &client, false) {
                     line.push_str(", skip-cert-verify=true");
