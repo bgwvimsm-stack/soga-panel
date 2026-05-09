@@ -218,13 +218,34 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- 扫码支付对话框 -->
+    <PaymentQRCodeDialog
+      v-model="showQRCodeDialog"
+      :url="qrcodeUrl"
+      :amount="qrcodeAmount"
+      :payment-type="qrcodePaymentType"
+      @success="handleRechargeSuccess"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
 import { ElMessage } from 'element-plus';
-import { Wallet, CreditCard, ShoppingCart, Clock, Plus, Shop, ChatDotRound, Coin } from '@element-plus/icons-vue';
+import { Wallet, CreditCard, ShoppingCart, Clock, Plus, ChatDotRound } from '@element-plus/icons-vue';
+import PaymentQRCodeDialog from '@/components/PaymentQRCodeDialog.vue';
+
+// 扫码支付相关
+const showQRCodeDialog = ref(false);
+const qrcodeUrl = ref('');
+const qrcodeAmount = ref(0);
+const qrcodePaymentType = ref('alipay');
+
+const handleRechargeSuccess = async () => {
+  await Promise.all([loadRechargeRecords(), loadBalanceInfo()]);
+};
+
 import Alipay from '@/components/PaymentIcons/Alipay.vue';
 import Wechat from '@/components/PaymentIcons/Wechat.vue';
 import Crypto from '@/components/PaymentIcons/Crypto.vue';
@@ -579,41 +600,73 @@ const submitRecharge = async () => {
     if (origin) {
       payload.return_url = `${origin}/user/wallet`;
     }
-    const response = await http.post('/wallet/recharge', payload);
-
-    if (response.code === 0 && response.data) {
-      ElMessage.success('充值订单创建成功，正在跳转到支付页面...');
+    const amount = Number(rechargeForm.amount);
+    
+    // 如果是扫码支付相关方式，先展示弹窗进入加载状态
+    const isQRCodeMethod = ['alipay', 'wechat', 'wxpay', 'qqpay'].includes(rechargeForm.payment_method);
+    if (isQRCodeMethod) {
+      qrcodeUrl.value = ''; // 置空触发加载态
+      qrcodeAmount.value = amount;
+      qrcodePaymentType.value = rechargeForm.payment_method;
+      showQRCodeDialog.value = true;
       showRechargeDialog.value = false;
-      rechargeForm.amount = '';
+    }
 
-      // 处理支付表单（优先使用payment_form）
-      if (response.data.payment_form) {
-        // 创建新窗口并写入HTML表单
-        const paymentWindow = window.open('', '_blank');
-        if (paymentWindow) {
-          paymentWindow.document.write(response.data.payment_form);
-          paymentWindow.document.close();
-        } else {
-          ElMessage.error('请允许弹出窗口以完成支付');
+    try {
+      const response = await http.post('/wallet/recharge', payload);
+
+      if (response.code === 0 && response.data) {
+        const data = response.data;
+        const payUrl = data.pay_url || data.payment_url;
+
+        // 如果已经打开了扫码框，更新其数据
+        if (showQRCodeDialog.value) {
+          if (payUrl && !data.payment_form) {
+            qrcodeUrl.value = payUrl;
+            qrcodeAmount.value = data.amount || data.payment_amount || amount;
+            // 刷新记录
+            await handleRechargeSuccess();
+          } else {
+            // 后端返回了非二维码内容（如表单或直接成功），关闭扫码框走原逻辑
+            showQRCodeDialog.value = false;
+          }
         }
-      } else if (response.data.payment_url || response.data.pay_url) {
-        // 备用方案：直接跳转URL
-        const payUrl = response.data.payment_url || response.data.pay_url;
-        window.open(payUrl, '_blank');
-      } else {
-        ElMessage.error('支付链接获取失败');
-      }
 
-      // 刷新充值记录和余额信息
-      await Promise.all([loadRechargeRecords(), loadBalanceInfo()]);
-    } else {
-      ElMessage.error(response.message || '创建充值订单失败');
+        // 如果不是扫码框模式，或者扫码框刚被关闭，走原逻辑
+        if (!showQRCodeDialog.value) {
+          showRechargeDialog.value = false;
+          rechargeForm.amount = '';
+
+          // 处理支付表单
+          if (data.payment_form) {
+            const paymentWindow = window.open('', '_blank');
+            if (paymentWindow) {
+              paymentWindow.document.write(data.payment_form);
+              paymentWindow.document.close();
+            } else {
+              ElMessage.error('请允许弹出窗口以完成支付');
+            }
+          } else if (payUrl) {
+            window.open(payUrl, '_blank');
+          } else {
+            // 如果是余额支付直接成功
+            ElMessage.success('充值成功');
+          }
+          await handleRechargeSuccess();
+        }
+      } else {
+        showQRCodeDialog.value = false;
+        ElMessage.error(response.message || '创建充值订单失败');
+      }
+    } catch (error: any) {
+      showQRCodeDialog.value = false;
+      console.error('创建充值订单失败:', error);
+      ElMessage.error(error.message || '创建充值订单失败');
+    } finally {
+      submitting.value = false;
     }
   } catch (error: any) {
-    console.error('创建充值订单失败:', error);
-    ElMessage.error(error.message || '创建充值订单失败');
-  } finally {
-    submitting.value = false;
+    // 捕获 MessageBox 取消
   }
 };
 

@@ -14,6 +14,7 @@ interface EpayRuntimeConfig {
   apiUrl: string;
   notifyUrl: string;
   returnUrl: string;
+  paymentMode: "redirect" | "api";
 }
 
 import type { PaymentParams } from "../types";
@@ -30,6 +31,15 @@ interface CallbackParams {
   [key: string]: unknown;
 }
 
+interface ApiResult {
+  code: number;
+  msg: string;
+  trade_no?: string;
+  payurl?: string;
+  qrcode?: string;
+  urlscheme?: string;
+}
+
 export class EpayProvider {
   private readonly config: EpayRuntimeConfig;
   private readonly env: Env;
@@ -44,6 +54,7 @@ export class EpayProvider {
       apiUrl: ensureString(env.EPAY_API_URL) || "https://pay.example.com",
       notifyUrl: ensureString(env.EPAY_NOTIFY_URL),
       returnUrl: ensureString(env.EPAY_RETURN_URL),
+      paymentMode: (ensureString(env.EPAY_PAYMENT_MODE).toLowerCase() as "redirect" | "api") || "redirect",
     };
 
     this.logger = getLogger(env);
@@ -103,7 +114,10 @@ export class EpayProvider {
   ): Promise<string> {
     const sortedKeys = Object.keys(params).sort();
     const signStr =
-      sortedKeys.map((k) => `${k}=${params[k] ?? ""}`).join("&") + key;
+      sortedKeys
+        .filter(k => k !== "sign" && k !== "sign_type" && params[k] !== "" && params[k] !== null && params[k] !== undefined)
+        .map((k) => `${k}=${params[k]}`)
+        .join("&") + key;
 
     const encoder = new TextEncoder();
     const data = encoder.encode(signStr);
@@ -141,7 +155,7 @@ export class EpayProvider {
 
     const amountValue = orderAmount;
 
-    const payParams: Record<string, string> = {
+    const payParams: Record<string, any> = {
       pid: this.config.pid,
       type: paymentType,
       out_trade_no: tradeNo,
@@ -152,6 +166,7 @@ export class EpayProvider {
           ? "账户充值"
           : `套餐购买-${packageName}`,
       money: amountValue.toString(),
+      clientip: paymentParams.clientip || "127.0.0.1",
       sitename: await this.configManager.getSystemConfig(
         "site_name",
         ensureString(this.env.SITE_NAME) || "Soga面板"
@@ -161,24 +176,81 @@ export class EpayProvider {
     payParams.sign = await this.generateSign(payParams, this.config.key);
     payParams.sign_type = "MD5";
 
-    const payUrl = `${this.config.apiUrl}/submit.php?${new URLSearchParams(
-      payParams
-    ).toString()}`;
+    try {
+      if (this.config.paymentMode === "api") {
+        const apiUrl = `${this.config.apiUrl.replace(/\/$/, "")}/mapi.php`;
+        const response = await fetch(apiUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams(payParams).toString(),
+        });
 
-    this.logger.info("易支付订单创建", {
-      trade_no: tradeNo,
-      order_type: orderType,
-      amount: amountValue,
-    });
+        const text = await response.text();
+        let data: ApiResult;
+        try {
+          data = JSON.parse(text) as ApiResult;
+        } catch (e) {
+          this.logger.error("易支付 API 响应解析失败", { text });
+          return {
+            success: false,
+            trade_no: tradeNo,
+            error: "支付接口响应解析失败",
+            amount: amountValue,
+            order_type: orderType,
+          };
+        }
 
-    return {
-      success: true,
-      trade_no: tradeNo,
-      pay_url: payUrl,
-      amount: amountValue,
-      order_type: orderType,
-      status: "pending",
-    };
+        if (data.code === 1) {
+          return {
+            success: true,
+            trade_no: tradeNo,
+            pay_url: data.payurl || data.qrcode || data.urlscheme,
+            type: data.payurl ? "url" : data.qrcode ? "qrcode" : "scheme",
+            amount: amountValue,
+            order_type: orderType,
+            status: "pending",
+          };
+        } else {
+          return {
+            success: false,
+            trade_no: tradeNo,
+            error: data.msg || "支付发起失败",
+            amount: amountValue,
+            order_type: orderType,
+          };
+        }
+      }
+
+      const payUrl = `${this.config.apiUrl.replace(/\/$/, "")}/submit.php?${new URLSearchParams(
+        payParams
+      ).toString()}`;
+
+      this.logger.info("易支付订单创建", {
+        trade_no: tradeNo,
+        order_type: orderType,
+        amount: amountValue,
+      });
+
+      return {
+        success: true,
+        trade_no: tradeNo,
+        pay_url: payUrl,
+        amount: amountValue,
+        order_type: orderType,
+        status: "pending",
+      };
+    } catch (error) {
+      this.logger.error("易支付订单创建异常", error);
+      return {
+        success: false,
+        trade_no: tradeNo,
+        error: "系统繁忙，请稍后再试",
+        amount: amountValue,
+        order_type: orderType,
+      };
+    }
   }
 
   // 验证回调签名

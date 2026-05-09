@@ -521,6 +521,7 @@ async fn post_purchase(
         subject: package.name.clone(),
         notify_url,
         return_url: return_url.unwrap_or_default(),
+        clientip: get_client_ip(&headers),
     };
     let pay = match payment::create_payment(&state.env, &order, Some(channel_to_use)).await {
         Ok(value) => value,
@@ -559,12 +560,33 @@ async fn post_purchase(
           "status": 0,
           "status_text": status_text,
           "payment_url": pay.pay_url,
+          "pay_url": pay.pay_url,
+          "type": pay.pay_type,
           "payment_amount": payment_amount,
           "user_balance": user_balance
         }),
         &message,
     )
     .into_response()
+}
+
+fn get_client_ip(headers: &axum::http::HeaderMap) -> Option<String> {
+    let candidates = [
+        "x-client-ip",
+        "x-forwarded-for",
+        "cf-connecting-ip",
+        "true-client-ip",
+        "x-real-ip",
+    ];
+    for key in candidates {
+        if let Some(raw) = headers.get(key).and_then(|value| value.to_str().ok()) {
+            let first = raw.split(',').next().unwrap_or("").trim();
+            if !first.is_empty() {
+                return Some(first.to_string());
+            }
+        }
+    }
+    None
 }
 
 #[derive(Deserialize)]

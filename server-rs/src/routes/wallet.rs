@@ -415,6 +415,7 @@ async fn post_recharge(
         subject: "账户充值".to_string(),
         notify_url: notify_url.clone(),
         return_url: return_url.clone(),
+        clientip: get_client_ip(&headers),
     };
 
     let result = match create_payment(&state.env, &order, Some(selected_channel)).await {
@@ -442,11 +443,31 @@ async fn post_recharge(
           "amount": amount,
           "status": 0,
           "method": result.method,
-          "pay_url": result.pay_url
+          "pay_url": result.pay_url,
+          "type": result.pay_type,
         }),
         "充值订单已创建",
     )
     .into_response()
+}
+
+fn get_client_ip(headers: &axum::http::HeaderMap) -> Option<String> {
+    let candidates = [
+        "x-client-ip",
+        "x-forwarded-for",
+        "cf-connecting-ip",
+        "true-client-ip",
+        "x-real-ip",
+    ];
+    for key in candidates {
+        if let Some(raw) = headers.get(key).and_then(|value| value.to_str().ok()) {
+            let first = raw.split(',').next().unwrap_or("").trim();
+            if !first.is_empty() {
+                return Some(first.to_string());
+            }
+        }
+    }
+    None
 }
 
 #[derive(Deserialize)]

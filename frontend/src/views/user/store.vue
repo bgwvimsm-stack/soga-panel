@@ -238,12 +238,32 @@
           </div>
         </template>
       </el-dialog>
+
+      <!-- 扫码支付对话框 -->
+      <PaymentQRCodeDialog
+        v-model="showQRCodeDialog"
+        :url="qrcodeUrl"
+        :amount="qrcodeAmount"
+        :payment-type="qrcodePaymentType"
+        @success="handlePurchaseSuccess"
+      />
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, reactive, computed } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import PaymentQRCodeDialog from '@/components/PaymentQRCodeDialog.vue';
+
+// 扫码支付相关
+const showQRCodeDialog = ref(false);
+const qrcodeUrl = ref('');
+const qrcodeAmount = ref(0);
+const qrcodePaymentType = ref('alipay');
+
+const handlePurchaseSuccess = async () => {
+  await loadUserBalance();
+};
 import {
   Star,
   Connection,
@@ -483,73 +503,96 @@ const confirmPurchase = async () => {
 
     purchaseSubmitting.value = true;
 
-    const requestData: any = {
-      package_id: purchaseForm.package_id
-    };
+    // 如果是扫码支付相关方式，先展示弹窗进入加载状态
+    const isQRCodeMethod = ['alipay', 'wechat', 'wxpay', 'qqpay'].includes(purchaseForm.purchase_type);
+    const amount = couponInfo.value ? couponInfo.value.final_price : (selectedPackage.value?.price || 0);
 
-    if (couponCode.value.trim()) {
-      requestData.coupon_code = couponCode.value.trim();
+    if (isQRCodeMethod) {
+      qrcodeUrl.value = ''; // 置空触发加载态
+      qrcodeAmount.value = amount;
+      qrcodePaymentType.value = purchaseForm.purchase_type;
+      showQRCodeDialog.value = true;
+      showPurchaseDialogVisible.value = false;
     }
 
-    // 根据 purchase_type 判断支付类型
-    if (purchaseForm.purchase_type === 'balance') {
-      // 余额支付
-      requestData.purchase_type = 'balance';
-    } else {
-      // 在线支付（alipay 或 wechat）
-      requestData.purchase_type = 'direct';
-      requestData.payment_method = purchaseForm.purchase_type; // alipay 或 wechat
-    }
+    try {
+      const requestData: any = {
+        package_id: purchaseForm.package_id
+      };
 
-    const origin =
-      typeof window !== 'undefined' && window.location?.origin
-        ? window.location.origin.replace(/\/$/, '')
-        : '';
-    if (origin) {
-      requestData.return_url = `${origin}/user/store`;
-    }
-
-    const response = await http.post('/packages/purchase', requestData);
-
-    if (response.code === 0) {
-      const data = response.data;
-
-      if (data.status === 1) {
-        // 余额支付，直接成功
-        ElMessage.success('套餐购买成功！');
-        showPurchaseDialogVisible.value = false;
-        resetCouponState();
-
-        // 刷新余额
-        loadUserBalance();
-      } else if (data.status === 0) {
-        // 需要在线支付
-        const isMixed = data.purchase_type && (
-          data.purchase_type === 'smart_topup' || String(data.purchase_type).startsWith('balance_')
-        );
-        if (isMixed) {
-          // 智能补差额支付
-          ElMessage.success(`需要补差额 ¥${data.payment_amount.toFixed(2)}，正在跳转到支付页面...`);
-        } else {
-          // 直接支付
-          ElMessage.success('订单创建成功，正在跳转到支付页面...');
-        }
-        showPurchaseDialogVisible.value = false;
-        resetCouponState();
-
-        // 跳转到支付页面
-        window.open(data.payment_url, '_blank');
+      if (couponCode.value.trim()) {
+        requestData.coupon_code = couponCode.value.trim();
       }
-    } else {
-      ElMessage.error(response.data?.message || '购买失败');
+
+      // 根据 purchase_type 判断支付类型
+      if (purchaseForm.purchase_type === 'balance') {
+        // 余额支付
+        requestData.purchase_type = 'balance';
+      } else {
+        // 在线支付（alipay 或 wechat）
+        requestData.purchase_type = 'direct';
+        requestData.payment_method = purchaseForm.purchase_type; // alipay 或 wechat
+      }
+
+      const origin =
+        typeof window !== 'undefined' && window.location?.origin
+          ? window.location.origin.replace(/\/$/, '')
+          : '';
+      if (origin) {
+        requestData.return_url = `${origin}/user/store`;
+      }
+
+      const response = await http.post('/packages/purchase', requestData);
+
+      if (response.code === 0) {
+        const data = response.data;
+        const payUrl = data.payment_url || data.pay_url;
+
+        // 如果已经打开了扫码框，更新其数据
+        if (showQRCodeDialog.value) {
+          if (payUrl && !data.payment_form) {
+            qrcodeUrl.value = payUrl;
+            qrcodeAmount.value = data.payment_amount || data.amount || amount;
+            // 刷新余额
+            await loadUserBalance();
+          } else {
+            showQRCodeDialog.value = false;
+          }
+        }
+
+        if (!showQRCodeDialog.value) {
+          if (data.status === 1) {
+            // 余额支付，直接成功
+            ElMessage.success('套餐购买成功！');
+            showPurchaseDialogVisible.value = false;
+            resetCouponState();
+            loadUserBalance();
+          } else if (data.status === 0) {
+            // 需要在线支付
+            showPurchaseDialogVisible.value = false;
+            resetCouponState();
+
+            // 跳转到支付页面
+            if (payUrl) {
+              window.open(payUrl, '_blank');
+            }
+          }
+        }
+      } else {
+        showQRCodeDialog.value = false;
+        ElMessage.error(response.data?.message || '购买失败');
+      }
+    } catch (error: any) {
+      showQRCodeDialog.value = false;
+      if (error !== 'cancel') {
+        console.error('购买套餐失败:', error);
+        ElMessage.error(error.response?.data?.message || '购买失败');
+      }
+    } finally {
+      purchaseSubmitting.value = false;
     }
   } catch (error: any) {
-    if (error !== 'cancel') {
-      console.error('购买套餐失败:', error);
-      ElMessage.error(error.response?.data?.message || '购买失败');
-    }
-  } finally {
-    purchaseSubmitting.value = false;
+    // 捕获 MessageBox 取消
   }
 };
 
