@@ -3,6 +3,7 @@ use md5::compute as md5_compute;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
+use urlencoding::encode;
 
 #[derive(Clone, Debug)]
 pub struct PaymentOrder {
@@ -11,14 +12,17 @@ pub struct PaymentOrder {
     pub subject: String,
     pub notify_url: String,
     pub return_url: String,
+    pub clientip: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PaymentCreateResult {
     pub method: String,
     pub pay_url: Option<String>,
     pub success: bool,
     pub message: Option<String>,
+    #[serde(rename = "type")]
+    pub pay_type: Option<String>, // "url", "qrcode", "scheme"
 }
 
 #[derive(Clone, Debug)]
@@ -157,10 +161,14 @@ pub fn verify_epay_callback(
     let sign_key = env.epay_key.clone().unwrap_or_default();
     let mut params = std::collections::BTreeMap::<String, String>::new();
     for (key, value) in payload.iter() {
-        if key == "sign" {
+        if key == "sign" || key == "sign_type" {
             continue;
         }
-        params.insert(key.clone(), value_to_string(value));
+        let val = value_to_string(value);
+        if val.is_empty() {
+            continue;
+        }
+        params.insert(key.clone(), val);
     }
     let base = params
         .iter()
@@ -264,7 +272,7 @@ pub async fn create_payment(
         get_channel_provider_type(env, channel).ok_or_else(|| "支付方式未配置".to_string())?;
 
     match provider {
-        "epay" => Ok(create_epay_payment(env, order, channel)),
+        "epay" => create_epay_payment(env, order, channel).await,
         "epusdt" => create_epusdt_payment(env, order).await,
         _ => Err("支付方式未配置".to_string()),
     }
@@ -292,21 +300,25 @@ fn is_epusdt_configured(env: &AppEnv) -> bool {
             .is_some_and(|v| !v.trim().is_empty())
 }
 
-fn create_epay_payment(env: &AppEnv, order: &PaymentOrder, channel: &str) -> PaymentCreateResult {
+async fn create_epay_payment(env: &AppEnv, order: &PaymentOrder, channel: &str) -> Result<PaymentCreateResult, String> {
     if !is_epay_configured(env) {
-        return PaymentCreateResult {
+        return Ok(PaymentCreateResult {
             method: "epay".to_string(),
             pay_url: None,
             success: false,
             message: Some("支付方式未配置".to_string()),
-        };
+            pay_type: None,
+        });
     }
 
     let api_url = env
         .epay_api_url
         .as_ref()
         .map(|value| value.trim().trim_end_matches('/'))
-        .unwrap_or("");
+        .unwrap_or("https://pay.example.com");
+    
+    let payment_mode = env.epay_payment_mode.as_deref().unwrap_or("redirect").to_lowercase();
+    
     let pay_type = if channel == "wxpay" {
         "wxpay"
     } else {
@@ -331,6 +343,7 @@ fn create_epay_payment(env: &AppEnv, order: &PaymentOrder, channel: &str) -> Pay
     params.insert("return_url".to_string(), return_url);
     params.insert("name".to_string(), order.subject.clone());
     params.insert("money".to_string(), order.amount.to_string());
+    params.insert("clientip".to_string(), order.clientip.clone().unwrap_or_else(|| "127.0.0.1".to_string()));
     params.insert(
         "sitename".to_string(),
         env.site_name
@@ -348,22 +361,109 @@ fn create_epay_payment(env: &AppEnv, order: &PaymentOrder, channel: &str) -> Pay
     params.insert("sign".to_string(), sign);
     params.insert("sign_type".to_string(), "MD5".to_string());
 
-    let query = params
-        .iter()
-        .map(|(k, v)| format!("{k}={}", urlencoding::encode(v)))
-        .collect::<Vec<_>>()
-        .join("&");
-    let pay_url = if api_url.is_empty() {
-        "".to_string()
-    } else {
-        format!("{api_url}/submit.php?{query}")
-    };
+    if payment_mode == "api" {
+        let mapi_url = format!("{api_url}/mapi.php");
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .map_err(|err| {
+                eprintln!("Failed to build reqwest client: {}", err);
+                err.to_string()
+            })?;
 
-    PaymentCreateResult {
-        method: "epay".to_string(),
-        pay_url: Some(pay_url),
-        success: true,
-        message: None,
+        let response = client
+            .post(mapi_url)
+            .form(&params)
+            .send()
+            .await
+            .map_err(|err| {
+                eprintln!("易支付接口请求失败: {}", err);
+                format!("易支付接口请求失败: {err}")
+            })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            eprintln!("易支付接口错误: {} - {}", status, text);
+            return Ok(PaymentCreateResult {
+                method: "epay".to_string(),
+                pay_url: None,
+                success: false,
+                message: Some(format!("易支付接口错误: {}", status)),
+                pay_type: None,
+            });
+        }
+
+        #[derive(Deserialize)]
+        struct EpayApiResponse {
+            code: i64,
+            msg: Option<String>,
+            payurl: Option<String>,
+            qrcode: Option<String>,
+            urlscheme: Option<String>,
+        }
+
+        let text = response.text().await.map_err(|err| {
+            eprintln!("Failed to get response text: {}", err);
+            err.to_string()
+        })?;
+        
+        let data: EpayApiResponse = match serde_json::from_str(&text) {
+            Ok(d) => d,
+            Err(err) => {
+                eprintln!("易支付响应解析失败: {} - Response: {}", err, text);
+                return Ok(PaymentCreateResult {
+                    method: "epay".to_string(),
+                    pay_url: None,
+                    success: false,
+                    message: Some("支付接口响应格式错误".to_string()),
+                    pay_type: None,
+                });
+            }
+        };
+
+        if data.code == 1 {
+            let (pay_url, p_type) = if let Some(url) = data.payurl {
+                (Some(url), Some("url".to_string()))
+            } else if let Some(qr) = data.qrcode {
+                (Some(qr), Some("qrcode".to_string()))
+            } else if let Some(scheme) = data.urlscheme {
+                (Some(scheme), Some("scheme".to_string()))
+            } else {
+                (None, None)
+            };
+
+            Ok(PaymentCreateResult {
+                method: "epay".to_string(),
+                pay_url,
+                success: true,
+                message: None,
+                pay_type: p_type,
+            })
+        } else {
+            Ok(PaymentCreateResult {
+                method: "epay".to_string(),
+                pay_url: None,
+                success: false,
+                message: data.msg.or(Some("易支付下单失败".to_string())),
+                pay_type: None,
+            })
+        }
+    } else {
+        let query = params
+            .iter()
+            .map(|(k, v)| format!("{k}={}", encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        let pay_url = format!("{api_url}/submit.php?{query}");
+
+        Ok(PaymentCreateResult {
+            method: "epay".to_string(),
+            pay_url: Some(pay_url),
+            success: true,
+            message: None,
+            pay_type: Some("url".to_string()),
+        })
     }
 }
 
@@ -377,6 +477,7 @@ async fn create_epusdt_payment(
             pay_url: None,
             success: false,
             message: Some("USDT 支付未配置".to_string()),
+            pay_type: None,
         });
     }
 
@@ -386,6 +487,7 @@ async fn create_epusdt_payment(
             pay_url: None,
             success: false,
             message: Some("缺少订单编号".to_string()),
+            pay_type: None,
         });
     }
     if !order.amount.is_finite() || order.amount <= 0.0 {
@@ -394,6 +496,7 @@ async fn create_epusdt_payment(
             pay_url: None,
             success: false,
             message: Some("金额异常".to_string()),
+            pay_type: None,
         });
     }
 
@@ -458,6 +561,7 @@ async fn create_epusdt_payment(
             pay_url: None,
             success: false,
             message: Some(format!("USDT 支付接口错误: {} {}", status.as_u16(), text)),
+            pay_type: None,
         });
     }
 
@@ -475,6 +579,7 @@ async fn create_epusdt_payment(
                 data.message
                     .unwrap_or_else(|| "创建 USDT 支付订单失败".to_string()),
             ),
+            pay_type: None,
         });
     }
 
@@ -491,6 +596,7 @@ async fn create_epusdt_payment(
                 data.message
                     .unwrap_or_else(|| "创建 USDT 支付订单失败".to_string()),
             ),
+            pay_type: None,
         });
     }
 
@@ -499,6 +605,7 @@ async fn create_epusdt_payment(
         pay_url,
         success: true,
         message: None,
+        pay_type: Some("url".to_string()),
     })
 }
 
@@ -515,7 +622,7 @@ fn generate_epusdt_sign(
     md5_hex(&(base + &token))
 }
 
-fn md5_hex(input: &str) -> String {
+pub fn md5_hex(input: &str) -> String {
     format!("{:x}", md5_compute(input.as_bytes()))
 }
 
@@ -528,7 +635,7 @@ fn get_trade_no(payload: &serde_json::Map<String, Value>) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-fn value_to_string(value: &Value) -> String {
+pub fn value_to_string(value: &Value) -> String {
     if let Some(text) = value.as_str() {
         return text.to_string();
     }
@@ -548,7 +655,7 @@ fn value_to_string(value: &Value) -> String {
     String::new()
 }
 
-fn value_to_f64(value: &Value) -> Option<f64> {
+pub fn value_to_f64(value: &Value) -> Option<f64> {
     if let Some(number) = value.as_f64() {
         return Some(number);
     }

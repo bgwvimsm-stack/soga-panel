@@ -59,6 +59,8 @@ EPAY_KEY="C4D038B4BED09FDB1471EF51EC3A32CD"
 EPAY_API_URL="http://localhost:3001"
 # 支付回调通知地址
 EPAY_NOTIFY_URL="http://localhost:18787/api/payment/notify"
+# 支付模式: redirect(跳转) 或 api(接口)
+EPAY_PAYMENT_MODE="redirect"
 # 支付完成跳转地址，可不填，不填就按照前端地址跳转
 # EPAY_RETURN_URL="http://localhost:8848/#/user/wallet"
 

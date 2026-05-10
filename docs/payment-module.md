@@ -49,6 +49,7 @@ EPAY_KEY            # 商户密钥
 EPAY_API_URL        # 易支付网关地址
 EPAY_NOTIFY_URL     # 支付异步通知回调
 EPAY_RETURN_URL     # 支付完成跳转地址
+EPAY_PAYMENT_MODE   # 支付模式: redirect(跳转支付) 或 api(接口支付)
 ```
 
 邮件验证码或其他支付方式可在后续扩展，详见 `docs/deployment-guide.md`。
