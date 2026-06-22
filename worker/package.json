@@ -21,17 +21,17 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "resend": "^6.12.0",
+    "resend": "^6.14.0",
     "worker-mailer": "^1.2.1"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260420.1",
+    "@cloudflare/workers-types": "^4.20260621.1",
     "c8": "^11.0.0",
     "node-fetch": "^3.3.2",
     "typescript": "^6.0.3",
-    "wrangler": "^4.83.0"
+    "wrangler": "^4.103.0"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=22.0.0"
   }
 }
