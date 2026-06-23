@@ -66,7 +66,16 @@ export default defineConfig(({ mode }) => {
       assetsDir: "assets",
       sourcemap: false,
       chunkSizeWarningLimit: 2000,
-      rollupOptions: {
+      rolldownOptions: {
+        onLog(level, log, handler) {
+          const isVueUsePureAnnotationWarning =
+            log.code === "INVALID_ANNOTATION" &&
+            log.message.includes("@vueuse/core/dist/index.js");
+
+          if (!isVueUsePureAnnotationWarning) {
+            handler(level, log);
+          }
+        },
         output: {
           chunkFileNames: "js/[name]-[hash].js",
           entryFileNames: "js/[name]-[hash].js",
