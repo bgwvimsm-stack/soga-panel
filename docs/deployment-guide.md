@@ -51,11 +51,41 @@ wrangler d1 execute soga-panel-d1 --file=./db/insert_package_data.sql --remote
 JWT_SECRET = "your-secure-secret"
 WEBAPI_KEY = "your-soga-api-key"
 TWO_FACTOR_SECRET_KEY = "your-2fa-encryption-secret"
-MAIL_PROVIDER = "none"           # none / resend / smtp / sendgrid
+MAIL_PROVIDER = "none"           # none / resend / smtp / sendgrid / cloudflare
 MAIL_FROM = "no-reply@example.com"
 ```
 
 若启用邮件验证码，请在 Cloudflare 控制台写入对应密钥（如 `RESEND_API_KEY` 或 `SMTP_*`）。易支付等支付相关变量请参考《payment-module.md》。
+
+### 使用 Cloudflare Email Sending 发送邮件
+
+Cloudflare Email Service 支持三种接入方式，本项目按后端链路做如下适配：
+
+1. **Worker 绑定（Worker 后端推荐）**：`MAIL_PROVIDER="cloudflare"`，无需 API 密钥。
+   - 在 `wrangler.toml` 声明绑定：
+     ```toml
+     [[send_email]]
+     name = "EMAIL"
+     ```
+     本地开发（`wrangler-dev.toml`）追加 `remote = true` 将发信代理到真实服务。
+   - 发件域名需先接入：`npx wrangler email sending enable <你的域名>`，且 `MAIL_FROM` 必须为该域名邮箱。
+2. **REST API（Rust / 自托管后端）**：`MAIL_PROVIDER="cloudflare"`，需配置：
+   ```env
+   CLOUDFLARE_ACCOUNT_ID="<账户 ID>"
+   CLOUDFLARE_EMAIL_API_TOKEN="<具备 Email Sending:Edit 权限的 API 令牌>"
+   ```
+   端点为 `POST https://api.cloudflare.com/client/v4/accounts/{account_id}/email/sending/send`。
+3. **SMTP 中继（两端通用）**：复用 `smtp` provider，配置：
+   ```env
+   MAIL_PROVIDER="smtp"
+   SMTP_HOST="smtp.mx.cloudflare.net"
+   SMTP_PORT=465
+   SMTP_SECURE="true"        # 仅支持 465 隐式 TLS
+   SMTP_USER="api_token"     # 固定字面量
+   SMTP_PASS="<Cloudflare API 令牌>"
+   ```
+
+> 参考文档：[Workers API](https://developers.cloudflare.com/email-service/api/send-emails/workers-api/)、[REST API](https://developers.cloudflare.com/email-service/api/send-emails/rest-api/)、[SMTP](https://developers.cloudflare.com/email-service/api/send-emails/smtp/)。
 
 ## 6. 部署后端 Worker
 

@@ -70,9 +70,13 @@ EPUSDT_TIMEOUT=900
 
 # ------------------------------------------------------------------------
 # 邮件发送配置
-# 邮件发送提供者：resend / sendgrid / smtp
+# 邮件发送提供者：resend / sendgrid / smtp / cloudflare
+# cloudflare：使用 Cloudflare Email Sending 的 Worker 绑定发送（无需 API 密钥），
+#   需在文件底部声明 [[send_email]] 绑定（name = "EMAIL"），本地开发已加 remote = true
+#   以便把发信代理到真实服务；MAIL_FROM 必须为已接入 Email Sending 的域名邮箱：
+#   npx wrangler email sending enable <你的域名>
 MAIL_PROVIDER = "none"
-# 设置发件邮箱地址
+# 设置发件邮箱地址（cloudflare 方式下必须为已接入 Email Sending 的域名邮箱）
 MAIL_FROM = "no-reply@example.com"
 
 # Resend API Key
@@ -113,6 +117,14 @@ MAIL_VERIFICATION_ATTEMPT_LIMIT = "5"
 APP_VERSION = "1.0.0"
 # 构建时间（部署时自动设置）
 BUILD_TIME = "2025/05/21 05:20"
+
+# Cloudflare Email Sending 绑定（当 MAIL_PROVIDER="cloudflare" 时启用）
+# 无需 API 密钥；本地开发用 remote = true 将发信代理到真实服务。
+# 发件域名需先接入 Email Sending：npx wrangler email sending enable <你的域名>
+# 参考：https://developers.cloudflare.com/email-service/api/send-emails/workers-api/
+[[send_email]]
+name = "EMAIL"
+remote = true
 
 # D1 数据库绑定
 [[d1_databases]]

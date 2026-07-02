@@ -12,7 +12,30 @@ export interface EmailMessage {
   fromName?: string;
 }
 
-export type EmailProvider = "resend" | "smtp" | "sendgrid" | "none";
+export type EmailProvider =
+  | "resend"
+  | "smtp"
+  | "sendgrid"
+  | "cloudflare"
+  | "none";
+
+/**
+ * Cloudflare Email Sending 绑定的最小类型定义。
+ * 通过在 wrangler 配置中声明 `send_email` 绑定后，可在 env.EMAIL 上调用 send()。
+ * 参考：https://developers.cloudflare.com/email-service/api/send-emails/workers-api/
+ */
+interface CloudflareSendEmailBinding {
+  send(message: {
+    to: string | string[];
+    from: string | { email: string; name?: string };
+    subject: string;
+    html?: string;
+    text?: string;
+    cc?: string | string[];
+    bcc?: string | string[];
+    replyTo?: string;
+  }): Promise<{ messageId?: string } | void>;
+}
 
 export class EmailService {
   private provider: EmailProvider;
@@ -25,7 +48,12 @@ export class EmailService {
   constructor(env: Env) {
     this.env = env;
     const provider = (this.getEnv("MAIL_PROVIDER") || "none").toLowerCase();
-    if (provider === "resend" || provider === "smtp" || provider === "sendgrid") {
+    if (
+      provider === "resend" ||
+      provider === "smtp" ||
+      provider === "sendgrid" ||
+      provider === "cloudflare"
+    ) {
       this.provider = provider;
     } else {
       this.provider = "none";
@@ -76,6 +104,10 @@ export class EmailService {
       return await this.sendViaSendgrid(payload);
     }
 
+    if (this.provider === "cloudflare") {
+      return await this.sendViaCloudflare(payload);
+    }
+
     // 默认使用 Resend
     return await this.sendViaResend(payload);
   }
@@ -109,6 +141,57 @@ export class EmailService {
     });
 
     return true;
+  }
+
+  private async sendViaCloudflare(message: EmailMessage) {
+    const binding = this.env.EMAIL as CloudflareSendEmailBinding | undefined;
+    if (!binding || typeof binding.send !== "function") {
+      throw new Error(
+        "Cloudflare Email Sending 绑定未配置：请在 wrangler 配置中声明 send_email 绑定（name = \"EMAIL\"），并对发件域名执行 `wrangler email sending enable <域名>`"
+      );
+    }
+
+    const textContent =
+      message.text ||
+      (message.html
+        ? message.html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+        : undefined);
+
+    try {
+      const response = await binding.send({
+        to: message.to,
+        from: { email: this.fromEmail, name: message.fromName },
+        subject: message.subject,
+        html: message.html,
+        text: textContent,
+      });
+
+      this.logger.info("Cloudflare 邮件发送成功", {
+        to: message.to,
+        subject: message.subject,
+        messageId:
+          response && typeof response === "object"
+            ? response.messageId
+            : undefined,
+      });
+
+      return true;
+    } catch (error) {
+      // Workers 绑定以 Error 抛出，error.code 为 E_* 错误码
+      const code =
+        error && typeof error === "object" && "code" in error
+          ? (error as { code?: string }).code
+          : undefined;
+      this.logger.error("Cloudflare 邮件发送失败", error, {
+        to: message.to,
+        subject: message.subject,
+        code,
+      });
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Cloudflare Email Sending 调用失败${code ? ` [${code}]` : ""}: ${detail}`
+      );
+    }
   }
 
   private async sendViaSmtp(message: EmailMessage) {
