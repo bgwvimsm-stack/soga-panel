@@ -28,8 +28,9 @@ impl EmailService {
       MailProvider::Resend => self.send_via_resend(&from, to, subject, text, html).await,
       MailProvider::Smtp => self.send_via_smtp(&from, to, subject, text, html).await,
       MailProvider::Sendgrid => self.send_via_sendgrid(&from, to, subject, text, html).await,
+      MailProvider::Cloudflare => self.send_via_cloudflare(&from, to, subject, text, html).await,
       MailProvider::None => Err(
-        "未配置邮件发送提供商：请设置 MAIL_PROVIDER 为 resend/smtp/sendgrid，并补齐对应密钥".to_string()
+        "未配置邮件发送提供商：请设置 MAIL_PROVIDER 为 resend/smtp/sendgrid/cloudflare，并补齐对应密钥".to_string()
       )
     }
     }
@@ -48,6 +49,9 @@ impl EmailService {
         if raw == "sendgrid" {
             return MailProvider::Sendgrid;
         }
+        if raw == "cloudflare" || raw == "cf" {
+            return MailProvider::Cloudflare;
+        }
         if raw == "none" {
             return MailProvider::None;
         }
@@ -60,6 +64,10 @@ impl EmailService {
         }
         if self.read_env("SENDGRID_API_KEY").is_some() {
             return MailProvider::Sendgrid;
+        }
+        if self.env.cloudflare_account_id.is_some() && self.env.cloudflare_email_api_token.is_some()
+        {
+            return MailProvider::Cloudflare;
         }
         MailProvider::None
     }
@@ -213,6 +221,76 @@ impl EmailService {
         Ok(())
     }
 
+    async fn send_via_cloudflare(
+        &self,
+        from: &str,
+        to: &str,
+        subject: &str,
+        text: &str,
+        html: Option<&str>,
+    ) -> Result<(), String> {
+        let account_id = self.env.cloudflare_account_id.clone().ok_or_else(|| {
+            "未配置 CLOUDFLARE_ACCOUNT_ID（或 CF_ACCOUNT_ID），无法通过 Cloudflare REST API 发送邮件"
+                .to_string()
+        })?;
+        let api_token = self.env.cloudflare_email_api_token.clone().ok_or_else(|| {
+            "未配置 CLOUDFLARE_EMAIL_API_TOKEN（或 CF_EMAIL_API_TOKEN），无法通过 Cloudflare REST API 发送邮件"
+                .to_string()
+        })?;
+
+        // Cloudflare REST API 的 from 使用 { address, name }（注意是 address 而非 email）
+        let address = extract_email_address(from).ok_or_else(|| {
+            "MAIL_FROM 格式不正确，需为 email 或 `Name <email>`（且需为已接入 Email Sending 的域名）"
+                .to_string()
+        })?;
+        let from_value = match extract_display_name(from) {
+            Some(name) => serde_json::json!({ "address": address, "name": name }),
+            None => serde_json::json!(address),
+        };
+
+        let mut payload = serde_json::json!({
+          "from": from_value,
+          "to": to,
+          "subject": subject,
+          "text": text
+        });
+        if let Some(html) = html {
+            payload["html"] = serde_json::json!(html);
+        }
+
+        let url = format!(
+            "https://api.cloudflare.com/client/v4/accounts/{account_id}/email/sending/send"
+        );
+        let resp = reqwest::Client::new()
+            .post(&url)
+            .header("Authorization", format!("Bearer {api_token}"))
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!(
+                "Cloudflare Email Sending 调用失败: {} {}",
+                status,
+                extract_cloudflare_error(&body).unwrap_or(body)
+            ));
+        }
+        // 即便 HTTP 200，Cloudflare 也可能在 body 中返回 success=false
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&body) {
+            if value.get("success") == Some(&serde_json::Value::Bool(false)) {
+                return Err(format!(
+                    "Cloudflare Email Sending 返回失败: {}",
+                    extract_cloudflare_error(&body).unwrap_or(body)
+                ));
+            }
+        }
+        Ok(())
+    }
+
     async fn send_via_smtp(
         &self,
         from: &str,
@@ -279,6 +357,7 @@ enum MailProvider {
     Resend,
     Smtp,
     Sendgrid,
+    Cloudflare,
     None,
 }
 
@@ -300,6 +379,46 @@ fn extract_email_address(from: &str) -> Option<String> {
         return None;
     }
     Some(candidate.to_string())
+}
+
+/// 从 `Name <email>` 形式中提取显示名；纯邮箱时返回 None。
+fn extract_display_name(from: &str) -> Option<String> {
+    let trimmed = from.trim();
+    let start = trimmed.find('<')?;
+    let name = trimmed[..start].trim().trim_matches('"').trim();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
+}
+
+/// 从 Cloudflare API 响应 body 中提取 errors 数组的可读信息。
+fn extract_cloudflare_error(body: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    let errors = value.get("errors")?.as_array()?;
+    if errors.is_empty() {
+        return None;
+    }
+    let messages: Vec<String> = errors
+        .iter()
+        .map(|err| {
+            let code = err
+                .get("code")
+                .map(|code| code.to_string())
+                .unwrap_or_default();
+            let message = err
+                .get("message")
+                .and_then(|message| message.as_str())
+                .unwrap_or("");
+            if code.is_empty() {
+                message.to_string()
+            } else {
+                format!("[{code}] {message}")
+            }
+        })
+        .collect();
+    Some(messages.join("; "))
 }
 
 fn build_email(
