@@ -2887,12 +2887,13 @@ fn build_quantumultx_vless_entry(
         if !short_id.is_empty() {
             options.push(format!("reality-hex-shortid={short_id}"));
         }
-        let flow = resolve_config_string(config, &["flow"]);
-        if !flow.is_empty() {
-            options.push(format!("vless-flow={flow}"));
-        }
     } else {
         apply_stream_options(&mut options, server, tls_host, config);
+    }
+    // flow（如 xtls-rprx-vision）在 reality / tls 两种场景下都适用
+    let flow = resolve_config_string(config, &["flow"]);
+    if !flow.is_empty() {
+        options.push(format!("vless-flow={flow}"));
     }
     options.push(format!("tag={name}"));
     format_quantumultx_entry("vless", server, port, &options)
