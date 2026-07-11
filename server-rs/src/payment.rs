@@ -300,7 +300,11 @@ fn is_epusdt_configured(env: &AppEnv) -> bool {
             .is_some_and(|v| !v.trim().is_empty())
 }
 
-async fn create_epay_payment(env: &AppEnv, order: &PaymentOrder, channel: &str) -> Result<PaymentCreateResult, String> {
+async fn create_epay_payment(
+    env: &AppEnv,
+    order: &PaymentOrder,
+    channel: &str,
+) -> Result<PaymentCreateResult, String> {
     if !is_epay_configured(env) {
         return Ok(PaymentCreateResult {
             method: "epay".to_string(),
@@ -316,9 +320,13 @@ async fn create_epay_payment(env: &AppEnv, order: &PaymentOrder, channel: &str) 
         .as_ref()
         .map(|value| value.trim().trim_end_matches('/'))
         .unwrap_or("https://pay.example.com");
-    
-    let payment_mode = env.epay_payment_mode.as_deref().unwrap_or("redirect").to_lowercase();
-    
+
+    let payment_mode = env
+        .epay_payment_mode
+        .as_deref()
+        .unwrap_or("redirect")
+        .to_lowercase();
+
     let pay_type = if channel == "wxpay" {
         "wxpay"
     } else {
@@ -343,7 +351,13 @@ async fn create_epay_payment(env: &AppEnv, order: &PaymentOrder, channel: &str) 
     params.insert("return_url".to_string(), return_url);
     params.insert("name".to_string(), order.subject.clone());
     params.insert("money".to_string(), order.amount.to_string());
-    params.insert("clientip".to_string(), order.clientip.clone().unwrap_or_else(|| "127.0.0.1".to_string()));
+    params.insert(
+        "clientip".to_string(),
+        order
+            .clientip
+            .clone()
+            .unwrap_or_else(|| "127.0.0.1".to_string()),
+    );
     params.insert(
         "sitename".to_string(),
         env.site_name
@@ -407,7 +421,7 @@ async fn create_epay_payment(env: &AppEnv, order: &PaymentOrder, channel: &str) 
             eprintln!("Failed to get response text: {}", err);
             err.to_string()
         })?;
-        
+
         let data: EpayApiResponse = match serde_json::from_str(&text) {
             Ok(d) => d,
             Err(err) => {
