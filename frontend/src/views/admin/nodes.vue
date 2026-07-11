@@ -625,6 +625,11 @@
                       <el-input v-model="nodeForm.client_tls_host" placeholder="SNI/ServerName" />
                     </el-form-item>
                   </el-col>
+                  <el-col :span="12" v-if="nodeForm.config_tls_type === 'tls' || nodeForm.config_tls_type === 'reality'">
+                    <el-form-item label="Flow">
+                      <el-input v-model="nodeForm.config_flow" placeholder="可选，如 xtls-rprx-vision" clearable />
+                    </el-form-item>
+                  </el-col>
                   <el-col :span="12" v-if="nodeForm.config_stream_type === 'grpc'">
                     <el-form-item label="ServerName">
                       <el-input v-model="nodeForm.config_service_name" placeholder="gRPC service name" />
@@ -634,11 +639,6 @@
                 <template v-if="nodeForm.config_tls_type === 'reality'">
                   <div class="section-subtitle">Reality</div>
                   <el-row :gutter="16">
-                    <el-col :span="12">
-                      <el-form-item label="Flow">
-                        <el-input v-model="nodeForm.config_flow" placeholder="xtls-rprx-vision 等" />
-                      </el-form-item>
-                    </el-col>
                     <el-col :span="12">
                       <el-form-item label="目标地址">
                         <el-input v-model="nodeForm.config_dest" placeholder="如 www.server.com:443" />
@@ -1506,10 +1506,6 @@ const supportsReality = computed(() => (
 
 const ensureRealityDefaults = (forceRegenerate = false) => {
   if (!supportsReality.value || nodeForm.config_tls_type !== 'reality') return;
-
-  if (nodeForm.type === 'vless' && (forceRegenerate || !nodeForm.config_flow)) {
-    nodeForm.config_flow = 'xtls-rprx-vision';
-  }
 
   if (forceRegenerate || !nodeForm.config_short_ids) {
     nodeForm.config_short_ids = generateShortIds().join(',');

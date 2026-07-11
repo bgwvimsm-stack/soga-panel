@@ -1181,11 +1181,12 @@ function buildQuantumultXVlessEntry(node, config, user, client) {
     if (shortId) {
       pushOption(options, "reality-hex-shortid", shortId);
     }
-    if (config.flow) {
-      pushOption(options, "vless-flow", config.flow);
-    }
   } else {
     applyStreamOptions(options, node, config);
+  }
+  // flow（如 xtls-rprx-vision）在 reality / tls 两种场景下都适用
+  if (config.flow) {
+    pushOption(options, "vless-flow", config.flow);
   }
   pushOption(options, "tag", node.name);
   return formatQuantumultXEntry("vless", node.server, node.server_port, options);
