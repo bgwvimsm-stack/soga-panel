@@ -347,6 +347,41 @@ export class DatabaseService {
     return await stmt.bind(nodeId).first();
   }
 
+  async claimNodeReportEvent(eventId: string, nodeId: number, operation: string) {
+    const normalizedEventId = eventId.trim();
+    const normalizedOperation = operation.trim();
+    if (!normalizedEventId || normalizedEventId.length > 128 || !normalizedOperation) {
+      throw new Error("Invalid node report event");
+    }
+
+    await this.db
+      .prepare(
+        `DELETE FROM node_report_events
+         WHERE created_at < datetime('now', '-7 days', '+8 hours')`
+      )
+      .run();
+
+    const result = await this.db
+      .prepare(
+        `INSERT OR IGNORE INTO node_report_events
+         (event_id, node_id, operation, created_at)
+         VALUES (?, ?, ?, datetime('now', '+8 hours'))`
+      )
+      .bind(normalizedEventId, nodeId, normalizedOperation)
+      .run();
+    return (result.meta?.changes ?? 0) > 0;
+  }
+
+  async releaseNodeReportEvent(eventId: string, nodeId: number, operation: string) {
+    await this.db
+      .prepare(
+        `DELETE FROM node_report_events
+         WHERE event_id = ? AND node_id = ? AND operation = ?`
+      )
+      .bind(eventId.trim(), nodeId, operation.trim())
+      .run();
+  }
+
   // 获取审计规则
   async getAuditRules() {
     const stmt = this.db.prepare("SELECT * FROM audit_rules WHERE enabled = 1");
@@ -411,18 +446,22 @@ export class DatabaseService {
 
   // 插入审计日志
   async insertAuditLogs(auditData, nodeId) {
+    if (!auditData.length) return;
+    const statements: ReturnType<D1Database["prepare"]>[] = [];
     for (const log of auditData) {
-      await this.db
+      statements.push(
+        this.db
         .prepare(
           `
         INSERT INTO audit_logs 
         (user_id, node_id, audit_rule_id, ip_address, created_at)
         VALUES (?, ?, ?, ?, datetime('now', '+8 hours'))
-      `
+        `
         )
         .bind(log.user_id, nodeId, log.audit_id, log.ip_address || null)
-        .run();
+      );
     }
+    await this.db.batch(statements);
   }
 
   // 插入节点状态
@@ -495,6 +534,7 @@ export class DatabaseService {
     const now = new Date(Date.now() + 8 * 60 * 60 * 1000);
     const date = now.toISOString().split("T")[0];
 
+    const statements: ReturnType<D1Database["prepare"]>[] = [];
     for (const traffic of trafficData) {
       const userId = ensureNumber(traffic.id);
       if (userId <= 0) {
@@ -514,9 +554,10 @@ export class DatabaseService {
       const deductedTotal = Math.max(0, actualUpload + actualDownload);
 
       // 更新用户总流量和今日流量（分别记录上传和下载）
-      await this.db
-        .prepare(
-          `
+      statements.push(
+        this.db
+          .prepare(
+            `
         UPDATE users 
         SET upload_traffic = upload_traffic + ?, 
             download_traffic = download_traffic + ?,
@@ -526,38 +567,32 @@ export class DatabaseService {
             updated_at = datetime('now', '+8 hours')
         WHERE id = ?
       `
-        )
-        .bind(
-          upload,
-          download,
-          upload,
-          download,
-          deductedTotal,
-          userId
-        )
-        .run();
+          )
+          .bind(upload, download, upload, download, deductedTotal, userId)
+      );
 
       // 记录流量日志 - 每次提交都记录新条目（已移除UNIQUE约束）
-      await this.db
-        .prepare(
-          `
+      statements.push(
+        this.db
+          .prepare(
+            `
         INSERT INTO traffic_logs 
         (user_id, node_id, upload_traffic, download_traffic, actual_upload_traffic, actual_download_traffic, actual_traffic, deduction_multiplier, date, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'))
       `
-        )
-        .bind(
-          userId,
-          nodeId,
-          upload,
-          download,
-          actualUpload,
-          actualDownload,
-          deductedTotal,
-          trafficMultiplier,
-          date
-        )
-        .run();
+          )
+          .bind(
+            userId,
+            nodeId,
+            upload,
+            download,
+            actualUpload,
+            actualDownload,
+            deductedTotal,
+            trafficMultiplier,
+            date
+          )
+      );
     }
 
     // 更新节点流量
@@ -565,17 +600,20 @@ export class DatabaseService {
       (sum, t) => sum + ensureNumber(t.u) + ensureNumber(t.d),
       0
     );
-    await this.db
-      .prepare(
-        `
+    statements.push(
+      this.db
+        .prepare(
+          `
       UPDATE nodes 
       SET node_bandwidth = node_bandwidth + ?,
           updated_at = datetime('now', '+8 hours')
       WHERE id = ?
     `
-      )
-      .bind(totalTraffic, nodeId)
-      .run();
+        )
+        .bind(totalTraffic, nodeId)
+    );
+    // D1 batch 以原子方式执行本次流量上报，避免部分写入后释放 event_id 导致重试重复扣流量。
+    await this.db.batch(statements);
   }
 
   // ===== 新增：用户等级过期检测相关方法 =====

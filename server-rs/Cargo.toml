@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-axum = { version = "0.8.8", features = ["json", "macros"] }
+axum = { version = "0.8.8", features = ["json", "macros", "ws"] }
 base64 = "0.22.1"
 data-encoding = "2.6.0"
 aes-gcm = "0.10.3"

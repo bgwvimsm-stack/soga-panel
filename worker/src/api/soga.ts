@@ -4,7 +4,7 @@ import type { Env } from "../types";
 import { DatabaseService } from "../services/database";
 import { CacheService } from "../services/cache";
 import { validateSogaAuth } from "../middleware/auth";
-import { errorResponse } from "../utils/response";
+import { errorResponse, successResponse } from "../utils/response";
 import { generateETag, isETagMatch, createNotModifiedResponse, createETagResponse } from "../utils/etag";
 import { ensureNumber, ensureString } from "../utils/d1";
 
@@ -43,6 +43,113 @@ export class SogaAPI {
     this.db = new DatabaseService(env.DB);
     this.cache = new CacheService(env.DB);
     this.env = env;
+  }
+
+  async handleReportOperation(operation: string, request: Request): Promise<Response> {
+    const supported = new Set([
+      "submit_traffic",
+      "submit_alive_ip",
+      "submit_audit_log",
+      "submit_status",
+    ]);
+    if (!supported.has(operation)) {
+      throw new Error(`Unsupported report operation: ${operation}`);
+    }
+
+    const eventId = request.headers.get("X-Event-ID")?.trim();
+    if (!eventId) {
+      return this.dispatchReportOperation(operation, request);
+    }
+
+    const authResult = await validateSogaAuth(request, this.env);
+    if (!authResult.success) {
+      return errorResponse(authResult.message, 401);
+    }
+
+    let claimed = false;
+    try {
+      claimed = await this.db.claimNodeReportEvent(eventId, authResult.nodeId, operation);
+      if (!claimed) {
+        return successResponse(null, "Already processed");
+      }
+
+      const response = await this.dispatchReportOperation(operation, request);
+      if (!response.ok) {
+        await this.db.releaseNodeReportEvent(eventId, authResult.nodeId, operation);
+      }
+      return response;
+    } catch (error) {
+      if (claimed) {
+        await this.db.releaseNodeReportEvent(eventId, authResult.nodeId, operation);
+      }
+      return errorResponse(error instanceof Error ? error.message : String(error), 500);
+    }
+  }
+
+  private dispatchReportOperation(operation: string, request: Request): Promise<Response> {
+    switch (operation) {
+      case "submit_traffic":
+        return this.submitTraffic(request);
+      case "submit_alive_ip":
+        return this.submitAliveIP(request);
+      case "submit_audit_log":
+        return this.submitAuditLog(request);
+      case "submit_status":
+        return this.submitNodeStatus(request);
+      default:
+        throw new Error(`Unsupported report operation: ${operation}`);
+    }
+  }
+
+  async getSync(request: Request): Promise<Response> {
+    const responses = await Promise.all([
+      this.getNode(request),
+      this.getUsers(request),
+      this.getAuditRules(request),
+      this.getWhiteList(request),
+    ]);
+    const data: Record<string, unknown> = {};
+    const keys = ["node", "users", "audit_rules", "white_list"];
+    for (let index = 0; index < responses.length; index += 1) {
+      const response = responses[index];
+      if (!response.ok) {
+        return response;
+      }
+      data[keys[index]] = await response.json();
+    }
+    return successResponse(data);
+  }
+
+  async handleReportBatch(request: Request, payload: unknown): Promise<Response> {
+    if (!payload || typeof payload !== "object") {
+      return errorResponse("Invalid report payload", 400);
+    }
+    const values = payload as Record<string, unknown>;
+    const operations: Array<[string, string]> = [
+      ["status", "submit_status"],
+      ["traffic", "submit_traffic"],
+      ["alive_ip", "submit_alive_ip"],
+      ["audit_log", "submit_audit_log"],
+    ];
+    const completed: string[] = [];
+    for (const [field, operation] of operations) {
+      if (values[field] === undefined || values[field] === null) {
+        continue;
+      }
+      const headers = new Headers(request.headers);
+      headers.set("Content-Type", "application/json");
+      const subRequest = new Request(request.url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(values[field]),
+      });
+      const response = await this.handleReportOperation(operation, subRequest);
+      if (!response.ok) {
+        return response;
+      }
+      completed.push(operation);
+    }
+    return successResponse({ operations: completed });
   }
 
   private parseXrayRuleValue(row: XrayRuleRow): { success: boolean; value?: unknown; message?: string } {
@@ -516,7 +623,16 @@ export class SogaAPI {
 
       // 清除相关缓存
       for (const traffic of trafficData) {
-        await this.cache.delete(`user_${traffic.id}_traffic`);
+        try {
+          await this.cache.delete(`user_${traffic.id}_traffic`);
+        } catch (error) {
+          // 数据库 batch 已成功，缓存失效不应让客户端重试并重复扣流量。
+          console.warn("clear user traffic cache failed", {
+            nodeId,
+            userId: traffic.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
 
       return new Response(
@@ -662,7 +778,15 @@ export class SogaAPI {
 
       // 更新节点状态缓存
       const cacheKey = `node_status_${nodeId}`;
-      await this.cache.set(cacheKey, JSON.stringify(statusData), 300);
+      try {
+        await this.cache.set(cacheKey, JSON.stringify(statusData), 300);
+      } catch (error) {
+        // 状态已写入数据库，缓存失败不应触发重试并重复插入状态记录。
+        console.warn("update node status cache failed", {
+          nodeId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       return new Response(
         JSON.stringify({

@@ -16,6 +16,7 @@ import { TelegramAPI } from "./api/telegram";
 import { errorResponse, successResponse } from "./utils/response";
 import { DatabaseService } from "./services/database";
 import { validateSubscriptionDomain } from "./middleware/subscriptionAuth";
+import { handleSogaWebSocket } from "./api/sogaWebSocket";
 
 export async function handleRequest(
   request: Request,
@@ -30,6 +31,10 @@ export async function handleRequest(
   const subscriptionValidation = await validateSubscriptionDomain(request, env);
   if (!subscriptionValidation.success) {
     return subscriptionValidation.response ?? errorResponse("Access denied", 403);
+  }
+
+  if (path === "/api/v1/ws") {
+    return handleSogaWebSocket(request, env, ctx);
   }
 
 
@@ -59,10 +64,17 @@ export async function handleRequest(
     "GET /api/v1/audit_rules": () => sogaAPI.getAuditRules(request),
     "GET /api/v1/xray_rules": () => sogaAPI.getXrayRules(request),
     "GET /api/v1/white_list": () => sogaAPI.getWhiteList(request),
-    "POST /api/v1/traffic": () => sogaAPI.submitTraffic(request),
-    "POST /api/v1/alive_ip": () => sogaAPI.submitAliveIP(request),
-    "POST /api/v1/audit_log": () => sogaAPI.submitAuditLog(request),
-    "POST /api/v1/status": () => sogaAPI.submitNodeStatus(request),
+    "POST /api/v1/traffic": () => sogaAPI.handleReportOperation("submit_traffic", request),
+    "POST /api/v1/alive_ip": () => sogaAPI.handleReportOperation("submit_alive_ip", request),
+    "POST /api/v1/audit_log": () => sogaAPI.handleReportOperation("submit_audit_log", request),
+    "POST /api/v1/status": () => sogaAPI.handleReportOperation("submit_status", request),
+    "POST /api/v1/report": async () => {
+      try {
+        return await sogaAPI.handleReportBatch(request, await request.json());
+      } catch (error) {
+        return errorResponse(error instanceof Error ? error.message : String(error), 400);
+      }
+    },
 
     // 用户认证 API
     "POST /api/auth/login": () => authAPI.login(request),

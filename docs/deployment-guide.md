@@ -43,6 +43,15 @@ wrangler d1 execute soga-panel-d1 --file=./db/insert_required_data.sql --remote
 wrangler d1 execute soga-panel-d1 --file=./db/insert_package_data.sql --remote
 ```
 
+已有数据库启用 peach WebSocket 上报前，先执行报告幂等迁移：
+
+```bash
+wrangler d1 execute soga-panel-d1 --file=./db/migrations/026_create_node_report_events.sql --remote
+```
+
+自托管 MariaDB 使用 `server-rs/db/migrations/006_create_node_report_events.sql`，执行后再将节点配置的 `PanelTransport` 设置为 `websocket` 或 `auto`。
+灰度步骤和回滚方式见《[WebSocket 灰度与故障排查](./websocket-rollout.md)》。
+
 ## 5. 配置环境变量
 
 在 `wrangler.toml` 的 `[vars]` 区域设置：

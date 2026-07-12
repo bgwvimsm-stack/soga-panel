@@ -1,6 +1,8 @@
+use axum::body::to_bytes;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
-use axum::http::HeaderMap;
 use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderValue};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -18,15 +20,367 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/ws", get(websocket))
         .route("/node", get(get_node))
         .route("/users", get(get_users))
         .route("/audit_rules", get(get_audit_rules))
         .route("/xray_rules", get(get_xray_rules))
         .route("/white_list", get(get_white_list))
+        .route("/report", post(post_report))
         .route("/traffic", post(post_traffic))
         .route("/alive_ip", post(post_alive_ip))
         .route("/audit_log", post(post_audit_log))
         .route("/status", post(post_status))
+}
+
+const MAX_WS_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(Debug, serde::Deserialize)]
+struct WsRequest {
+    v: Option<u8>,
+    id: Option<Value>,
+    op: Option<String>,
+    payload: Option<Value>,
+    event_id: Option<String>,
+}
+
+async fn claim_report_event(
+    state: &AppState,
+    headers: &HeaderMap,
+    node_id: i64,
+    operation: &str,
+) -> Result<Option<String>, Response> {
+    let Some(event_id) = headers
+        .get("x-event-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    if event_id.len() > 128 {
+        return Err(error(StatusCode::BAD_REQUEST, "上报事件 ID 无效", None));
+    }
+
+    let _ = sqlx::query(
+        "DELETE FROM node_report_events WHERE created_at < DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 7 DAY)",
+    )
+    .execute(&state.db)
+    .await;
+
+    let result = sqlx::query(
+        "INSERT IGNORE INTO node_report_events (event_id, node_id, operation, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+    )
+    .bind(event_id)
+    .bind(node_id)
+    .bind(operation)
+    .execute(&state.db)
+    .await
+    .map_err(|err| error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None))?;
+
+    if result.rows_affected() == 0 {
+        Ok(Some(String::new()))
+    } else {
+        Ok(Some(event_id.to_string()))
+    }
+}
+
+async fn release_report_event(
+    state: &AppState,
+    event_id: Option<&str>,
+    node_id: i64,
+    operation: &str,
+) {
+    let Some(event_id) = event_id.filter(|value| !value.is_empty()) else {
+        return;
+    };
+    let _ = sqlx::query(
+        "DELETE FROM node_report_events WHERE event_id = ? AND node_id = ? AND operation = ?",
+    )
+    .bind(event_id)
+    .bind(node_id)
+    .bind(operation)
+    .execute(&state.db)
+    .await;
+}
+
+async fn websocket(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    if let Err(response) = validate_soga_auth(&headers, state.env.node_api_key.as_deref()) {
+        return response;
+    }
+    ws.on_upgrade(move |socket| handle_websocket(socket, state, headers))
+        .into_response()
+}
+
+async fn response_json(response: Response) -> Result<(StatusCode, Value), Response> {
+    let status = response.status();
+    let body = to_bytes(response.into_body(), MAX_WS_MESSAGE_BYTES)
+        .await
+        .map_err(|_| error(StatusCode::BAD_GATEWAY, "面板响应过大", None))?;
+    let data = if body.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&body)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).into_owned()))
+    };
+    Ok((status, data))
+}
+
+async fn get_sync(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let node = get_node(State(state.clone()), headers.clone()).await;
+    if !node.status().is_success() {
+        return node;
+    }
+    let users = get_users(State(state.clone()), headers.clone()).await;
+    if !users.status().is_success() {
+        return users;
+    }
+    let audit_rules = get_audit_rules(State(state.clone()), headers.clone()).await;
+    if !audit_rules.status().is_success() {
+        return audit_rules;
+    }
+    let white_list = get_white_list(State(state.clone()), headers).await;
+    if !white_list.status().is_success() {
+        return white_list;
+    }
+
+    let node = match response_json(node).await {
+        Ok((_, value)) => value,
+        Err(response) => return response,
+    };
+    let users = match response_json(users).await {
+        Ok((_, value)) => value,
+        Err(response) => return response,
+    };
+    let audit_rules = match response_json(audit_rules).await {
+        Ok((_, value)) => value,
+        Err(response) => return response,
+    };
+    let white_list = match response_json(white_list).await {
+        Ok((_, value)) => value,
+        Err(response) => return response,
+    };
+    Json(json!({
+        "code": 0,
+        "message": "ok",
+        "data": { "node": node, "users": users, "audit_rules": audit_rules, "white_list": white_list }
+    }))
+    .into_response()
+}
+
+async fn post_report(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let Some(values) = body.as_object() else {
+        return error(StatusCode::BAD_REQUEST, "上报数据无效", None);
+    };
+    let operations = [
+        ("status", "submit_status"),
+        ("traffic", "submit_traffic"),
+        ("alive_ip", "submit_alive_ip"),
+        ("audit_log", "submit_audit_log"),
+    ];
+    let mut completed = Vec::new();
+    for (field, operation) in operations {
+        let Some(value) = values.get(field) else {
+            continue;
+        };
+        let response = match operation {
+            "submit_status" => {
+                post_status(State(state.clone()), headers.clone(), Json(value.clone())).await
+            }
+            "submit_traffic" => {
+                post_traffic(State(state.clone()), headers.clone(), Json(value.clone())).await
+            }
+            "submit_alive_ip" => {
+                post_alive_ip(State(state.clone()), headers.clone(), Json(value.clone())).await
+            }
+            "submit_audit_log" => {
+                post_audit_log(State(state.clone()), headers.clone(), Json(value.clone())).await
+            }
+            _ => unreachable!(),
+        };
+        if !response.status().is_success() {
+            return response;
+        }
+        completed.push(operation);
+    }
+    Json(json!({ "code": 0, "message": "ok", "data": { "operations": completed } })).into_response()
+}
+
+async fn handle_websocket(mut socket: WebSocket, state: AppState, headers: HeaderMap) {
+    while let Some(result) = socket.recv().await {
+        let message = match result {
+            Ok(message) => message,
+            Err(error) => {
+                tracing::warn!("node WebSocket receive failed: {error}");
+                return;
+            }
+        };
+
+        match message {
+            Message::Text(text) => {
+                if text.len() > MAX_WS_MESSAGE_BYTES {
+                    let _ = socket
+                        .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                            code: 1009,
+                            reason: "Message too large".into(),
+                        })))
+                        .await;
+                    return;
+                }
+                let response =
+                    dispatch_websocket_message(&mut socket, &state, &headers, text.as_ref()).await;
+                if response.is_err() {
+                    return;
+                }
+            }
+            Message::Ping(payload) => {
+                if socket.send(Message::Pong(payload)).await.is_err() {
+                    return;
+                }
+            }
+            Message::Pong(_) => {}
+            Message::Binary(_) => {
+                if send_ws_error(
+                    &mut socket,
+                    Value::Null,
+                    400,
+                    "WebSocket requires text messages",
+                )
+                .await
+                .is_err()
+                {
+                    return;
+                }
+            }
+            Message::Close(_) => return,
+        }
+    }
+}
+
+async fn dispatch_websocket_message(
+    socket: &mut WebSocket,
+    state: &AppState,
+    headers: &HeaderMap,
+    text: &str,
+) -> Result<(), ()> {
+    let message: WsRequest = match serde_json::from_str(text) {
+        Ok(value) => value,
+        Err(_) => return send_ws_error(socket, Value::Null, 400, "Invalid JSON").await,
+    };
+    let id = message.id.unwrap_or(Value::Null);
+    if message.v != Some(1) || message.op.is_none() {
+        return send_ws_error(socket, id, 400, "Unsupported protocol message").await;
+    }
+
+    let op = message.op.as_deref().unwrap_or_default();
+    let mut operation_headers = headers.clone();
+    if let Some(event_id) = message.event_id.as_deref() {
+        let value = HeaderValue::from_str(event_id).map_err(|_| ())?;
+        operation_headers.insert("x-event-id", value);
+    }
+    let payload = Json(message.payload.unwrap_or(Value::Null));
+    let response = match op {
+        "sync" => get_sync(State(state.clone()), operation_headers.clone()).await,
+        "get_node" => get_node(State(state.clone()), operation_headers.clone()).await,
+        "get_users" => get_users(State(state.clone()), operation_headers.clone()).await,
+        "get_audit_rules" => get_audit_rules(State(state.clone()), operation_headers.clone()).await,
+        "get_xray_rules" => get_xray_rules(State(state.clone()), operation_headers.clone()).await,
+        "get_white_list" => get_white_list(State(state.clone()), operation_headers.clone()).await,
+        "submit_traffic" => {
+            post_traffic(State(state.clone()), operation_headers.clone(), payload).await
+        }
+        "submit_alive_ip" => {
+            post_alive_ip(State(state.clone()), operation_headers.clone(), payload).await
+        }
+        "submit_audit_log" => {
+            post_audit_log(State(state.clone()), operation_headers.clone(), payload).await
+        }
+        "submit_status" => post_status(State(state.clone()), operation_headers, payload).await,
+        "report" => post_report(State(state.clone()), operation_headers, payload).await,
+        _ => return send_ws_error(socket, id, 404, "Unknown operation").await,
+    };
+
+    let status = response.status();
+    let body = match to_bytes(response.into_body(), MAX_WS_MESSAGE_BYTES).await {
+        Ok(body) => body,
+        Err(_) => return send_ws_error(socket, id, 502, "Response too large").await,
+    };
+    let data = if body.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&body)
+            .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&body).into_owned()))
+    };
+    let ok = status.is_success();
+    tracing::info!(
+        operation = op,
+        status = status.as_u16(),
+        ok,
+        "node WebSocket operation completed"
+    );
+    let message = if ok {
+        Value::Null
+    } else {
+        json!(extract_ws_message(&data))
+    };
+    send_ws_json(
+        socket,
+        json!({
+            "v": 1,
+            "id": id,
+            "ok": ok,
+            "status": status.as_u16(),
+            "data": data,
+            "message": message,
+        }),
+    )
+    .await
+}
+
+async fn send_ws_error(
+    socket: &mut WebSocket,
+    id: Value,
+    status: u16,
+    message: &str,
+) -> Result<(), ()> {
+    send_ws_json(
+        socket,
+        json!({
+            "v": 1,
+            "id": id,
+            "ok": false,
+            "status": status,
+            "data": Value::Null,
+            "message": message,
+        }),
+    )
+    .await
+}
+
+async fn send_ws_json(socket: &mut WebSocket, value: Value) -> Result<(), ()> {
+    let text = serde_json::to_string(&value).map_err(|_| ())?;
+    if text.len() > MAX_WS_MESSAGE_BYTES {
+        return Err(());
+    }
+    socket
+        .send(Message::Text(text.into()))
+        .await
+        .map_err(|_| ())
+}
+
+fn extract_ws_message(data: &Value) -> String {
+    data.get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("Soga API request failed")
+        .to_string()
 }
 
 async fn get_node(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -488,6 +842,14 @@ async fn post_traffic(
         Ok(auth) => auth,
         Err(resp) => return resp,
     };
+    let report_event_id =
+        match claim_report_event(&state, &headers, auth.node_id, "submit_traffic").await {
+            Ok(Some(event_id)) if event_id.is_empty() => {
+                return Json(json!({ "code": 0, "message": "Already processed" })).into_response();
+            }
+            Ok(event_id) => event_id,
+            Err(resp) => return resp,
+        };
     let data = match body {
         Value::Array(items) => items,
         Value::Object(map) => {
@@ -518,7 +880,16 @@ async fn post_traffic(
                     .flatten()
             })
             .unwrap_or(1.0),
-        Err(err) => return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None),
+        Err(err) => {
+            release_report_event(
+                &state,
+                report_event_id.as_deref(),
+                auth.node_id,
+                "submit_traffic",
+            )
+            .await;
+            return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
+        }
     };
     let multiplier = if raw_multiplier > 0.0 {
         raw_multiplier
@@ -528,6 +899,19 @@ async fn post_traffic(
 
     let date = (Utc::now() + Duration::hours(8)).date_naive();
     let mut total_traffic: i64 = 0;
+    let mut tx = match state.db.begin().await {
+        Ok(tx) => tx,
+        Err(err) => {
+            release_report_event(
+                &state,
+                report_event_id.as_deref(),
+                auth.node_id,
+                "submit_traffic",
+            )
+            .await;
+            return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
+        }
+    };
 
     for item in data {
         let user_id = value_to_i64(item.get("id"))
@@ -544,7 +928,7 @@ async fn post_traffic(
         let actual_download = ((download as f64) * multiplier).round().max(0.0) as i64;
         let deducted_total = actual_upload.saturating_add(actual_download);
 
-        let _ = sqlx::query(
+        if let Err(err) = sqlx::query(
             r#"
       UPDATE users
       SET upload_traffic = upload_traffic + ?,
@@ -562,10 +946,20 @@ async fn post_traffic(
         .bind(download)
         .bind(deducted_total)
         .bind(user_id)
-        .execute(&state.db)
-        .await;
+        .execute(&mut *tx)
+        .await
+        {
+            release_report_event(
+                &state,
+                report_event_id.as_deref(),
+                auth.node_id,
+                "submit_traffic",
+            )
+            .await;
+            return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
+        }
 
-        let _ = sqlx::query(
+        if let Err(err) = sqlx::query(
       r#"
       INSERT INTO traffic_logs
       (user_id, node_id, upload_traffic, download_traffic, actual_upload_traffic, actual_download_traffic, actual_traffic, deduction_multiplier, date, created_at)
@@ -581,13 +975,17 @@ async fn post_traffic(
     .bind(deducted_total)
     .bind(multiplier)
     .bind(date)
-    .execute(&state.db)
-    .await;
+    .execute(&mut *tx)
+    .await
+    {
+        release_report_event(&state, report_event_id.as_deref(), auth.node_id, "submit_traffic").await;
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
+    }
 
         total_traffic = total_traffic.saturating_add(total);
     }
 
-    let _ = sqlx::query(
+    if let Err(err) = sqlx::query(
         r#"
     UPDATE nodes
     SET node_bandwidth = node_bandwidth + ?,
@@ -597,8 +995,29 @@ async fn post_traffic(
     )
     .bind(total_traffic)
     .bind(auth.node_id)
-    .execute(&state.db)
-    .await;
+    .execute(&mut *tx)
+    .await
+    {
+        release_report_event(
+            &state,
+            report_event_id.as_deref(),
+            auth.node_id,
+            "submit_traffic",
+        )
+        .await;
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
+    }
+
+    if let Err(err) = tx.commit().await {
+        release_report_event(
+            &state,
+            report_event_id.as_deref(),
+            auth.node_id,
+            "submit_traffic",
+        )
+        .await;
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
+    }
 
     Json(json!({ "code": 0, "message": "ok" })).into_response()
 }
@@ -612,6 +1031,14 @@ async fn post_alive_ip(
         Ok(auth) => auth,
         Err(resp) => return resp,
     };
+    let report_event_id =
+        match claim_report_event(&state, &headers, auth.node_id, "submit_alive_ip").await {
+            Ok(Some(event_id)) if event_id.is_empty() => {
+                return Json(json!({ "code": 0, "message": "Already processed" })).into_response();
+            }
+            Ok(event_id) => event_id,
+            Err(resp) => return resp,
+        };
     let data = body
         .as_array()
         .cloned()
@@ -672,6 +1099,13 @@ async fn post_alive_ip(
             .execute(&state.db)
             .await
             {
+                release_report_event(
+                    &state,
+                    report_event_id.as_deref(),
+                    auth.node_id,
+                    "submit_alive_ip",
+                )
+                .await;
                 return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
             }
         }
@@ -689,7 +1123,28 @@ async fn post_audit_log(
         Ok(auth) => auth,
         Err(resp) => return resp,
     };
+    let report_event_id =
+        match claim_report_event(&state, &headers, auth.node_id, "submit_audit_log").await {
+            Ok(Some(event_id)) if event_id.is_empty() => {
+                return Json(json!({ "code": 0, "message": "Already processed" })).into_response();
+            }
+            Ok(event_id) => event_id,
+            Err(resp) => return resp,
+        };
     let data = body.as_array().cloned().unwrap_or_default();
+    let mut tx = match state.db.begin().await {
+        Ok(tx) => tx,
+        Err(err) => {
+            release_report_event(
+                &state,
+                report_event_id.as_deref(),
+                auth.node_id,
+                "submit_audit_log",
+            )
+            .await;
+            return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
+        }
+    };
 
     for item in data {
         let user_id = value_to_i64(item.get("user_id")).unwrap_or(0);
@@ -699,7 +1154,7 @@ async fn post_audit_log(
         }
         let ip_address = item.get("ip_address").and_then(Value::as_str);
 
-        let _ = sqlx::query(
+        if let Err(err) = sqlx::query(
             r#"
       INSERT INTO audit_logs (user_id, node_id, audit_rule_id, ip_address, created_at)
       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -709,8 +1164,29 @@ async fn post_audit_log(
         .bind(auth.node_id)
         .bind(audit_id)
         .bind(ip_address)
-        .execute(&state.db)
+        .execute(&mut *tx)
+        .await
+        {
+            release_report_event(
+                &state,
+                report_event_id.as_deref(),
+                auth.node_id,
+                "submit_audit_log",
+            )
+            .await;
+            return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
+        }
+    }
+
+    if let Err(err) = tx.commit().await {
+        release_report_event(
+            &state,
+            report_event_id.as_deref(),
+            auth.node_id,
+            "submit_audit_log",
+        )
         .await;
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
     }
 
     Json(json!({ "code": 0, "message": "ok" })).into_response()
@@ -725,6 +1201,14 @@ async fn post_status(
         Ok(auth) => auth,
         Err(resp) => return resp,
     };
+    let report_event_id =
+        match claim_report_event(&state, &headers, auth.node_id, "submit_status").await {
+            Ok(Some(event_id)) if event_id.is_empty() => {
+                return Json(json!({ "code": 0, "message": "Already processed" })).into_response();
+            }
+            Ok(event_id) => event_id,
+            Err(resp) => return resp,
+        };
     let obj = body.as_object().cloned().unwrap_or_default();
 
     let cpu = value_to_f64(obj.get("cpu")).unwrap_or(0.0);
@@ -740,7 +1224,7 @@ async fn post_status(
     let disk_total = value_to_i64(disk.and_then(|m| m.get("total"))).unwrap_or(0);
     let disk_used = value_to_i64(disk.and_then(|m| m.get("used"))).unwrap_or(0);
 
-    let _ = sqlx::query(
+    if let Err(err) = sqlx::query(
     r#"
     INSERT INTO node_status
     (node_id, cpu_usage, memory_total, memory_used, swap_total, swap_used, disk_total, disk_used, uptime, created_at)
@@ -756,8 +1240,12 @@ async fn post_status(
   .bind(disk_total)
   .bind(disk_used)
   .bind(uptime)
-  .execute(&state.db)
-  .await;
+    .execute(&state.db)
+  .await
+    {
+        release_report_event(&state, report_event_id.as_deref(), auth.node_id, "submit_status").await;
+        return error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string(), None);
+    }
 
     Json(json!({ "code": 0, "message": "ok" })).into_response()
 }
@@ -948,4 +1436,34 @@ fn value_to_f64(value: Option<&Value>) -> Option<f64> {
         return text.trim().parse::<f64>().ok();
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aggregate_messages_decode_with_event_id() {
+        let request: WsRequest = serde_json::from_value(json!({
+            "v": 1,
+            "id": 7,
+            "op": "report",
+            "event_id": "evt-7",
+            "payload": {"traffic": [{"id": 1, "u": 2, "d": 3}]}
+        }))
+        .expect("decode aggregate report");
+
+        assert_eq!(request.v, Some(1));
+        assert_eq!(request.op.as_deref(), Some("report"));
+        assert_eq!(request.event_id.as_deref(), Some("evt-7"));
+    }
+
+    #[test]
+    fn websocket_error_message_falls_back_to_protocol_default() {
+        assert_eq!(extract_ws_message(&json!({})), "Soga API request failed");
+        assert_eq!(
+            extract_ws_message(&json!({"message": "bad request"})),
+            "bad request"
+        );
+    }
 }

@@ -1601,10 +1601,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 value.insert("type".to_string(), json!("trojan"));
                 value.insert("server".to_string(), json!(server));
                 value.insert("port".to_string(), json!(port));
-                value.insert(
-                    "password".to_string(),
-                    json!(resolve_uuid_credential(user)),
-                );
+                value.insert("password".to_string(), json!(resolve_uuid_credential(user)));
                 value.insert(
                     "skip-cert-verify".to_string(),
                     json!(resolve_skip_cert_verify(&config, &client, false)),
@@ -1776,10 +1773,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 value.insert("type".to_string(), json!("anytls"));
                 value.insert("server".to_string(), json!(server));
                 value.insert("port".to_string(), json!(port));
-                value.insert(
-                    "password".to_string(),
-                    json!(resolve_uuid_credential(user)),
-                );
+                value.insert("password".to_string(), json!(resolve_uuid_credential(user)));
                 value.insert(
                     "client-fingerprint".to_string(),
                     json!(resolve_config_string_value(
@@ -1823,10 +1817,7 @@ pub fn generate_clash_config(nodes: &[SubscriptionNode], user: &SubscriptionUser
                 value.insert("type".to_string(), json!("hysteria2"));
                 value.insert("server".to_string(), json!(server));
                 value.insert("port".to_string(), json!(port));
-                value.insert(
-                    "password".to_string(),
-                    json!(resolve_uuid_credential(user)),
-                );
+                value.insert("password".to_string(), json!(resolve_uuid_credential(user)));
                 value.insert(
                     "skip-cert-verify".to_string(),
                     json!(resolve_skip_cert_verify(&config, &client, false)),
@@ -2492,10 +2483,7 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                 value.insert("tag".to_string(), json!(tag));
                 value.insert("server".to_string(), json!(server));
                 value.insert("server_port".to_string(), json!(port));
-                value.insert(
-                    "password".to_string(),
-                    json!(resolve_uuid_credential(user)),
-                );
+                value.insert("password".to_string(), json!(resolve_uuid_credential(user)));
                 let tls_mode = if ensure_string(config.get("tls_type")) == "reality" {
                     "reality"
                 } else {
@@ -2514,10 +2502,7 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                 value.insert("tag".to_string(), json!(tag));
                 value.insert("server".to_string(), json!(server));
                 value.insert("server_port".to_string(), json!(port));
-                value.insert(
-                    "password".to_string(),
-                    json!(resolve_uuid_credential(user)),
-                );
+                value.insert("password".to_string(), json!(resolve_uuid_credential(user)));
                 value.insert(
                     "up_mbps".to_string(),
                     json!(ensure_f64(config.get("up_mbps"), 100.0)),
@@ -2547,10 +2532,7 @@ pub fn generate_singbox_config(nodes: &[SubscriptionNode], user: &SubscriptionUs
                 value.insert("tag".to_string(), json!(tag));
                 value.insert("server".to_string(), json!(server));
                 value.insert("server_port".to_string(), json!(port));
-                value.insert(
-                    "password".to_string(),
-                    json!(resolve_uuid_credential(user)),
-                );
+                value.insert("password".to_string(), json!(resolve_uuid_credential(user)));
                 if let Some(tls) = build_singbox_tls(&config, &tls_host, &server, "tls", &client) {
                     value.insert("tls".to_string(), tls);
                 }
@@ -2914,10 +2896,7 @@ fn build_quantumultx_trojan_entry(
     let mut options: Vec<String> = Vec::new();
     let is_websocket = stream_type == "ws";
     let host = get_header_host(server, tls_host, config);
-    options.push(format!(
-        "password={}",
-        resolve_uuid_credential(user)
-    ));
+    options.push(format!("password={}", resolve_uuid_credential(user)));
     options.push("fast-open=false".to_string());
     options.push("tls-verification=false".to_string());
     if is_websocket {

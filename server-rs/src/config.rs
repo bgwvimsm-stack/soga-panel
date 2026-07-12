@@ -193,7 +193,8 @@ pub fn load_env() -> Result<AppEnv, String> {
         smtp_starttls: get_env("SMTP_STARTTLS"),
         smtp_auth_type: get_env("SMTP_AUTH_TYPE"),
         smtp_driver: get_env("SMTP_DRIVER"),
-        cloudflare_account_id: get_env("CLOUDFLARE_ACCOUNT_ID").or_else(|| get_env("CF_ACCOUNT_ID")),
+        cloudflare_account_id: get_env("CLOUDFLARE_ACCOUNT_ID")
+            .or_else(|| get_env("CF_ACCOUNT_ID")),
         cloudflare_email_api_token: get_env("CLOUDFLARE_EMAIL_API_TOKEN")
             .or_else(|| get_env("CF_EMAIL_API_TOKEN")),
         google_client_id: get_env("GOOGLE_CLIENT_ID"),
